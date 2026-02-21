@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Esra Scores</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=VT323&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero-bar">
+        <div class="hero-left">
+          <h1>Esra Scores</h1>
+          <p class="subtitle">Live football pulse for the Premier League and Championship</p>
+        </div>
+        <div class="hero-actions">
+          <button id="refresh-btn" class="btn btn-primary" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <section id="favorite-banner" class="favorite-banner" aria-live="polite">
+        <div class="favorite-empty" id="favorite-empty">
+          <p>No favourite team selected yet.</p>
+          <p>Choose one in the selector below to pin it here.</p>
+        </div>
+
+        <div class="favorite-content hidden" id="favorite-content">
+          <div class="favorite-team-block">
+            <img id="favorite-logo" class="favorite-logo" alt="Team logo" />
+            <div class="favorite-team-meta">
+              <p class="label">Pinned Team</p>
+              <h2 id="favorite-name">Team</h2>
+              <p id="favorite-league" class="muted"></p>
+            </div>
+          </div>
+
+          <div class="favorite-fixture-block">
+            <p id="favorite-status" class="status-pill">Upcoming</p>
+            <p id="favorite-fixture-line" class="fixture-line"></p>
+            <p id="favorite-fixture-detail" class="fixture-detail"></p>
+            <div id="favorite-live-strip" class="live-strip hidden"></div>
+          </div>
+        </div>
+
+        <div class="favorite-controls always-visible">
+          <label for="favorite-picker-btn">Favourite Team</label>
+          <div class="favorite-picker" id="favorite-picker">
+            <button id="favorite-picker-btn" class="favorite-picker-btn" type="button" aria-expanded="false">
+              <span class="picker-selected">
+                <img id="favorite-picker-logo" class="picker-logo hidden" alt="" />
+                <span id="favorite-picker-text">Select favourite team</span>
+              </span>
+              <span class="picker-chevron">▾</span>
+            </button>
+            <div id="favorite-picker-menu" class="favorite-picker-menu hidden"></div>
+          </div>
+        </div>
+      </section>
+
+      <main>
+        <section class="panel controls-panel">
+          <div class="filter-toolbar">
+            <div class="filter-group">
+              <p class="filter-label">League Filter</p>
+              <div class="league-controls" role="tablist" aria-label="League selection">
+                <button class="btn league-btn active" type="button" data-league="EPL">Premier League</button>
+                <button class="btn league-btn" type="button" data-league="CHAMP">Championship</button>
+                <button class="btn league-btn" type="button" data-league="ALL">All</button>
+              </div>
+            </div>
+            <div class="filter-group">
+              <p class="filter-label">Date Filter</p>
+              <div class="date-controls">
+                <button class="btn date-quick-btn" type="button" data-offset="-1">Yesterday</button>
+                <button class="btn date-quick-btn active" type="button" data-offset="0">Today</button>
+                <button class="btn date-quick-btn" type="button" data-offset="1">Tomorrow</button>
+                <input id="date-picker" class="date-picker" type="date" />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="grid-layout">
+          <article class="panel" id="fixtures-panel">
+            <div class="panel-head">
+              <h3 id="fixtures-title">Fixtures</h3>
+            </div>
+            <div id="fixtures-list" class="list"></div>
+          </article>
+        </section>
+
+        <section class="panel" id="table-panel">
+          <div class="panel-head">
+            <h3>League Tables</h3>
+          </div>
+          <div id="tables-wrap" class="tables-wrap"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>Made with love by Daddy.</p>
+        <p id="last-refreshed">Last refreshed: --</p>
+      </footer>
+    </div>
+
+    <template id="fixture-template">
+      <details class="fixture-item">
+        <summary>
+          <div class="summary-main">
+            <div class="fixture-meta-row">
+              <span class="kickoff-time"></span>
+              <span class="match-state"></span>
+            </div>
+            <div class="teams scoreline">
+              <div class="team-col home-col">
+                <img class="team-badge home-badge" alt="" />
+                <span class="home-team"></span>
+              </div>
+              <div class="score-center">
+                <span class="team-score home-score"></span>
+                <span class="score-sep">-</span>
+                <span class="team-score away-score"></span>
+              </div>
+              <div class="team-col away-col">
+                <span class="away-team"></span>
+                <img class="team-badge away-badge" alt="" />
+              </div>
+            </div>
+          </div>
+        </summary>
+        <div class="fixture-details"></div>
+      </details>
+    </template>
+
+    <template id="table-template">
+      <article class="table-card">
+        <div class="table-head">
+          <img class="league-logo" alt="" />
+          <h4></h4>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Pos</th>
+                <th>Team</th>
+                <th>P</th>
+                <th>W</th>
+                <th>D</th>
+                <th>L</th>
+                <th>GD</th>
+                <th>Pts</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
