@@ -642,6 +642,10 @@ h1 {
   font-weight: 700;
 }
 
+.team-score-inline {
+  display: none;
+}
+
 .team-score.leading {
   border: 2px solid #ffc05f;
   box-shadow: 0 0 0 1px rgba(255, 192, 95, 0.25);
@@ -846,12 +850,40 @@ th {
 
   .home-col,
   .away-col {
-    justify-content: center;
-    text-align: center;
+    justify-content: space-between;
+    text-align: left;
+    width: 100%;
   }
 
   .score-center {
-    order: -1;
+    display: none;
+  }
+
+  .team-score-inline {
+    display: inline-flex;
+  }
+
+  .home-col .home-team,
+  .away-col .away-team {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .home-col .home-team {
+    margin-right: 0.35rem;
+  }
+
+  .away-col .away-team {
+    order: 2;
+    margin: 0 0.35rem 0 0.35rem;
+  }
+
+  .away-col .away-badge {
+    order: 1;
+  }
+
+  .away-col .away-inline-score {
+    order: 3;
   }
 
   .fixture-line,

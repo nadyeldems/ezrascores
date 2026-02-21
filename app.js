@@ -533,6 +533,8 @@ function renderFixtureList(target, events, mode) {
     const awayBadge = node.querySelector(".away-badge");
     const homeScoreEl = node.querySelector(".home-score");
     const awayScoreEl = node.querySelector(".away-score");
+    const homeInlineScoreEl = node.querySelector(".home-inline-score");
+    const awayInlineScoreEl = node.querySelector(".away-inline-score");
     const homeBadgeUrl = state.teamBadgeMap[homeName] || "";
     const awayBadgeUrl = state.teamBadgeMap[awayName] || "";
     homeBadge.src = homeBadgeUrl;
@@ -541,11 +543,19 @@ function renderFixtureList(target, events, mode) {
     awayBadge.alt = `${awayName} badge`;
     homeScoreEl.textContent = homeScoreText;
     awayScoreEl.textContent = awayScoreText;
+    homeInlineScoreEl.textContent = homeScoreText;
+    awayInlineScoreEl.textContent = awayScoreText;
     if (!homeBadgeUrl) homeBadge.classList.add("hidden");
     if (!awayBadgeUrl) awayBadge.classList.add("hidden");
     if (hasScores) {
-      if (Number(home) > Number(away)) homeScoreEl.classList.add("leading");
-      if (Number(away) > Number(home)) awayScoreEl.classList.add("leading");
+      if (Number(home) > Number(away)) {
+        homeScoreEl.classList.add("leading");
+        homeInlineScoreEl.classList.add("leading");
+      }
+      if (Number(away) > Number(home)) {
+        awayScoreEl.classList.add("leading");
+        awayInlineScoreEl.classList.add("leading");
+      }
     }
 
     const leagueText = event.strLeague || "Unknown competition";
