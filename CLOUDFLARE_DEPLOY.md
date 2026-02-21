@@ -6,7 +6,7 @@ This app now calls TheSportsDB through Cloudflare Pages Functions at:
 - `/api/v2/*`
 
 The proxy file is:
-- `functions/api/[version]/[[path]].js`
+- `functions/api/[[route]].js`
 
 It adds edge caching with short TTL for live data and longer TTL for table/team metadata.
 

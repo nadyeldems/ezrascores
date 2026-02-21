@@ -8,34 +8,38 @@ function ttlForPath(path) {
   return 120;
 }
 
-function upstreamUrl(version, key, path) {
+function upstreamUrl(version, key, pathWithQuery) {
   if (version === "v1") {
-    return `https://www.thesportsdb.com/api/v1/json/${key}/${path}`;
+    return `https://www.thesportsdb.com/api/v1/json/${key}/${pathWithQuery}`;
   }
   if (version === "v2") {
-    return `https://www.thesportsdb.com/api/v2/json/${key}/${path}`;
+    return `https://www.thesportsdb.com/api/v2/json/${key}/${pathWithQuery}`;
   }
   return "";
 }
 
 export async function onRequest(context) {
-  const { request, params, env } = context;
-  const requestUrl = new URL(request.url);
+  const { request, env } = context;
+  const url = new URL(request.url);
 
   if (request.method !== "GET") {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  const version = params.version;
-  const rawPath = typeof params.path === "string" ? params.path : "";
-  const path = rawPath.replace(/^\/+/, "");
-
-  if (!version || !path) {
+  // Expecting: /api/{version}/{...path}
+  const parts = url.pathname.replace(/^\/+/, "").split("/");
+  if (parts.length < 3 || parts[0] !== "api") {
     return Response.json({ error: "Invalid API route" }, { status: 400 });
   }
 
+  const version = parts[1];
+  const upstreamPath = parts.slice(2).join("/");
+  if (!upstreamPath) {
+    return Response.json({ error: "Missing upstream path" }, { status: 400 });
+  }
+
   const key = env.SPORTSDB_KEY || "074910";
-  const upstream = upstreamUrl(version, key, `${path}${requestUrl.search}`);
+  const upstream = upstreamUrl(version, key, `${upstreamPath}${url.search}`);
   if (!upstream) {
     return Response.json({ error: "Invalid API version" }, { status: 400 });
   }
@@ -45,7 +49,7 @@ export async function onRequest(context) {
   const cached = await cache.match(cacheKey);
   if (cached) {
     const headers = new Headers(cached.headers);
-    headers.set("X-Esra-Cache", "HIT");
+    headers.set("X-EZRA-Cache", "HIT");
     return new Response(cached.body, { status: cached.status, headers });
   }
 
@@ -57,14 +61,16 @@ export async function onRequest(context) {
     const body = await upstreamRes.text();
     return new Response(body || `Upstream error (${upstreamRes.status})`, {
       status: upstreamRes.status,
-      headers: { "Content-Type": upstreamRes.headers.get("Content-Type") || "text/plain" },
+      headers: {
+        "Content-Type": upstreamRes.headers.get("Content-Type") || "text/plain",
+      },
     });
   }
 
-  const ttl = ttlForPath(path);
+  const ttl = ttlForPath(upstreamPath);
   const headers = new Headers(upstreamRes.headers);
   headers.set("Cache-Control", `public, max-age=${ttl}, s-maxage=${ttl}`);
-  headers.set("X-Esra-Cache", "MISS");
+  headers.set("X-EZRA-Cache", "MISS");
 
   const response = new Response(upstreamRes.body, {
     status: upstreamRes.status,
