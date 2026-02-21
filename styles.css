@@ -776,7 +776,9 @@ th {
 
   .hero-actions {
     width: 100%;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
     position: relative;
   }
 
@@ -786,14 +788,44 @@ th {
   }
 
   .header-picker {
-    flex: 1;
+    width: 100%;
     display: flex;
-    justify-content: flex-end;
+    justify-content: stretch;
     min-width: 0;
   }
 
   .header-picker .picker-fab {
-    margin-left: auto;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 2.6rem;
+    margin-left: 0;
+    border-radius: 0.8rem;
+    padding: 0.38rem 0.65rem;
+    justify-content: space-between;
+  }
+
+  .header-picker .picker-fab .picker-selected {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 0.5rem;
+  }
+
+  .header-picker .picker-fab .picker-logo {
+    width: 20px;
+    height: 20px;
+  }
+
+  #favorite-picker-text.sr-only {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: nowrap;
+    border: 0;
   }
 
   .header-picker .favorite-picker-menu {
@@ -801,6 +833,7 @@ th {
     right: 0;
     width: auto;
     max-width: 100%;
+    top: calc(100% + 0.3rem);
   }
 
   .app-shell {
