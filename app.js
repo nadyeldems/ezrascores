@@ -1,6 +1,4 @@
-const API_KEY = "074910";
-const API_V1_BASE = `https://www.thesportsdb.com/api/v1/json/${API_KEY}`;
-const API_V2_BASE = `https://www.thesportsdb.com/api/v2/json/${API_KEY}`;
+const API_PROXY_BASE = "/api";
 
 const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
@@ -315,7 +313,7 @@ function formatKickoffTime(event) {
 }
 
 async function apiGetV1(path) {
-  const res = await fetch(`${API_V1_BASE}/${path}`);
+  const res = await fetch(`${API_PROXY_BASE}/v1/${path}`);
   if (!res.ok) {
     throw new Error(`API call failed (${res.status}) for ${path}`);
   }
@@ -323,11 +321,7 @@ async function apiGetV1(path) {
 }
 
 async function apiGetV2(path) {
-  const res = await fetch(`${API_V2_BASE}/${path}`, {
-    headers: {
-      "X-API-KEY": API_KEY,
-    },
-  });
+  const res = await fetch(`${API_PROXY_BASE}/v2/${path}`);
   if (!res.ok) {
     throw new Error(`API call failed (${res.status}) for ${path}`);
   }
@@ -492,6 +486,18 @@ function setFavoritePickerDisplay(team) {
   el.favoritePickerLogo.src = team.strBadge || "";
   el.favoritePickerLogo.alt = `${team.strTeam} badge`;
   el.favoritePickerText.textContent = `${team.strTeam} (${team.strLeague || "League"})`;
+}
+
+function ensureDefaultFavoriteTeam() {
+  const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP];
+  if (!allTeams.length) return;
+  const currentExists = allTeams.some((team) => team.idTeam === state.favoriteTeamId);
+  if (currentExists) return;
+  const hull = allTeams.find((team) => (team.strTeam || "").toLowerCase() === "hull city");
+  if (!hull?.idTeam) return;
+  state.favoriteTeamId = hull.idTeam;
+  state.favoriteTeam = hull;
+  localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
 }
 
 function renderFixtureList(target, events, mode) {
@@ -1051,6 +1057,7 @@ async function loadCoreData() {
   });
   state.leagueBadges.EPL = leagueMetaEpl?.strBadge || leagueMetaEpl?.strLogo || "";
   state.leagueBadges.CHAMP = leagueMetaChamp?.strBadge || leagueMetaChamp?.strLogo || "";
+  ensureDefaultFavoriteTeam();
 }
 
 function renderLastRefreshed() {
