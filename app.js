@@ -23,15 +23,19 @@ const state = {
   teamsByLeague: { EPL: [], CHAMP: [] },
   favoriteTeamId: localStorage.getItem("esra_favorite_team") || "",
   favoriteTeam: null,
+  gameDayCountdownTimer: null,
+  lastCountdownTarget: null,
   lastRefresh: null,
 };
 
 const el = {
-  refreshBtn: document.getElementById("refresh-btn"),
+  gameDayMessage: document.getElementById("game-day-message"),
   favoriteBanner: document.getElementById("favorite-banner"),
   fixturesList: document.getElementById("fixtures-list"),
   fixturesTitle: document.getElementById("fixtures-title"),
   datePicker: document.getElementById("date-picker"),
+  datePrevBtn: document.getElementById("date-prev-btn"),
+  dateNextBtn: document.getElementById("date-next-btn"),
   dateQuickButtons: [...document.querySelectorAll(".date-quick-btn")],
   tablesWrap: document.getElementById("tables-wrap"),
   lastRefreshed: document.getElementById("last-refreshed"),
@@ -53,6 +57,47 @@ const el = {
   favoritePickerLogo: document.getElementById("favorite-picker-logo"),
   favoritePickerText: document.getElementById("favorite-picker-text"),
 };
+
+function clearGameDayCountdownTimer() {
+  if (state.gameDayCountdownTimer) {
+    clearInterval(state.gameDayCountdownTimer);
+    state.gameDayCountdownTimer = null;
+  }
+}
+
+function setGameDayMessage(text, mode = "neutral") {
+  if (!el.gameDayMessage) return;
+  el.gameDayMessage.textContent = text;
+  el.gameDayMessage.classList.remove("neutral", "countdown", "gameday");
+  el.gameDayMessage.classList.add(mode);
+}
+
+function daysUntilDate(dateIso) {
+  if (!dateIso) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${dateIso}T00:00:00`);
+  if (Number.isNaN(target.getTime())) return null;
+  const diff = target.getTime() - today.getTime();
+  return Math.ceil(diff / (24 * 60 * 60 * 1000));
+}
+
+function animateCountdownDays(targetDays) {
+  clearGameDayCountdownTimer();
+  const safeTarget = Math.max(0, Number(targetDays) || 0);
+  const start = Math.max(safeTarget + 6, 8);
+  let current = start;
+  setGameDayMessage(`${current} DAYS UNTIL GAME DAY`, "countdown");
+  state.gameDayCountdownTimer = setInterval(() => {
+    current -= 1;
+    if (current <= safeTarget) {
+      setGameDayMessage(`${safeTarget} DAY${safeTarget === 1 ? "" : "S"} UNTIL GAME DAY`, "countdown");
+      clearGameDayCountdownTimer();
+      return;
+    }
+    setGameDayMessage(`${current} DAYS UNTIL GAME DAY`, "countdown");
+  }, 80);
+}
 
 function clampChannel(v) {
   return Math.max(0, Math.min(255, Math.round(v)));
@@ -638,6 +683,12 @@ function selectedDateLabel(dateIso) {
   return "Fixtures";
 }
 
+async function setSelectedDate(dateIso) {
+  state.selectedDate = dateIso || toISODate(new Date());
+  await refreshSelectedDateFixtures();
+  renderFixtures();
+}
+
 function renderFixtures() {
   el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateUK(state.selectedDate)})`;
   const events =
@@ -794,6 +845,9 @@ function nextFixtureSummary(team, nextEvent) {
 
 async function renderFavorite() {
   if (!state.favoriteTeamId) {
+    clearGameDayCountdownTimer();
+    state.lastCountdownTarget = null;
+    setGameDayMessage("Select a favourite team", "neutral");
     setFavoritePickerDisplay(null);
     resetFavoriteTheme();
     el.favoriteEmpty.classList.remove("hidden");
@@ -806,6 +860,9 @@ async function renderFavorite() {
     state.favoriteTeamId = "";
     state.favoriteTeam = null;
     localStorage.removeItem("esra_favorite_team");
+    clearGameDayCountdownTimer();
+    state.lastCountdownTarget = null;
+    setGameDayMessage("Select a favourite team", "neutral");
     setFavoritePickerDisplay(null);
     resetFavoriteTheme();
     el.favoriteEmpty.classList.remove("hidden");
@@ -823,6 +880,30 @@ async function renderFavorite() {
   const chosenToday = liveEventDetailed || todayEventDetailed;
   const nextEvents = await safeLoad(() => fetchTeamNextEvents(team.idTeam), []);
   const nextEvent = nextEvents.find((event) => !isSameFixture(event, chosenToday)) || null;
+  const hasFixtureToday = Boolean(
+    (chosenToday && chosenToday.dateEvent === todayIso) || nextEvents.some((event) => event.dateEvent === todayIso)
+  );
+  if (hasFixtureToday) {
+    clearGameDayCountdownTimer();
+    state.lastCountdownTarget = 0;
+    setGameDayMessage("IT'S GAME DAY", "gameday");
+  } else {
+    const daysUntil = daysUntilDate(nextEvent?.dateEvent);
+    if (daysUntil === null) {
+      clearGameDayCountdownTimer();
+      state.lastCountdownTarget = null;
+      setGameDayMessage("No game scheduled", "neutral");
+    } else if (daysUntil <= 0) {
+      clearGameDayCountdownTimer();
+      state.lastCountdownTarget = 0;
+      setGameDayMessage("IT'S GAME DAY", "gameday");
+    } else if (state.lastCountdownTarget !== daysUntil) {
+      state.lastCountdownTarget = daysUntil;
+      animateCountdownDays(daysUntil);
+    } else {
+      setGameDayMessage(`${daysUntil} DAY${daysUntil === 1 ? "" : "S"} UNTIL GAME DAY`, "countdown");
+    }
+  }
   const chosenTodayState = chosenToday ? eventState(chosenToday).key : "";
   let lastCompleted = findLastCompletedForTeam(lastEvents, team, todayIso, chosenToday);
   if (!lastCompleted) {
@@ -981,9 +1062,6 @@ function renderLastRefreshed() {
 }
 
 async function fullRefresh() {
-  el.refreshBtn.disabled = true;
-  el.refreshBtn.textContent = "Refreshing...";
-
   try {
     if (!state.selectedDate) {
       state.selectedDate = toISODate(new Date());
@@ -1004,17 +1082,10 @@ async function fullRefresh() {
   } catch (err) {
     displayApiError(el.fixturesList, err);
     el.tablesWrap.innerHTML = `<div class="error">Unable to load league tables. ${err.message}</div>`;
-  } finally {
-    el.refreshBtn.disabled = false;
-    el.refreshBtn.textContent = "Refresh";
   }
 }
 
 function attachEvents() {
-  el.refreshBtn.addEventListener("click", () => {
-    fullRefresh();
-  });
-
   el.favoritePickerBtn.addEventListener("click", () => {
     const isOpen = !el.favoritePickerMenu.classList.contains("hidden");
     el.favoritePickerMenu.classList.toggle("hidden", isOpen);
@@ -1039,9 +1110,7 @@ function attachEvents() {
 
   if (el.datePicker) {
     el.datePicker.addEventListener("change", async (e) => {
-      state.selectedDate = e.target.value || toISODate(new Date());
-      await refreshSelectedDateFixtures();
-      renderFixtures();
+      await setSelectedDate(e.target.value || toISODate(new Date()));
     });
   }
 
@@ -1049,11 +1118,27 @@ function attachEvents() {
     btn.addEventListener("click", async () => {
       const d = new Date();
       d.setDate(d.getDate() + Number(btn.dataset.offset || 0));
-      state.selectedDate = toISODate(d);
-      await refreshSelectedDateFixtures();
-      renderFixtures();
+      await setSelectedDate(toISODate(d));
     });
   });
+
+  const shiftSelectedDate = async (delta) => {
+    const base = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
+    base.setDate(base.getDate() + delta);
+    await setSelectedDate(toISODate(base));
+  };
+
+  if (el.datePrevBtn) {
+    el.datePrevBtn.addEventListener("click", async () => {
+      await shiftSelectedDate(-1);
+    });
+  }
+
+  if (el.dateNextBtn) {
+    el.dateNextBtn.addEventListener("click", async () => {
+      await shiftSelectedDate(1);
+    });
+  }
 }
 
 attachEvents();

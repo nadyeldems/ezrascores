@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Esra Scores</title>
+    <title>EZRASCORES</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -16,25 +16,38 @@
     <div class="app-shell">
       <header class="hero-bar">
         <div class="hero-left">
-          <h1>Esra Scores</h1>
-          <p class="subtitle">Live football pulse for the Premier League and Championship</p>
+          <h1>EZRASCORES</h1>
         </div>
         <div class="hero-actions">
-          <button id="refresh-btn" class="btn btn-primary" type="button">Refresh</button>
+          <p id="game-day-message" class="game-day-message neutral">Select a favourite team</p>
+          <div class="favorite-picker header-picker" id="favorite-picker">
+            <button
+              id="favorite-picker-btn"
+              class="favorite-picker-btn picker-fab"
+              type="button"
+              aria-expanded="false"
+              aria-label="Choose favourite team"
+            >
+              <span class="picker-selected">
+                <img id="favorite-picker-logo" class="picker-logo hidden" alt="" />
+                <span id="favorite-picker-text" class="sr-only">Select favourite team</span>
+              </span>
+            </button>
+            <div id="favorite-picker-menu" class="favorite-picker-menu hidden"></div>
+          </div>
         </div>
       </header>
 
       <section id="favorite-banner" class="favorite-banner" aria-live="polite">
         <div class="favorite-empty" id="favorite-empty">
           <p>No favourite team selected yet.</p>
-          <p>Choose one in the selector below to pin it here.</p>
+          <p>Use the top-right team button to pin one here.</p>
         </div>
 
         <div class="favorite-content hidden" id="favorite-content">
           <div class="favorite-team-block">
             <img id="favorite-logo" class="favorite-logo" alt="Team logo" />
             <div class="favorite-team-meta">
-              <p class="label">Pinned Team</p>
               <h2 id="favorite-name">Team</h2>
               <p id="favorite-league" class="muted"></p>
             </div>
@@ -45,20 +58,6 @@
             <p id="favorite-fixture-line" class="fixture-line"></p>
             <p id="favorite-fixture-detail" class="fixture-detail"></p>
             <div id="favorite-live-strip" class="live-strip hidden"></div>
-          </div>
-        </div>
-
-        <div class="favorite-controls always-visible">
-          <label for="favorite-picker-btn">Favourite Team</label>
-          <div class="favorite-picker" id="favorite-picker">
-            <button id="favorite-picker-btn" class="favorite-picker-btn" type="button" aria-expanded="false">
-              <span class="picker-selected">
-                <img id="favorite-picker-logo" class="picker-logo hidden" alt="" />
-                <span id="favorite-picker-text">Select favourite team</span>
-              </span>
-              <span class="picker-chevron">▾</span>
-            </button>
-            <div id="favorite-picker-menu" class="favorite-picker-menu hidden"></div>
           </div>
         </div>
       </section>
@@ -80,7 +79,11 @@
                 <button class="btn date-quick-btn" type="button" data-offset="-1">Yesterday</button>
                 <button class="btn date-quick-btn active" type="button" data-offset="0">Today</button>
                 <button class="btn date-quick-btn" type="button" data-offset="1">Tomorrow</button>
-                <input id="date-picker" class="date-picker" type="date" />
+                <div class="date-nav">
+                  <button id="date-prev-btn" class="btn date-arrow-btn" type="button" aria-label="Previous day">◀</button>
+                  <input id="date-picker" class="date-picker" type="date" />
+                  <button id="date-next-btn" class="btn date-arrow-btn" type="button" aria-label="Next day">▶</button>
+                </div>
               </div>
             </div>
           </div>
