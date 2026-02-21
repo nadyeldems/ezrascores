@@ -38,7 +38,6 @@ body {
 .app-shell {
   width: min(1180px, 100% - 1.4rem);
   margin: 1rem auto;
-  overflow-x: clip;
 }
 
 img {
@@ -774,11 +773,30 @@ th {
   .hero-actions {
     width: 100%;
     justify-content: space-between;
+    position: relative;
   }
 
   .game-day-message {
     width: 100%;
     text-align: center;
+  }
+
+  .header-picker {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .header-picker .picker-fab {
+    margin-left: auto;
+  }
+
+  .header-picker .favorite-picker-menu {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: 100%;
   }
 
   .app-shell {
@@ -840,5 +858,30 @@ th {
   .fixture-detail,
   .teams {
     font-size: 0.88rem;
+  }
+
+  #table-panel .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #table-panel table {
+    min-width: 0;
+  }
+
+  #table-panel th,
+  #table-panel td {
+    padding: 0.28rem 0.24rem;
+    font-size: 0.9rem;
+  }
+
+  /* Keep the table readable on iPhone by hiding secondary columns */
+  #table-panel th:nth-child(4),
+  #table-panel td:nth-child(4),
+  #table-panel th:nth-child(5),
+  #table-panel td:nth-child(5),
+  #table-panel th:nth-child(6),
+  #table-panel td:nth-child(6) {
+    display: none;
   }
 }
