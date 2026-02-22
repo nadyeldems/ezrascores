@@ -1,4 +1,5 @@
 const API_PROXY_BASE = "/api";
+const LIVE_REFRESH_MS = 25000;
 
 const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
@@ -23,6 +24,9 @@ const state = {
   favoriteTeam: null,
   gameDayCountdownTimer: null,
   lastCountdownTarget: null,
+  liveScoreSnapshot: new Map(),
+  goalFlashes: new Map(),
+  refreshInFlight: false,
   lastRefresh: null,
 };
 
@@ -54,6 +58,7 @@ const el = {
   favoritePickerMenu: document.getElementById("favorite-picker-menu"),
   favoritePickerLogo: document.getElementById("favorite-picker-logo"),
   favoritePickerText: document.getElementById("favorite-picker-text"),
+  debugGoalBtn: document.getElementById("debug-goal-btn"),
 };
 
 function clearGameDayCountdownTimer() {
@@ -514,6 +519,7 @@ function renderFixtureList(target, events, mode) {
   sortedEvents.forEach((event) => {
     const node = el.fixtureTemplate.content.firstElementChild.cloneNode(true);
     const stateInfo = eventState(event);
+    const key = fixtureKey(event);
     const homeName = event.strHomeTeam || "TBC";
     const awayName = event.strAwayTeam || "TBC";
 
@@ -571,6 +577,20 @@ function renderFixtureList(target, events, mode) {
     ]
       .filter(Boolean)
       .join("<br>");
+
+    const goalFlash = state.goalFlashes.get(key);
+    const goalFlashEl = node.querySelector(".goal-flash");
+    if (goalFlash && goalFlash.expiresAt > Date.now() && (stateInfo.key === "live" || goalFlash.force)) {
+      goalFlashEl.classList.remove("hidden");
+      goalFlashEl.classList.add("active");
+      goalFlashEl.querySelector(".goal-team-name").textContent = goalFlash.team;
+      goalFlashEl.querySelector(".goal-scoreline").textContent = goalFlash.score;
+    } else {
+      goalFlashEl.classList.add("hidden");
+      goalFlashEl.classList.remove("active");
+      goalFlashEl.querySelector(".goal-team-name").textContent = "";
+      goalFlashEl.querySelector(".goal-scoreline").textContent = "";
+    }
 
     target.appendChild(node);
   });
@@ -843,6 +863,115 @@ function isSameFixture(a, b) {
   return sameDate && sameTeams;
 }
 
+function fixtureKey(event) {
+  if (!event) return "";
+  if (event.idEvent) return `id:${event.idEvent}`;
+  const home = (event.strHomeTeam || "").toLowerCase().trim();
+  const away = (event.strAwayTeam || "").toLowerCase().trim();
+  return `m:${event.dateEvent || ""}|${home}|${away}`;
+}
+
+function numericScore(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function scorePair(event) {
+  const home = numericScore(event?.intHomeScore);
+  const away = numericScore(event?.intAwayScore);
+  if (home === null || away === null) return null;
+  return { home, away };
+}
+
+function detectGoalFlashes() {
+  const now = Date.now();
+
+  for (const [key, flash] of state.goalFlashes.entries()) {
+    if (!flash || flash.expiresAt <= now) {
+      state.goalFlashes.delete(key);
+    }
+  }
+
+  const currentPool = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP];
+  const nextSnapshot = new Map();
+
+  currentPool.forEach((event) => {
+    const key = fixtureKey(event);
+    if (!key) return;
+    const pair = scorePair(event);
+    if (!pair) return;
+
+    nextSnapshot.set(key, pair);
+    const prev = state.liveScoreSnapshot.get(key);
+    if (!prev) return;
+
+    if (eventState(event).key !== "live") return;
+
+    const homeDelta = pair.home - prev.home;
+    const awayDelta = pair.away - prev.away;
+    const totalDelta = homeDelta + awayDelta;
+    if (totalDelta <= 0) return;
+
+    let team = "Goal Update";
+    if (homeDelta > awayDelta) {
+      team = event.strHomeTeam || "Home";
+    } else if (awayDelta > homeDelta) {
+      team = event.strAwayTeam || "Away";
+    }
+
+    state.goalFlashes.set(key, {
+      team,
+      score: `${pair.home} - ${pair.away}`,
+      expiresAt: now + 7000,
+      force: false,
+    });
+  });
+
+  state.liveScoreSnapshot = nextSnapshot;
+}
+
+function visibleFixturesForCurrentFilter() {
+  if (state.selectedLeague === "ALL") {
+    return [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP];
+  }
+  return [...(state.selectedDateFixtures[state.selectedLeague] || [])];
+}
+
+function triggerDebugGoalAnimation() {
+  const pool = visibleFixturesForCurrentFilter();
+  if (!pool.length) return;
+
+  const target =
+    pool.find((event) => eventState(event).key === "live") ||
+    pool.find((event) => scorePair(event)) ||
+    pool[0];
+  if (!target) return;
+
+  const pair = scorePair(target);
+  const home = pair?.home ?? 1;
+  const away = pair?.away ?? 0;
+  const scorerTeam = home >= away ? target.strHomeTeam || "Home Team" : target.strAwayTeam || "Away Team";
+  const key = fixtureKey(target);
+  if (!key) return;
+
+  state.goalFlashes.set(key, {
+    team: scorerTeam,
+    score: `${home} - ${away}`,
+    expiresAt: Date.now() + 7000,
+    force: true,
+  });
+
+  renderFixtures();
+  setTimeout(() => {
+    const flash = state.goalFlashes.get(key);
+    if (flash && flash.expiresAt <= Date.now()) {
+      state.goalFlashes.delete(key);
+      renderFixtures();
+    }
+  }, 7100);
+}
+
 function nextFixtureTickerText(team, nextEvent) {
   if (!nextEvent) return "No upcoming fixture found.";
   const isHome = nextEvent.idHomeTeam === team.idTeam;
@@ -1087,6 +1216,8 @@ function renderLastRefreshed() {
 }
 
 async function fullRefresh() {
+  if (state.refreshInFlight) return;
+  state.refreshInFlight = true;
   try {
     if (!state.selectedDate) {
       state.selectedDate = toISODate(new Date());
@@ -1095,6 +1226,7 @@ async function fullRefresh() {
       localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
     }
     await loadCoreData();
+    detectGoalFlashes();
     await refreshSelectedDateFixtures();
     buildFavoriteOptions();
     await safeLoad(() => renderFavorite(), null);
@@ -1107,10 +1239,18 @@ async function fullRefresh() {
   } catch (err) {
     displayApiError(el.fixturesList, err);
     el.tablesWrap.innerHTML = `<div class="error">Unable to load league tables. ${err.message}</div>`;
+  } finally {
+    state.refreshInFlight = false;
   }
 }
 
 function attachEvents() {
+  if (el.debugGoalBtn) {
+    el.debugGoalBtn.addEventListener("click", () => {
+      triggerDebugGoalAnimation();
+    });
+  }
+
   el.favoritePickerBtn.addEventListener("click", () => {
     const isOpen = !el.favoritePickerMenu.classList.contains("hidden");
     el.favoritePickerMenu.classList.toggle("hidden", isOpen);
@@ -1168,4 +1308,4 @@ function attachEvents() {
 
 attachEvents();
 fullRefresh();
-setInterval(fullRefresh, 60000);
+setInterval(fullRefresh, LIVE_REFRESH_MS);

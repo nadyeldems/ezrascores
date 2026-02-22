@@ -108,7 +108,10 @@
 
       <footer class="footer">
         <p>Made with love by Daddy.</p>
-        <p id="last-refreshed">Last refreshed: --</p>
+        <div class="footer-right">
+          <button id="debug-goal-btn" class="btn debug-btn" type="button">Debug Goal</button>
+          <p id="last-refreshed">Last refreshed: --</p>
+        </div>
       </footer>
     </div>
 
@@ -136,6 +139,11 @@
                 <span class="away-team"></span>
                 <img class="team-badge away-badge" alt="" />
               </div>
+            </div>
+            <div class="goal-flash hidden" aria-hidden="true">
+              <span class="goal-stage goal-word">GOAL!</span>
+              <span class="goal-stage goal-team-name"></span>
+              <span class="goal-stage goal-scoreline"></span>
             </div>
           </div>
         </summary>

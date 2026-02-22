@@ -1,6 +1,6 @@
 function ttlForPath(path) {
   const p = path.toLowerCase();
-  if (p.includes("livescore")) return 20;
+  if (p.includes("livescore")) return 15;
   if (p.includes("eventsday") || p.includes("eventsnext") || p.includes("eventspast")) return 60;
   if (p.includes("lookuptable") || p.includes("lookup_all_teams") || p.includes("search_all_teams") || p.includes("lookupleague")) {
     return 300;
