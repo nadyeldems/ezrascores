@@ -727,7 +727,12 @@ function buildFavoriteOptions() {
   const clearBtn = document.createElement("button");
   clearBtn.type = "button";
   clearBtn.className = "favorite-option clear-option";
-  clearBtn.innerHTML = `<span class="option-text">No pinned team</span>`;
+  clearBtn.innerHTML = `
+    <span class="option-text">
+      <span class="option-team">No pinned team</span>
+      <span class="option-league">Use league fixtures only</span>
+    </span>
+  `;
   clearBtn.addEventListener("click", async () => {
     state.favoriteTeamId = "";
     state.favoriteTeam = null;
@@ -746,7 +751,10 @@ function buildFavoriteOptions() {
     btn.dataset.teamId = team.idTeam;
     btn.innerHTML = `
       <img class="option-logo ${team.strBadge ? "" : "hidden"}" src="${team.strBadge || ""}" alt="${team.strTeam} badge" />
-      <span class="option-text">${team.strTeam} <span class="option-league">(${team.strLeague || "League"})</span></span>
+      <span class="option-text">
+        <span class="option-team">${team.strTeam}</span>
+        <span class="option-league">${team.strLeague || "League"}</span>
+      </span>
     `;
     btn.addEventListener("click", async () => {
       state.favoriteTeamId = team.idTeam;
