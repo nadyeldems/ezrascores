@@ -17,9 +17,12 @@
       <header class="hero-bar">
         <div class="hero-left">
           <h1>EZRASCORES</h1>
-          <div class="theme-toggle" role="tablist" aria-label="UI theme">
-            <button class="btn theme-btn active" type="button" data-theme="classic">Classic</button>
-            <button class="btn theme-btn" type="button" data-theme="t90">Total 90</button>
+          <div class="hero-controls">
+            <div class="theme-toggle" role="tablist" aria-label="UI theme">
+              <button class="btn theme-btn active" type="button" data-theme="classic">Classic</button>
+              <button class="btn theme-btn" type="button" data-theme="t90">Total 90</button>
+            </div>
+            <button id="player-dvd-toggle" class="btn feature-btn" type="button" aria-pressed="false">Player Pop</button>
           </div>
         </div>
         <div class="hero-actions">
@@ -122,6 +125,13 @@
           <p id="last-refreshed">Last refreshed: --</p>
         </div>
       </footer>
+    </div>
+
+    <div id="player-dvd-layer" class="player-dvd-layer hidden" aria-live="polite">
+      <button id="player-dvd-avatar" class="player-dvd-avatar" type="button" aria-label="Reveal player">
+        <img id="player-dvd-image" class="player-dvd-image" alt="" />
+      </button>
+      <div id="player-dvd-name" class="player-dvd-name hidden"></div>
     </div>
 
     <template id="fixture-template">

@@ -27,6 +27,7 @@ const state = {
   teamsByLeague: { EPL: [], CHAMP: [] },
   favoriteTeamId: localStorage.getItem("esra_favorite_team") || "",
   uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
+  playerPopEnabled: localStorage.getItem("ezra_player_pop_enabled") === "1",
   favoriteTeam: null,
   gameDayCountdownTimer: null,
   lastCountdownTarget: null,
@@ -39,6 +40,17 @@ const state = {
   lastLiveProbeAt: 0,
   lastStaticRefreshAt: 0,
   pollMode: "idle",
+  playerPop: {
+    rafId: null,
+    running: false,
+    loading: false,
+    x: 0,
+    y: 0,
+    vx: 150,
+    vy: 124,
+    size: 94,
+    lastTs: 0,
+  },
   lastRefresh: null,
 };
 
@@ -75,6 +87,11 @@ const el = {
   favoritePickerText: document.getElementById("favorite-picker-text"),
   debugGoalBtn: document.getElementById("debug-goal-btn"),
   themeButtons: [...document.querySelectorAll(".theme-btn")],
+  playerDvdToggle: document.getElementById("player-dvd-toggle"),
+  playerDvdLayer: document.getElementById("player-dvd-layer"),
+  playerDvdAvatar: document.getElementById("player-dvd-avatar"),
+  playerDvdImage: document.getElementById("player-dvd-image"),
+  playerDvdName: document.getElementById("player-dvd-name"),
 };
 
 function clearGameDayCountdownTimer() {
@@ -96,6 +113,226 @@ function applyUiTheme(theme) {
   document.body.setAttribute("data-theme", safeTheme);
   localStorage.setItem("ezra_ui_theme", safeTheme);
   setThemeButtonState();
+}
+
+function setPlayerPopButtonState() {
+  if (!el.playerDvdToggle) return;
+  el.playerDvdToggle.classList.toggle("active", state.playerPopEnabled);
+  el.playerDvdToggle.setAttribute("aria-pressed", String(state.playerPopEnabled));
+}
+
+function stopPlayerPopAnimation() {
+  const pop = state.playerPop;
+  pop.running = false;
+  if (pop.rafId) {
+    cancelAnimationFrame(pop.rafId);
+    pop.rafId = null;
+  }
+}
+
+function hidePlayerPopLayer() {
+  stopPlayerPopAnimation();
+  if (!el.playerDvdLayer) return;
+  el.playerDvdLayer.classList.add("hidden");
+  el.playerDvdLayer.classList.remove("revealed");
+  if (el.playerDvdName) {
+    el.playerDvdName.classList.add("hidden");
+    el.playerDvdName.textContent = "";
+  }
+}
+
+function resolvePlayers(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  if (Array.isArray(payload.player)) return payload.player;
+  return firstArrayValue(payload);
+}
+
+function randomFrom(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+async function fetchPlayersForTeam(team) {
+  if (!team) return [];
+  const teamName = team.strTeam || "";
+  const teamId = team.idTeam || "";
+  const bySearch = await safeLoad(async () => {
+    const data = await apiGetV1(`searchplayers.php?t=${encodeURIComponent(teamName)}`);
+    return resolvePlayers(data);
+  }, []);
+  if (bySearch.length) return bySearch;
+
+  return safeLoad(async () => {
+    const data = await apiGetV1(`lookup_all_players.php?id=${encodeURIComponent(teamId)}`);
+    return resolvePlayers(data);
+  }, []);
+}
+
+function selectCutoutPlayer(players) {
+  const valid = (players || [])
+    .map((p) => ({
+      name: p?.strPlayer || "",
+      image: p?.strCutout || p?.strRender || p?.strThumb || "",
+    }))
+    .filter((p) => p.name && p.image);
+  return randomFrom(valid);
+}
+
+async function randomLeaguePlayerWithCutout() {
+  const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].filter((t) => t?.strTeam);
+  if (!allTeams.length) return null;
+
+  const shuffled = [...allTeams].sort(() => Math.random() - 0.5);
+  const maxAttempts = Math.min(16, shuffled.length);
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const team = shuffled[i];
+    const players = await fetchPlayersForTeam(team);
+    const pick = selectCutoutPlayer(players);
+    if (pick) {
+      return {
+        ...pick,
+        teamName: team.strTeam,
+      };
+    }
+  }
+  return null;
+}
+
+function placePlayerPopElement() {
+  const pop = state.playerPop;
+  const maxX = Math.max(0, window.innerWidth - pop.size);
+  const maxY = Math.max(0, window.innerHeight - pop.size);
+  if (!el.playerDvdAvatar) return;
+  el.playerDvdAvatar.style.transform = `translate(${pop.x}px, ${pop.y}px)`;
+
+  if (el.playerDvdName && !el.playerDvdName.classList.contains("hidden")) {
+    const nameY = Math.min(maxY, pop.y + pop.size + 8);
+    el.playerDvdName.style.transform = `translate(${pop.x}px, ${nameY}px)`;
+  }
+}
+
+function maybeCornerSnap(maxX, maxY) {
+  if (Math.random() > 0.1) return;
+  const corners = [
+    { x: 0, y: 0 },
+    { x: maxX, y: 0 },
+    { x: 0, y: maxY },
+    { x: maxX, y: maxY },
+  ];
+  const corner = randomFrom(corners);
+  if (!corner) return;
+  const pop = state.playerPop;
+  pop.x = corner.x;
+  pop.y = corner.y;
+  pop.vx = corner.x === 0 ? Math.abs(pop.vx) : -Math.abs(pop.vx);
+  pop.vy = corner.y === 0 ? Math.abs(pop.vy) : -Math.abs(pop.vy);
+}
+
+function tickPlayerPop(ts) {
+  const pop = state.playerPop;
+  if (!pop.running || !state.playerPopEnabled) return;
+
+  if (!pop.lastTs) pop.lastTs = ts;
+  const dt = Math.min(40, ts - pop.lastTs);
+  pop.lastTs = ts;
+  const step = dt / 1000;
+
+  pop.x += pop.vx * step;
+  pop.y += pop.vy * step;
+
+  const maxX = Math.max(0, window.innerWidth - pop.size);
+  const maxY = Math.max(0, window.innerHeight - pop.size);
+  let bounced = false;
+
+  if (pop.x <= 0) {
+    pop.x = 0;
+    pop.vx = Math.abs(pop.vx);
+    bounced = true;
+  } else if (pop.x >= maxX) {
+    pop.x = maxX;
+    pop.vx = -Math.abs(pop.vx);
+    bounced = true;
+  }
+
+  if (pop.y <= 0) {
+    pop.y = 0;
+    pop.vy = Math.abs(pop.vy);
+    bounced = true;
+  } else if (pop.y >= maxY) {
+    pop.y = maxY;
+    pop.vy = -Math.abs(pop.vy);
+    bounced = true;
+  }
+
+  if (bounced) {
+    maybeCornerSnap(maxX, maxY);
+  }
+
+  placePlayerPopElement();
+  pop.rafId = requestAnimationFrame(tickPlayerPop);
+}
+
+function startPlayerPopAnimation() {
+  const pop = state.playerPop;
+  pop.running = true;
+  pop.lastTs = 0;
+  if (pop.rafId) {
+    cancelAnimationFrame(pop.rafId);
+    pop.rafId = null;
+  }
+  pop.rafId = requestAnimationFrame(tickPlayerPop);
+}
+
+async function showRandomPlayerPop() {
+  if (state.playerPop.loading || !state.playerPopEnabled) return;
+  if (!el.playerDvdLayer || !el.playerDvdImage || !el.playerDvdAvatar || !el.playerDvdName) return;
+  state.playerPop.loading = true;
+  try {
+    const player = await randomLeaguePlayerWithCutout();
+    if (!player || !state.playerPopEnabled) {
+      return;
+    }
+    const pop = state.playerPop;
+    const maxX = Math.max(0, window.innerWidth - pop.size);
+    const maxY = Math.max(0, window.innerHeight - pop.size);
+    pop.x = Math.random() * maxX;
+    pop.y = Math.random() * maxY;
+    pop.vx = (Math.random() > 0.5 ? 1 : -1) * (130 + Math.random() * 50);
+    pop.vy = (Math.random() > 0.5 ? 1 : -1) * (112 + Math.random() * 48);
+
+    el.playerDvdImage.src = player.image;
+    el.playerDvdImage.alt = `${player.name} cutout`;
+    el.playerDvdName.textContent = player.name;
+    el.playerDvdLayer.classList.remove("hidden");
+    el.playerDvdLayer.classList.remove("revealed");
+    el.playerDvdName.classList.add("hidden");
+    placePlayerPopElement();
+    startPlayerPopAnimation();
+  } finally {
+    state.playerPop.loading = false;
+  }
+}
+
+function setPlayerPopEnabled(enabled) {
+  state.playerPopEnabled = Boolean(enabled);
+  localStorage.setItem("ezra_player_pop_enabled", state.playerPopEnabled ? "1" : "0");
+  setPlayerPopButtonState();
+  if (!state.playerPopEnabled) {
+    hidePlayerPopLayer();
+    return;
+  }
+  showRandomPlayerPop();
+}
+
+function revealAndDismissPlayerPop() {
+  if (!state.playerPopEnabled || !el.playerDvdLayer || !el.playerDvdName) return;
+  stopPlayerPopAnimation();
+  el.playerDvdLayer.classList.add("revealed");
+  el.playerDvdName.classList.remove("hidden");
+  placePlayerPopElement();
+  setTimeout(() => {
+    setPlayerPopEnabled(false);
+  }, 1100);
 }
 
 function setGameDayMessage(text, mode = "neutral") {
@@ -1417,6 +1654,9 @@ async function fullRefresh() {
     renderFixtures();
     renderTables();
     setLeagueButtonState();
+    if (state.playerPopEnabled && el.playerDvdLayer?.classList.contains("hidden")) {
+      showRandomPlayerPop();
+    }
 
     state.lastRefresh = new Date();
     renderLastRefreshed();
@@ -1435,6 +1675,27 @@ function attachEvents() {
     btn.addEventListener("click", () => {
       applyUiTheme(btn.dataset.theme);
     });
+  });
+
+  if (el.playerDvdToggle) {
+    el.playerDvdToggle.addEventListener("click", () => {
+      setPlayerPopEnabled(!state.playerPopEnabled);
+    });
+  }
+
+  if (el.playerDvdAvatar) {
+    el.playerDvdAvatar.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      revealAndDismissPlayerPop();
+    });
+  }
+
+  window.addEventListener("resize", () => {
+    if (!state.playerPopEnabled || !el.playerDvdLayer || el.playerDvdLayer.classList.contains("hidden")) return;
+    const pop = state.playerPop;
+    pop.x = Math.max(0, Math.min(pop.x, window.innerWidth - pop.size));
+    pop.y = Math.max(0, Math.min(pop.y, window.innerHeight - pop.size));
+    placePlayerPopElement();
   });
 
   if (el.debugGoalBtn) {
@@ -1500,4 +1761,8 @@ function attachEvents() {
 
 attachEvents();
 applyUiTheme(state.uiTheme);
+setPlayerPopButtonState();
+if (state.playerPopEnabled) {
+  showRandomPlayerPop();
+}
 fullRefresh();
