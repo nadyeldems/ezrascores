@@ -217,10 +217,74 @@ h1 {
 }
 
 .favorite-fixture-block {
+  position: relative;
+  overflow: hidden;
   border: 1px solid rgba(var(--fav-rgb), 0.4);
   border-radius: 0.75rem;
   padding: 0.55rem;
   background: rgba(0, 0, 0, 0.28);
+}
+
+.favorite-goal-cinematic {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.7rem;
+  background:
+    radial-gradient(circle at 22% 50%, rgba(120, 255, 196, 0.28), transparent 52%),
+    radial-gradient(circle at 80% 48%, rgba(120, 255, 196, 0.16), transparent 48%),
+    linear-gradient(180deg, rgba(0, 17, 10, 0.92), rgba(0, 8, 4, 0.97)),
+    repeating-linear-gradient(
+      0deg,
+      rgba(130, 255, 195, 0.08) 0,
+      rgba(130, 255, 195, 0.08) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  box-shadow:
+    inset 0 0 0 1px rgba(140, 255, 202, 0.25),
+    0 0 22px rgba(80, 255, 170, 0.25);
+}
+
+.favorite-goal-cinematic.active {
+  animation: favorite-goal-overlay 7.4s ease-out both;
+}
+
+.favorite-goal-stage {
+  position: absolute;
+  width: calc(100% - 1.1rem);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  opacity: 0;
+}
+
+.favorite-goal-word {
+  font-size: clamp(2.6rem, 9vw, 4.1rem);
+  color: #c6ffea;
+  text-shadow:
+    0 0 8px rgba(133, 255, 201, 0.85),
+    0 0 22px rgba(78, 255, 173, 0.7),
+    0 0 44px rgba(33, 204, 128, 0.45);
+  animation: favorite-goal-stage-a 2.5s steps(12, end) both;
+}
+
+.favorite-goal-team {
+  font-size: clamp(1.9rem, 5.8vw, 2.8rem);
+  color: #a6ffd8;
+  text-shadow: 0 0 14px rgba(95, 255, 175, 0.65);
+  animation: favorite-goal-stage-b 2.35s 2.35s steps(10, end) both;
+}
+
+.favorite-goal-score {
+  font-size: clamp(1.6rem, 5vw, 2.25rem);
+  color: #e6fff3;
+  text-shadow: 0 0 12px rgba(125, 255, 195, 0.65);
+  animation: favorite-goal-stage-c 2.15s 4.8s steps(10, end) both;
 }
 
 .status-pill {
@@ -259,6 +323,34 @@ h1 {
   0% { opacity: 1; }
   50% { opacity: 0.45; }
   100% { opacity: 1; }
+}
+
+@keyframes favorite-goal-overlay {
+  0% { opacity: 0; }
+  5% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes favorite-goal-stage-a {
+  0% { opacity: 0; transform: scale(0.9); filter: blur(1px); }
+  16% { opacity: 1; transform: scale(1.02); filter: blur(0); }
+  74% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+
+@keyframes favorite-goal-stage-b {
+  0% { opacity: 0; transform: translateY(12px); }
+  16% { opacity: 1; transform: translateY(0); }
+  74% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-3px); }
+}
+
+@keyframes favorite-goal-stage-c {
+  0% { opacity: 0; transform: translateY(12px); }
+  20% { opacity: 1; transform: translateY(0); }
+  78% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-3px); }
 }
 
 .fixture-line,

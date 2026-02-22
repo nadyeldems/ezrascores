@@ -1,5 +1,10 @@
 const API_PROXY_BASE = "/api";
-const LIVE_REFRESH_MS = 25000;
+const POLL_LIVE_MS = 20000;
+const POLL_MATCHDAY_MS = 60000;
+const POLL_IDLE_MS = 300000;
+const LIVE_PROBE_MATCHDAY_MS = 60000;
+const LIVE_PROBE_IDLE_MS = 600000;
+const STATIC_REFRESH_MS = 1800000;
 
 const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
@@ -27,6 +32,12 @@ const state = {
   liveScoreSnapshot: new Map(),
   goalFlashes: new Map(),
   refreshInFlight: false,
+  favoriteGoalAnimationToken: "",
+  favoriteGoalAnimationTimer: null,
+  refreshTimer: null,
+  lastLiveProbeAt: 0,
+  lastStaticRefreshAt: 0,
+  pollMode: "idle",
   lastRefresh: null,
 };
 
@@ -53,6 +64,9 @@ const el = {
   favoriteFixtureLine: document.getElementById("favorite-fixture-line"),
   favoriteFixtureDetail: document.getElementById("favorite-fixture-detail"),
   favoriteLiveStrip: document.getElementById("favorite-live-strip"),
+  favoriteGoalCinematic: document.getElementById("favorite-goal-cinematic"),
+  favoriteGoalTeam: document.getElementById("favorite-goal-team"),
+  favoriteGoalScore: document.getElementById("favorite-goal-score"),
   favoritePicker: document.getElementById("favorite-picker"),
   favoritePickerBtn: document.getElementById("favorite-picker-btn"),
   favoritePickerMenu: document.getElementById("favorite-picker-menu"),
@@ -942,7 +956,16 @@ function triggerDebugGoalAnimation() {
   const pool = visibleFixturesForCurrentFilter();
   if (!pool.length) return;
 
+  const favoriteName = state.favoriteTeam?.strTeam || "";
+  const favoriteFixture = favoriteName
+    ? pool.find(
+        (event) =>
+          event.strHomeTeam === favoriteName || event.strAwayTeam === favoriteName
+      ) || null
+    : null;
+
   const target =
+    favoriteFixture ||
     pool.find((event) => eventState(event).key === "live") ||
     pool.find((event) => scorePair(event)) ||
     pool[0];
@@ -963,13 +986,58 @@ function triggerDebugGoalAnimation() {
   });
 
   renderFixtures();
+  safeLoad(() => renderFavorite(), null);
   setTimeout(() => {
     const flash = state.goalFlashes.get(key);
     if (flash && flash.expiresAt <= Date.now()) {
       state.goalFlashes.delete(key);
       renderFixtures();
+      safeLoad(() => renderFavorite(), null);
     }
   }, 7100);
+}
+
+function clearFavoriteGoalCinematic() {
+  if (state.favoriteGoalAnimationTimer) {
+    clearTimeout(state.favoriteGoalAnimationTimer);
+    state.favoriteGoalAnimationTimer = null;
+  }
+  state.favoriteGoalAnimationToken = "";
+  if (!el.favoriteGoalCinematic) return;
+  el.favoriteGoalCinematic.classList.remove("active");
+  el.favoriteGoalCinematic.classList.add("hidden");
+  if (el.favoriteGoalTeam) el.favoriteGoalTeam.textContent = "";
+  if (el.favoriteGoalScore) el.favoriteGoalScore.textContent = "";
+}
+
+function maybeTriggerFavoriteGoalCinematic(event) {
+  if (!event || !el.favoriteGoalCinematic || !el.favoriteGoalTeam || !el.favoriteGoalScore) return;
+  const key = fixtureKey(event);
+  if (!key) return;
+  const flash = state.goalFlashes.get(key);
+  if (!flash || flash.expiresAt <= Date.now()) return;
+
+  const token = `${key}:${flash.expiresAt}`;
+  if (state.favoriteGoalAnimationToken === token) return;
+  state.favoriteGoalAnimationToken = token;
+
+  if (state.favoriteGoalAnimationTimer) {
+    clearTimeout(state.favoriteGoalAnimationTimer);
+    state.favoriteGoalAnimationTimer = null;
+  }
+
+  el.favoriteGoalTeam.textContent = flash.team || "Goal";
+  el.favoriteGoalScore.textContent = flash.score || "";
+  el.favoriteGoalCinematic.classList.remove("hidden", "active");
+  void el.favoriteGoalCinematic.offsetWidth;
+  el.favoriteGoalCinematic.classList.add("active");
+
+  state.favoriteGoalAnimationTimer = setTimeout(() => {
+    if (!el.favoriteGoalCinematic) return;
+    el.favoriteGoalCinematic.classList.remove("active");
+    el.favoriteGoalCinematic.classList.add("hidden");
+    state.favoriteGoalAnimationTimer = null;
+  }, 7600);
 }
 
 function nextFixtureTickerText(team, nextEvent) {
@@ -998,6 +1066,7 @@ function nextFixtureSummary(team, nextEvent) {
 
 async function renderFavorite() {
   if (!state.favoriteTeamId) {
+    clearFavoriteGoalCinematic();
     clearGameDayCountdownTimer();
     state.lastCountdownTarget = null;
     setGameDayMessage("Select a favourite team", "neutral");
@@ -1013,6 +1082,7 @@ async function renderFavorite() {
     state.favoriteTeamId = "";
     state.favoriteTeam = null;
     localStorage.removeItem("esra_favorite_team");
+    clearFavoriteGoalCinematic();
     clearGameDayCountdownTimer();
     state.lastCountdownTarget = null;
     setGameDayMessage("Select a favourite team", "neutral");
@@ -1088,10 +1158,12 @@ async function renderFavorite() {
     el.favoriteLiveStrip.classList.remove("hidden");
     el.favoriteLiveStrip.classList.remove("ticker-static");
     el.favoriteLiveStrip.innerHTML = `<span class="ticker-content">${nextFixtureTickerText(team, nextEvent)}</span>`;
+    maybeTriggerFavoriteGoalCinematic(chosenToday);
     return;
   }
 
   if (chosenToday && chosenToday.dateEvent === todayIso && chosenTodayState === "final") {
+    clearFavoriteGoalCinematic();
     el.favoriteStatus.textContent = "Final Score";
     el.favoriteStatus.classList.add("final");
     el.favoriteFixtureLine.textContent = scoreLine(chosenToday);
@@ -1103,6 +1175,7 @@ async function renderFavorite() {
   }
 
   el.favoriteStatus.textContent = "Upcoming";
+  clearFavoriteGoalCinematic();
   if (nextEvent && nextEvent.dateEvent === todayIso) {
     el.favoriteStatus.classList.add("gameday");
   }
@@ -1139,7 +1212,9 @@ async function safeLoad(loader, fallback) {
   }
 }
 
-async function loadCoreData() {
+async function loadCoreData(options = {}) {
+  const includeLive = options.includeLive !== false;
+  const includeStatic = options.includeStatic !== false;
   const now = new Date();
   const prev = new Date(now);
   prev.setDate(now.getDate() - 1);
@@ -1170,18 +1245,18 @@ async function loadCoreData() {
   ] = await Promise.all([
     safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.today), []),
     safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.today), []),
-    safeLoad(() => fetchLiveByLeague(LEAGUES.EPL.id), []),
-    safeLoad(() => fetchLiveByLeague(LEAGUES.CHAMP.id), []),
+    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.EPL.id), []) : Promise.resolve([]),
+    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.CHAMP.id), []) : Promise.resolve([]),
     safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.prev), []),
     safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.prev), []),
     safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.next), []),
     safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.next), []),
-    safeLoad(() => fetchTable(LEAGUES.EPL.id), []),
-    safeLoad(() => fetchTable(LEAGUES.CHAMP.id), []),
-    safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []),
-    safeLoad(() => fetchAllTeams(LEAGUES.CHAMP.id), []),
-    safeLoad(() => fetchLeagueMeta(LEAGUES.EPL.id), null),
-    safeLoad(() => fetchLeagueMeta(LEAGUES.CHAMP.id), null),
+    includeStatic ? safeLoad(() => fetchTable(LEAGUES.EPL.id), []) : Promise.resolve(state.tables.EPL || []),
+    includeStatic ? safeLoad(() => fetchTable(LEAGUES.CHAMP.id), []) : Promise.resolve(state.tables.CHAMP || []),
+    includeStatic ? safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []) : Promise.resolve(state.teamsByLeague.EPL || []),
+    includeStatic ? safeLoad(() => fetchAllTeams(LEAGUES.CHAMP.id), []) : Promise.resolve(state.teamsByLeague.CHAMP || []),
+    includeStatic ? safeLoad(() => fetchLeagueMeta(LEAGUES.EPL.id), null) : Promise.resolve(null),
+    includeStatic ? safeLoad(() => fetchLeagueMeta(LEAGUES.CHAMP.id), null) : Promise.resolve(null),
   ]);
 
   state.fixtures.today.EPL = mergeTodayWithLive(todayEpl, liveEpl).sort(fixtureSort);
@@ -1202,8 +1277,18 @@ async function loadCoreData() {
       state.teamBadgeMap[team.strTeam] = team.strBadge;
     }
   });
-  state.leagueBadges.EPL = leagueMetaEpl?.strBadge || leagueMetaEpl?.strLogo || "";
-  state.leagueBadges.CHAMP = leagueMetaChamp?.strBadge || leagueMetaChamp?.strLogo || "";
+  if (includeStatic) {
+    state.lastStaticRefreshAt = Date.now();
+  }
+  if (leagueMetaEpl) {
+    state.leagueBadges.EPL = leagueMetaEpl.strBadge || leagueMetaEpl.strLogo || state.leagueBadges.EPL || "";
+  }
+  if (leagueMetaChamp) {
+    state.leagueBadges.CHAMP = leagueMetaChamp.strBadge || leagueMetaChamp.strLogo || state.leagueBadges.CHAMP || "";
+  }
+  if (includeLive) {
+    state.lastLiveProbeAt = Date.now();
+  }
   ensureDefaultFavoriteTeam();
 }
 
@@ -1215,9 +1300,90 @@ function renderLastRefreshed() {
   el.lastRefreshed.textContent = `Last refreshed: ${state.lastRefresh.toLocaleString("en-GB")}`;
 }
 
+function fixtureKickoffDate(event) {
+  if (!event?.dateEvent) return null;
+  const rawTime = (event.strTime || "12:00:00").slice(0, 8);
+  const dt = new Date(`${event.dateEvent}T${rawTime}`);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function currentPollContext() {
+  const now = new Date();
+  const todayIso = toISODate(now);
+  const todayPool = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP].filter((event) => event?.dateEvent === todayIso);
+  const hasTodayFixtures = todayPool.length > 0;
+  const hasLive = todayPool.some((event) => eventState(event).key === "live");
+  const selectedDateIsToday = state.selectedDate === todayIso;
+  const favoriteName = state.favoriteTeam?.strTeam || "";
+  const favoriteHasTodayFixture = favoriteName
+    ? todayPool.some((event) => event.strHomeTeam === favoriteName || event.strAwayTeam === favoriteName)
+    : false;
+
+  const upcomingMinutes = todayPool
+    .filter((event) => eventState(event).key === "upcoming")
+    .map((event) => {
+      const kickoff = fixtureKickoffDate(event);
+      if (!kickoff) return null;
+      return Math.floor((kickoff.getTime() - now.getTime()) / 60000);
+    })
+    .filter((mins) => mins !== null && mins >= 0)
+    .sort((a, b) => a - b);
+  const minutesToNextKickoff = upcomingMinutes.length ? upcomingMinutes[0] : null;
+
+  return {
+    hasTodayFixtures,
+    hasLive,
+    selectedDateIsToday,
+    favoriteHasTodayFixture,
+    minutesToNextKickoff,
+  };
+}
+
+function shouldFetchStaticData() {
+  if (!state.tables.EPL.length || !state.tables.CHAMP.length) return true;
+  if (!state.teamsByLeague.EPL.length || !state.teamsByLeague.CHAMP.length) return true;
+  return Date.now() - state.lastStaticRefreshAt >= STATIC_REFRESH_MS;
+}
+
+function shouldFetchLiveData(context) {
+  const sinceLastLiveProbe = Date.now() - state.lastLiveProbeAt;
+  if (context.hasLive) return true;
+  if (context.selectedDateIsToday || context.favoriteHasTodayFixture || context.hasTodayFixtures) {
+    if (context.minutesToNextKickoff !== null && context.minutesToNextKickoff <= 120) return true;
+    return sinceLastLiveProbe >= LIVE_PROBE_MATCHDAY_MS;
+  }
+  return sinceLastLiveProbe >= LIVE_PROBE_IDLE_MS;
+}
+
+function nextPollDelay(context) {
+  if (context.hasLive) {
+    state.pollMode = "live";
+    return POLL_LIVE_MS;
+  }
+  if (context.hasTodayFixtures || context.favoriteHasTodayFixture) {
+    state.pollMode = "matchday";
+    return POLL_MATCHDAY_MS;
+  }
+  state.pollMode = "idle";
+  return POLL_IDLE_MS;
+}
+
+function scheduleNextRefresh(context) {
+  if (state.refreshTimer) {
+    clearTimeout(state.refreshTimer);
+    state.refreshTimer = null;
+  }
+  const delay = nextPollDelay(context);
+  state.refreshTimer = setTimeout(() => {
+    fullRefresh();
+  }, delay);
+}
+
 async function fullRefresh() {
   if (state.refreshInFlight) return;
   state.refreshInFlight = true;
+  let nextContext = currentPollContext();
   try {
     if (!state.selectedDate) {
       state.selectedDate = toISODate(new Date());
@@ -1225,7 +1391,9 @@ async function fullRefresh() {
     if (state.favoriteTeamId) {
       localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
     }
-    await loadCoreData();
+    const includeLive = shouldFetchLiveData(nextContext);
+    const includeStatic = shouldFetchStaticData();
+    await loadCoreData({ includeLive, includeStatic });
     detectGoalFlashes();
     await refreshSelectedDateFixtures();
     buildFavoriteOptions();
@@ -1236,11 +1404,13 @@ async function fullRefresh() {
 
     state.lastRefresh = new Date();
     renderLastRefreshed();
+    nextContext = currentPollContext();
   } catch (err) {
     displayApiError(el.fixturesList, err);
     el.tablesWrap.innerHTML = `<div class="error">Unable to load league tables. ${err.message}</div>`;
   } finally {
     state.refreshInFlight = false;
+    scheduleNextRefresh(nextContext);
   }
 }
 
@@ -1308,4 +1478,3 @@ function attachEvents() {
 
 attachEvents();
 fullRefresh();
-setInterval(fullRefresh, LIVE_REFRESH_MS);
