@@ -26,6 +26,7 @@ const state = {
   teamBadgeMap: {},
   teamsByLeague: { EPL: [], CHAMP: [] },
   favoriteTeamId: localStorage.getItem("esra_favorite_team") || "",
+  uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
   favoriteTeam: null,
   gameDayCountdownTimer: null,
   lastCountdownTarget: null,
@@ -73,6 +74,7 @@ const el = {
   favoritePickerLogo: document.getElementById("favorite-picker-logo"),
   favoritePickerText: document.getElementById("favorite-picker-text"),
   debugGoalBtn: document.getElementById("debug-goal-btn"),
+  themeButtons: [...document.querySelectorAll(".theme-btn")],
 };
 
 function clearGameDayCountdownTimer() {
@@ -80,6 +82,20 @@ function clearGameDayCountdownTimer() {
     clearInterval(state.gameDayCountdownTimer);
     state.gameDayCountdownTimer = null;
   }
+}
+
+function setThemeButtonState() {
+  el.themeButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.theme === state.uiTheme);
+  });
+}
+
+function applyUiTheme(theme) {
+  const safeTheme = theme === "t90" ? "t90" : "classic";
+  state.uiTheme = safeTheme;
+  document.body.setAttribute("data-theme", safeTheme);
+  localStorage.setItem("ezra_ui_theme", safeTheme);
+  setThemeButtonState();
 }
 
 function setGameDayMessage(text, mode = "neutral") {
@@ -1415,6 +1431,12 @@ async function fullRefresh() {
 }
 
 function attachEvents() {
+  el.themeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyUiTheme(btn.dataset.theme);
+    });
+  });
+
   if (el.debugGoalBtn) {
     el.debugGoalBtn.addEventListener("click", () => {
       triggerDebugGoalAnimation();
@@ -1477,4 +1499,5 @@ function attachEvents() {
 }
 
 attachEvents();
+applyUiTheme(state.uiTheme);
 fullRefresh();
