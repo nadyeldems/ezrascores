@@ -43,7 +43,14 @@
               </div>
             </div>
           </div>
-          <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop">POP</button>
+          <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop">
+            POP
+            <span id="player-pop-score-badge" class="player-pop-score-badge">0</span>
+          </button>
+          <div class="dream-team-nav">
+            <button id="dream-team-toggle-btn" class="btn dream-team-toggle disabled" type="button" aria-expanded="false" title="Choose a favourite team, then star players to start your Dream Team">Dream Team</button>
+            <p id="dream-team-hint" class="dream-team-hint hidden">Choose a favourite team, then star players to start your Dream Team.</p>
+          </div>
           <p id="game-day-message" class="game-day-message neutral">Select a favourite team</p>
           <div class="favorite-picker header-picker" id="favorite-picker">
             <button
@@ -93,6 +100,21 @@
       </section>
 
       <main>
+        <section class="panel hidden" id="squad-panel">
+          <div class="panel-head">
+            <h3 id="squad-title">Squad</h3>
+          </div>
+          <div id="squad-list" class="squad-list"></div>
+        </section>
+
+        <section class="panel hidden" id="dream-team-panel">
+          <div class="panel-head dream-team-head">
+            <h3>Dream Team</h3>
+            <button id="dream-team-download-btn" class="btn" type="button">Download Image</button>
+          </div>
+          <div id="dream-team-list" class="dream-team-list"></div>
+        </section>
+
         <section class="panel controls-panel">
           <div class="filter-toolbar">
             <div class="filter-group">
@@ -149,6 +171,11 @@
         <img id="player-dvd-image" class="player-dvd-image" alt="" />
       </button>
       <div id="player-dvd-name" class="player-dvd-name hidden"></div>
+      <div id="player-quiz-card" class="player-quiz-card hidden">
+        <p class="player-quiz-title">Who's this player?</p>
+        <div id="player-quiz-options" class="player-quiz-options"></div>
+      </div>
+      <div id="player-quiz-feedback" class="player-quiz-feedback hidden"></div>
     </div>
 
     <template id="fixture-template">

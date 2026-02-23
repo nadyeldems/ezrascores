@@ -29,6 +29,27 @@ const state = {
   uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
   playerPopEnabled: localStorage.getItem("ezra_player_pop_enabled") === "1",
   playerPopScope: localStorage.getItem("ezra_player_pop_scope") === "favorite" ? "favorite" : "any",
+  teamPlayersCache: {},
+  playerQuiz: {
+    poolKey: "",
+    pool: [],
+    solved: new Set(),
+    activePlayer: null,
+    correctCount: 0,
+    allCorrect: false,
+    isLocked: false,
+  },
+  squadByTeamId: {},
+  dreamTeam: (() => {
+    try {
+      const raw = localStorage.getItem("ezra_dream_team");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  })(),
+  dreamTeamOpen: false,
   favoriteTeam: null,
   gameDayCountdownTimer: null,
   lastCountdownTarget: null,
@@ -52,6 +73,7 @@ const state = {
     vy: 124,
     size: 94,
     lastTs: 0,
+    player: null,
   },
   lastRefresh: null,
 };
@@ -93,11 +115,23 @@ const el = {
   settingsToggleBtn: document.getElementById("settings-toggle-btn"),
   settingsPanel: document.getElementById("settings-panel"),
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
+  playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
   playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
+  dreamTeamToggleBtn: document.getElementById("dream-team-toggle-btn"),
+  dreamTeamHint: document.getElementById("dream-team-hint"),
+  dreamTeamPanel: document.getElementById("dream-team-panel"),
+  dreamTeamList: document.getElementById("dream-team-list"),
+  dreamTeamDownloadBtn: document.getElementById("dream-team-download-btn"),
+  squadPanel: document.getElementById("squad-panel"),
+  squadTitle: document.getElementById("squad-title"),
+  squadList: document.getElementById("squad-list"),
   playerDvdLayer: document.getElementById("player-dvd-layer"),
   playerDvdAvatar: document.getElementById("player-dvd-avatar"),
   playerDvdImage: document.getElementById("player-dvd-image"),
   playerDvdName: document.getElementById("player-dvd-name"),
+  playerQuizCard: document.getElementById("player-quiz-card"),
+  playerQuizOptions: document.getElementById("player-quiz-options"),
+  playerQuizFeedback: document.getElementById("player-quiz-feedback"),
 };
 
 function clearGameDayCountdownTimer() {
@@ -288,58 +322,441 @@ async function fetchPlayersForTeam(team) {
   if (!team) return [];
   const teamName = team.strTeam || "";
   const teamId = team.idTeam || "";
+  if (teamId && Array.isArray(state.teamPlayersCache[teamId])) {
+    return state.teamPlayersCache[teamId];
+  }
   const bySearch = await safeLoad(async () => {
     const data = await apiGetV1(`searchplayers.php?t=${encodeURIComponent(teamName)}`);
     return resolvePlayers(data);
   }, []);
-  if (bySearch.length) return bySearch;
+  if (bySearch.length) {
+    if (teamId) state.teamPlayersCache[teamId] = bySearch;
+    return bySearch;
+  }
 
-  return safeLoad(async () => {
+  const byLookup = await safeLoad(async () => {
     const data = await apiGetV1(`lookup_all_players.php?id=${encodeURIComponent(teamId)}`);
     return resolvePlayers(data);
   }, []);
+  if (teamId) state.teamPlayersCache[teamId] = byLookup;
+  return byLookup;
 }
 
 function selectCutoutPlayer(players) {
   const valid = (players || [])
     .map((p) => ({
+      id: p?.idPlayer || "",
       name: p?.strPlayer || "",
       image: p?.strCutout || p?.strRender || p?.strThumb || "",
+      nationality: p?.strNationality || "Unknown",
+      position: p?.strPosition || "Unknown",
     }))
     .filter((p) => p.name && p.image);
   return randomFrom(valid);
 }
 
+function playerKey(player) {
+  if (!player) return "";
+  if (player.id) return `id:${player.id}`;
+  if (player.idPlayer) return `id:${player.idPlayer}`;
+  return `n:${(player.name || player.strPlayer || "").toLowerCase()}|${(player.teamId || player.idTeam || "").toString()}`;
+}
+
+function normalizeSquadPlayer(raw, team) {
+  if (!raw) return null;
+  const name = raw.strPlayer || raw.name || "";
+  if (!name) return null;
+  return {
+    key: playerKey({ id: raw.idPlayer, name, teamId: team?.idTeam }),
+    idPlayer: raw.idPlayer || "",
+    name,
+    nationality: raw.strNationality || "Unknown",
+    position: raw.strPosition || "Unknown",
+    image: raw.strCutout || raw.strRender || raw.strThumb || "",
+    teamId: team?.idTeam || "",
+    teamName: team?.strTeam || raw.strTeam || "",
+    teamBadge: team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || "",
+  };
+}
+
+function positionBucket(position) {
+  const p = (position || "").toLowerCase();
+  if (p.includes("manager") || p.includes("coach")) return "Manager";
+  if (p.includes("goalkeeper") || p === "gk" || p.includes("keeper")) return "Goalkeepers";
+  if (p.includes("defender") || p.includes("back")) return "Defenders";
+  if (p.includes("midfielder") || p.includes("midfield") || p.includes("winger")) return "Midfielders";
+  if (p.includes("forward") || p.includes("striker") || p.includes("attacker")) return "Attackers";
+  return "Midfielders";
+}
+
+function getTeamById(id) {
+  if (!id) return null;
+  return [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].find((team) => team.idTeam === id) || null;
+}
+
+function getQuizTeams() {
+  const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP];
+  if (state.playerPopScope !== "favorite") return allTeams;
+  const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
+  return favorite ? [favorite] : allTeams;
+}
+
+function refreshPlayerPopScoreBadge() {
+  if (!el.playerPopScoreBadge) return;
+  el.playerPopScoreBadge.textContent = String(state.playerQuiz.correctCount || 0);
+  el.playerPopScoreBadge.classList.toggle("all-complete", Boolean(state.playerQuiz.allCorrect));
+}
+
+function setQuizLocked(locked) {
+  state.playerQuiz.isLocked = Boolean(locked);
+  if (!el.playerQuizOptions) return;
+  [...el.playerQuizOptions.querySelectorAll("button")].forEach((btn) => {
+    btn.disabled = state.playerQuiz.isLocked;
+  });
+}
+
+function setQuizFeedback(message, mode = "neutral") {
+  if (!el.playerQuizFeedback) return;
+  el.playerQuizFeedback.textContent = message;
+  el.playerQuizFeedback.classList.remove("hidden", "correct", "wrong");
+  if (mode === "correct") el.playerQuizFeedback.classList.add("correct");
+  if (mode === "wrong") el.playerQuizFeedback.classList.add("wrong");
+  if (mode === "neutral") el.playerQuizFeedback.classList.add("neutral");
+}
+
+function hideQuizFeedback() {
+  if (!el.playerQuizFeedback) return;
+  el.playerQuizFeedback.classList.add("hidden");
+  el.playerQuizFeedback.textContent = "";
+  el.playerQuizFeedback.classList.remove("correct", "wrong", "neutral");
+}
+
+function hidePlayerQuizCard() {
+  if (el.playerQuizCard) el.playerQuizCard.classList.add("hidden");
+  if (el.playerQuizOptions) el.playerQuizOptions.innerHTML = "";
+  hideQuizFeedback();
+}
+
+function randomChoices(players, count) {
+  const list = [...players];
+  for (let i = list.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list.slice(0, count);
+}
+
 async function randomLeaguePlayerWithCutout() {
-  const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].filter((t) => t?.strTeam);
-  if (!allTeams.length) return null;
+  const teams = getQuizTeams().filter((team) => team?.strTeam);
+  if (!teams.length) return null;
 
-  let pool = allTeams;
-  if (state.playerPopScope === "favorite") {
-    const favoriteId = state.favoriteTeamId || "";
-    const favoriteName = (state.favoriteTeam?.strTeam || "").toLowerCase();
-    pool = allTeams.filter(
-      (team) =>
-        (favoriteId && team.idTeam === favoriteId) ||
-        (favoriteName && (team.strTeam || "").toLowerCase() === favoriteName)
+  const poolKey = `${state.playerPopScope}:${teams.map((team) => team.idTeam || team.strTeam).join(",")}`;
+  if (state.playerQuiz.poolKey !== poolKey) {
+    state.playerQuiz.poolKey = poolKey;
+    state.playerQuiz.pool = [];
+    state.playerQuiz.solved = new Set();
+    state.playerQuiz.allCorrect = false;
+    state.playerQuiz.correctCount = 0;
+    refreshPlayerPopScoreBadge();
+  }
+
+  if (!state.playerQuiz.pool.length) {
+    const playersByTeam = await Promise.all(
+      teams.map(async (team) => {
+        const players = await fetchPlayersForTeam(team);
+        return players
+          .map((raw) => normalizeSquadPlayer(raw, team))
+          .filter((player) => player && player.image);
+      })
     );
-    if (!pool.length) return null;
+    state.playerQuiz.pool = playersByTeam.flat();
   }
 
-  const shuffled = [...pool].sort(() => Math.random() - 0.5);
-  const maxAttempts = Math.min(16, shuffled.length);
-  for (let i = 0; i < maxAttempts; i += 1) {
-    const team = shuffled[i];
-    const players = await fetchPlayersForTeam(team);
-    const pick = selectCutoutPlayer(players);
-    if (pick) {
-      return {
-        ...pick,
-        teamName: team.strTeam,
-      };
-    }
+  if (!state.playerQuiz.pool.length) return null;
+
+  const unresolved = state.playerQuiz.pool.filter((player) => !state.playerQuiz.solved.has(player.key));
+  if (!unresolved.length) {
+    state.playerQuiz.allCorrect = true;
+    state.playerQuiz.solved.clear();
+    refreshPlayerPopScoreBadge();
   }
-  return null;
+
+  const candidates = state.playerQuiz.pool.filter((player) => !state.playerQuiz.solved.has(player.key));
+  return randomFrom(candidates.length ? candidates : state.playerQuiz.pool);
+}
+
+function quizOptionsForPlayer(player) {
+  if (!player) return [];
+  const wrongPool = state.playerQuiz.pool.filter((p) => p.key !== player.key);
+  const wrongTwo = randomChoices(wrongPool, 2);
+  return randomChoices([player, ...wrongTwo], 3);
+}
+
+function renderPlayerQuiz(player) {
+  if (!player || !el.playerQuizCard || !el.playerQuizOptions) return;
+  const options = quizOptionsForPlayer(player);
+  el.playerQuizOptions.innerHTML = "";
+  options.forEach((option) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn player-quiz-option";
+    btn.textContent = option.name;
+    btn.addEventListener("click", async () => {
+      if (state.playerQuiz.isLocked) return;
+      const correct = option.key === player.key;
+      setQuizLocked(true);
+      if (!correct) {
+        setQuizFeedback("TRY AGAIN", "wrong");
+        setTimeout(() => {
+          setQuizLocked(false);
+          hideQuizFeedback();
+        }, 900);
+        return;
+      }
+
+      state.playerQuiz.solved.add(player.key);
+      state.playerQuiz.correctCount += 1;
+      refreshPlayerPopScoreBadge();
+      setQuizFeedback("IT'S A GOAL!", "correct");
+      setTimeout(async () => {
+        hidePlayerQuizCard();
+        setQuizLocked(false);
+        await showRandomPlayerPop();
+      }, 1200);
+    });
+    el.playerQuizOptions.appendChild(btn);
+  });
+  hideQuizFeedback();
+  setQuizLocked(false);
+  el.playerQuizCard.classList.remove("hidden");
+}
+
+function saveDreamTeam() {
+  localStorage.setItem("ezra_dream_team", JSON.stringify(state.dreamTeam));
+}
+
+function isDreamPlayer(playerKeyValue) {
+  return state.dreamTeam.some((player) => player.key === playerKeyValue);
+}
+
+function renderDreamTeamNavState() {
+  if (!el.dreamTeamToggleBtn) return;
+  const hasPlayers = state.dreamTeam.length > 0;
+  el.dreamTeamToggleBtn.classList.toggle("disabled", !hasPlayers);
+  el.dreamTeamToggleBtn.classList.toggle("active", state.dreamTeamOpen);
+  el.dreamTeamToggleBtn.setAttribute("aria-expanded", String(state.dreamTeamOpen));
+  if (!hasPlayers) {
+    el.dreamTeamToggleBtn.title = "Choose a favourite team, then star players to start your Dream Team";
+  } else {
+    el.dreamTeamToggleBtn.title = "View your Dream Team";
+  }
+}
+
+function sortedByName(list) {
+  return [...list].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+}
+
+function renderSquadPanel() {
+  if (!el.squadPanel || !el.squadList || !el.squadTitle) return;
+  const favorite = state.favoriteTeam;
+  if (!favorite?.idTeam) {
+    el.squadPanel.classList.add("hidden");
+    el.squadList.innerHTML = "";
+    return;
+  }
+  const squad = state.squadByTeamId[favorite.idTeam] || [];
+  el.squadPanel.classList.remove("hidden");
+  el.squadTitle.textContent = `${favorite.strTeam} Squad`;
+  el.squadList.innerHTML = "";
+
+  if (!squad.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Squad unavailable right now.";
+    el.squadList.appendChild(empty);
+    return;
+  }
+
+  sortedByName(squad).forEach((player) => {
+    const row = document.createElement("div");
+    row.className = "squad-row";
+    const starOn = isDreamPlayer(player.key);
+    row.innerHTML = `
+      <div class="squad-main">
+        <span class="squad-name">${player.name}</span>
+        <span class="squad-meta">${player.nationality} • ${player.position}</span>
+      </div>
+      <button class="btn squad-star ${starOn ? "active" : ""}" type="button" aria-label="Toggle Dream Team player">${starOn ? "★" : "☆"}</button>
+    `;
+    const starBtn = row.querySelector(".squad-star");
+    starBtn.addEventListener("click", () => {
+      toggleDreamTeamPlayer(player);
+    });
+    el.squadList.appendChild(row);
+  });
+}
+
+function groupDreamTeamPlayers() {
+  const groups = {
+    Manager: [],
+    Goalkeepers: [],
+    Defenders: [],
+    Midfielders: [],
+    Attackers: [],
+  };
+  state.dreamTeam.forEach((player) => {
+    const bucket = positionBucket(player.position);
+    if (!groups[bucket]) groups[bucket] = [];
+    groups[bucket].push(player);
+  });
+  return groups;
+}
+
+function renderDreamTeamPanel() {
+  if (!el.dreamTeamPanel || !el.dreamTeamList) return;
+  if (!state.dreamTeamOpen) {
+    el.dreamTeamPanel.classList.add("hidden");
+    return;
+  }
+  el.dreamTeamPanel.classList.remove("hidden");
+  el.dreamTeamList.innerHTML = "";
+
+  if (!state.dreamTeam.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Start by choosing a favourite team and starring players.";
+    el.dreamTeamList.appendChild(empty);
+    return;
+  }
+
+  const groups = groupDreamTeamPlayers();
+  ["Manager", "Goalkeepers", "Defenders", "Midfielders", "Attackers"].forEach((label) => {
+    const section = document.createElement("section");
+    section.className = "dream-group";
+    const title = document.createElement("h4");
+    title.textContent = label;
+    section.appendChild(title);
+
+    const players = groups[label] || [];
+    if (!players.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No players selected.";
+      section.appendChild(empty);
+    } else {
+      players.forEach((player) => {
+        const row = document.createElement("div");
+        row.className = "dream-row";
+        row.innerHTML = `
+          <div class="dream-main">
+            <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
+            <div class="dream-text">
+              <span class="dream-name">${player.name}</span>
+              <span class="dream-meta">${player.nationality} • ${player.teamName}</span>
+            </div>
+          </div>
+          <button class="btn dream-remove" type="button" aria-label="Remove from Dream Team">Unstar</button>
+        `;
+        row.querySelector(".dream-remove").addEventListener("click", () => {
+          toggleDreamTeamPlayer(player);
+        });
+        section.appendChild(row);
+      });
+    }
+    el.dreamTeamList.appendChild(section);
+  });
+}
+
+function toggleDreamTeamPlayer(player) {
+  const index = state.dreamTeam.findIndex((p) => p.key === player.key);
+  if (index >= 0) {
+    state.dreamTeam.splice(index, 1);
+  } else {
+    state.dreamTeam.push(player);
+  }
+  saveDreamTeam();
+  renderDreamTeamNavState();
+  renderSquadPanel();
+  renderDreamTeamPanel();
+}
+
+function toggleDreamTeamPanel() {
+  if (!state.dreamTeam.length) {
+    if (el.dreamTeamHint) {
+      el.dreamTeamHint.classList.remove("hidden");
+      setTimeout(() => el.dreamTeamHint.classList.add("hidden"), 2400);
+    }
+    return;
+  }
+  state.dreamTeamOpen = !state.dreamTeamOpen;
+  renderDreamTeamNavState();
+  renderDreamTeamPanel();
+}
+
+function escapeForCanvas(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function downloadDreamTeamImage() {
+  if (!state.dreamTeam.length) return;
+  const groups = groupDreamTeamPlayers();
+  const sections = ["Manager", "Goalkeepers", "Defenders", "Midfielders", "Attackers"];
+  const rowCount = sections.reduce((sum, key) => sum + Math.max(1, (groups[key] || []).length), 0);
+  const width = 1400;
+  const height = 260 + rowCount * 58;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.fillStyle = "#090503";
+  ctx.fillRect(0, 0, width, height);
+  const grad = ctx.createLinearGradient(0, 0, width, height);
+  grad.addColorStop(0, "rgba(255,153,32,0.16)");
+  grad.addColorStop(1, "rgba(12,8,4,0.12)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "#ff9a1f";
+  ctx.font = "72px VT323";
+  ctx.fillText("EZRASCORES DREAM TEAM", 60, 90);
+  ctx.font = "36px VT323";
+  ctx.fillStyle = "#ffbf74";
+  ctx.fillText(`Generated ${new Date().toLocaleString("en-GB")}`, 60, 132);
+
+  let y = 192;
+  sections.forEach((section) => {
+    ctx.fillStyle = "#ffc072";
+    ctx.font = "44px VT323";
+    ctx.fillText(section, 60, y);
+    y += 36;
+
+    const players = groups[section] || [];
+    if (!players.length) {
+      ctx.fillStyle = "#9e6a2d";
+      ctx.font = "32px VT323";
+      ctx.fillText("No players selected", 84, y);
+      y += 46;
+      return;
+    }
+
+    players.forEach((player) => {
+      ctx.fillStyle = "#f6d5aa";
+      ctx.font = "34px VT323";
+      ctx.fillText(escapeForCanvas(player.name), 84, y);
+      ctx.fillStyle = "#c7883a";
+      ctx.font = "29px VT323";
+      ctx.fillText(`${escapeForCanvas(player.nationality)} | ${escapeForCanvas(player.teamName)}`, 540, y);
+      y += 42;
+    });
+    y += 6;
+  });
+
+  const link = document.createElement("a");
+  link.download = "ezrascores-dream-team.png";
+  link.href = canvas.toDataURL("image/png");
+  link.click();
 }
 
 function placePlayerPopElement() {
@@ -441,7 +858,9 @@ async function showRandomPlayerPop() {
       hidePlayerPopLayer();
       return;
     }
+    hidePlayerQuizCard();
     const pop = state.playerPop;
+    pop.player = player;
     const maxX = Math.max(0, window.innerWidth - pop.size);
     const maxY = Math.max(0, window.innerHeight - pop.size);
     pop.x = Math.random() * maxX;
@@ -476,16 +895,9 @@ function setPlayerPopEnabled(enabled) {
 }
 
 function revealAndDismissPlayerPop() {
-  if (!state.playerPopEnabled || !el.playerDvdLayer || !el.playerDvdName) return;
+  if (!state.playerPopEnabled || !el.playerDvdLayer || !state.playerPop.player) return;
   stopPlayerPopAnimation();
-  el.playerDvdLayer.classList.add("revealed");
-  el.playerDvdName.classList.remove("hidden");
-  el.playerDvdName.classList.add("prominent");
-  el.playerDvdName.style.transform = "";
-  placePlayerPopElement();
-  setTimeout(() => {
-    setPlayerPopEnabled(false);
-  }, 4000);
+  renderPlayerQuiz(state.playerPop.player);
 }
 
 function setGameDayMessage(text, mode = "neutral") {
@@ -1480,6 +1892,9 @@ async function renderFavorite() {
     setGameDayMessage("Select a favourite team", "neutral");
     setFavoritePickerDisplay(null);
     resetFavoriteTheme();
+    renderSquadPanel();
+    renderDreamTeamNavState();
+    renderDreamTeamPanel();
     el.favoriteEmpty.classList.remove("hidden");
     el.favoriteContent.classList.add("hidden");
     return;
@@ -1497,6 +1912,9 @@ async function renderFavorite() {
     setGameDayMessage("Select a favourite team", "neutral");
     setFavoritePickerDisplay(null);
     resetFavoriteTheme();
+    renderSquadPanel();
+    renderDreamTeamNavState();
+    renderDreamTeamPanel();
     el.favoriteEmpty.classList.remove("hidden");
     el.favoriteContent.classList.add("hidden");
     return;
@@ -1504,6 +1922,15 @@ async function renderFavorite() {
 
   state.favoriteTeam = team;
   applyClubThemeFromFavoriteTeam();
+  if (team.idTeam && !state.squadByTeamId[team.idTeam]) {
+    const rawPlayers = await safeLoad(() => fetchPlayersForTeam(team), []);
+    state.squadByTeamId[team.idTeam] = rawPlayers
+      .map((player) => normalizeSquadPlayer(player, team))
+      .filter(Boolean);
+  }
+  renderSquadPanel();
+  renderDreamTeamNavState();
+  renderDreamTeamPanel();
   const todayIso = toISODate(new Date());
   const lastEvents = await safeLoad(() => fetchTeamLastEvents(team.idTeam), []);
   const liveEvent = findLiveForFavorite(team.strTeam);
@@ -1863,6 +2290,28 @@ function attachEvents() {
     });
   }
 
+  if (el.dreamTeamToggleBtn) {
+    el.dreamTeamToggleBtn.addEventListener("click", () => {
+      toggleDreamTeamPanel();
+    });
+    el.dreamTeamToggleBtn.addEventListener("mouseenter", () => {
+      if (!state.dreamTeam.length && el.dreamTeamHint) {
+        el.dreamTeamHint.classList.remove("hidden");
+      }
+    });
+    el.dreamTeamToggleBtn.addEventListener("mouseleave", () => {
+      if (el.dreamTeamHint) {
+        el.dreamTeamHint.classList.add("hidden");
+      }
+    });
+  }
+
+  if (el.dreamTeamDownloadBtn) {
+    el.dreamTeamDownloadBtn.addEventListener("click", () => {
+      downloadDreamTeamImage();
+    });
+  }
+
   window.addEventListener("resize", () => {
     if (!state.playerPopEnabled || !el.playerDvdLayer || el.playerDvdLayer.classList.contains("hidden")) return;
     const pop = state.playerPop;
@@ -1939,6 +2388,9 @@ attachEvents();
 applyUiTheme(state.uiTheme);
 setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
+refreshPlayerPopScoreBadge();
+renderDreamTeamNavState();
+renderDreamTeamPanel();
 setSettingsMenuOpen(false);
 if (state.playerPopEnabled) {
   showRandomPlayerPop();
