@@ -10,6 +10,8 @@ const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
   CHAMP: { id: "4329", name: "English League Championship" },
 };
+const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
+const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
 
 const state = {
   selectedLeague: "ALL",
@@ -25,11 +27,11 @@ const state = {
   leagueBadges: { EPL: "", CHAMP: "" },
   teamBadgeMap: {},
   teamsByLeague: { EPL: [], CHAMP: [] },
-  favoriteTeamId: localStorage.getItem("esra_favorite_team") || "",
+  favoriteTeamId: STORED_FAVORITE_TEAM,
   uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
   motionLevel: localStorage.getItem("ezra_motion_level") || "standard",
   playerPopEnabled: localStorage.getItem("ezra_player_pop_enabled") === "1",
-  playerPopScope: localStorage.getItem("ezra_player_pop_scope") === "favorite" ? "favorite" : "any",
+  playerPopScope: STORED_PLAYER_SCOPE ? (STORED_PLAYER_SCOPE === "favorite" ? "favorite" : "any") : STORED_FAVORITE_TEAM ? "favorite" : "any",
   teamPlayersCache: {},
   playerQuiz: {
     poolKey: "",
@@ -103,6 +105,7 @@ const el = {
   favoriteLogo: document.getElementById("favorite-logo"),
   favoriteName: document.getElementById("favorite-name"),
   favoriteLeague: document.getElementById("favorite-league"),
+  favoriteForm: document.getElementById("favorite-form"),
   favoriteStatus: document.getElementById("favorite-status"),
   favoriteFixtureLine: document.getElementById("favorite-fixture-line"),
   favoriteFixtureDetail: document.getElementById("favorite-fixture-detail"),
@@ -1514,22 +1517,10 @@ async function fetchEventById(eventId) {
   return Array.isArray(data?.events) && data.events[0] ? data.events[0] : null;
 }
 
-async function fetchEventTimeline(eventId) {
-  if (!eventId) return [];
-  const data = await apiGetV1(`lookuptimeline.php?id=${eventId}`);
-  return safeArray(data, "timeline");
-}
-
 async function fetchEventStats(eventId) {
   if (!eventId) return [];
   const data = await apiGetV1(`lookupeventstats.php?id=${eventId}`);
   return safeArray(data, "eventstats");
-}
-
-async function fetchEventLineups(eventId) {
-  if (!eventId) return [];
-  const data = await apiGetV1(`lookuplineup.php?id=${eventId}`);
-  return safeArray(data, "lineup");
 }
 
 async function fetchEventTv(eventId) {
@@ -1597,79 +1588,66 @@ function isMobileViewport() {
   return window.matchMedia("(max-width: 720px)").matches;
 }
 
-function renderBaseFixtureDetails(event, stateInfo) {
-  const leagueText = event.strLeague || "Unknown competition";
-  const venueText = event.strVenue || "Venue TBD";
-  const dt = formatDateTime(event.dateEvent, event.strTime);
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function detailRowsFromEvent(event, stateInfo) {
   return [
-    `League: ${leagueText}`,
-    `Kickoff: ${dt}`,
-    `Venue: ${venueText}`,
-    event.strCity ? `City: ${event.strCity}` : "",
-    event.strCountry ? `Country: ${event.strCountry}` : "",
-    `Match State: ${stateInfo.label}`,
-    event.strStatus ? `API Status: ${event.strStatus}` : "",
-    event.strSeason ? `Season: ${event.strSeason}` : "",
-    event.intRound ? `Round: ${event.intRound}` : "",
-    event.strResult ? `Result Type: ${event.strResult}` : "",
-  ]
-    .filter(Boolean)
-    .join("<br>");
+    { label: "League", value: event.strLeague || "" },
+    { label: "Kickoff", value: formatDateTime(event.dateEvent, event.strTime) },
+    { label: "Venue", value: event.strVenue || "" },
+    { label: "Match State", value: stateInfo.label },
+    { label: "Status", value: event.strStatus || "" },
+    { label: "Season", value: event.strSeason || "" },
+    { label: "Round", value: event.intRound || "" },
+    { label: "Referee", value: event.strReferee || "" },
+    { label: "Attendance", value: event.intSpectators || "" },
+  ].filter((row) => row.value !== "" && row.value !== null && row.value !== undefined);
 }
 
-function compactTimeline(timeline) {
-  if (!Array.isArray(timeline) || !timeline.length) return "Timeline unavailable.";
-  const rows = timeline
-    .map((entry) => {
-      const mins = entry.intTime || entry.strTimeline || "";
-      const home = entry.strHome || "";
-      const away = entry.strAway || "";
-      const detail = [home, away].filter(Boolean).join(" | ");
-      return detail ? `${mins}' ${detail}` : "";
-    })
-    .filter(Boolean)
-    .slice(0, 8);
-  return rows.length ? rows.join("  •  ") : "Timeline unavailable.";
+function renderDetailRows(rows) {
+  if (!rows.length) return "";
+  return `<div class="detail-grid">${rows
+    .map((row) => `<div class="detail-row"><span class="detail-label">${escapeHtml(row.label)}</span><span class="detail-value">${escapeHtml(row.value)}</span></div>`)
+    .join("")}</div>`;
 }
 
-function compactStats(stats) {
-  if (!Array.isArray(stats) || !stats.length) return "Stats unavailable.";
-  const rows = stats
-    .map((row) => {
-      const label = row.strStat || row.strType || "";
-      const home = row.strHome || row.intHome || row.strValue1 || "";
-      const away = row.strAway || row.intAway || row.strValue2 || "";
-      if (!label && !home && !away) return "";
-      return `${label || "Stat"} ${home} - ${away}`;
-    })
-    .filter(Boolean)
-    .slice(0, 6);
-  return rows.length ? rows.join("  •  ") : "Stats unavailable.";
+function normalizedStats(stats) {
+  if (!Array.isArray(stats)) return [];
+  return stats
+    .map((row) => ({
+      label: row.strStat || row.strType || "",
+      home: row.strHome || row.intHome || row.strValue1 || "",
+      away: row.strAway || row.intAway || row.strValue2 || "",
+    }))
+    .filter((row) => row.label && row.home !== "" && row.away !== "");
 }
 
-function compactLineups(lineups) {
-  if (!Array.isArray(lineups) || !lineups.length) return "Lineups unavailable.";
-  const home = lineups.find((x) => x.strSide === "Home") || lineups[0];
-  const away = lineups.find((x) => x.strSide === "Away") || lineups[1];
-  const pick = (raw) =>
-    String(raw || "")
-      .split(";")
-      .map((n) => n.trim())
-      .filter(Boolean)
-      .slice(0, 5)
-      .join(", ");
-  const homeNames = pick(home?.strLineup) || "Unavailable";
-  const awayNames = pick(away?.strLineup) || "Unavailable";
-  return `Home XI: ${homeNames}  |  Away XI: ${awayNames}`;
+function renderStatsTable(stats) {
+  const rows = normalizedStats(stats).slice(0, 8);
+  if (!rows.length) return "";
+  const body = rows
+    .map(
+      (row) =>
+        `<div class="stat-row"><span class="stat-label">${escapeHtml(row.label)}</span><span class="stat-home">${escapeHtml(row.home)}</span><span class="stat-sep">-</span><span class="stat-away">${escapeHtml(row.away)}</span></div>`
+    )
+    .join("");
+  return `<div class="stats-block"><p class="stats-title">Match Stats</p>${body}</div>`;
 }
 
 function compactTv(tvRows) {
-  if (!Array.isArray(tvRows) || !tvRows.length) return "Broadcast data unavailable.";
+  if (!Array.isArray(tvRows) || !tvRows.length) return "";
   const channels = tvRows
     .map((row) => row.strChannel || row.strChannel1 || row.strCountry || "")
     .filter(Boolean)
-    .slice(0, 6);
-  return channels.length ? channels.join(", ") : "Broadcast data unavailable.";
+    .slice(0, 4);
+  return channels.join(", ");
 }
 
 async function getRichEventData(eventId) {
@@ -1678,16 +1656,12 @@ async function getRichEventData(eventId) {
   const payload = await Promise.all([
     safeLoad(() => fetchEventById(eventId), null),
     safeLoad(() => fetchEventStats(eventId), []),
-    safeLoad(() => fetchEventTimeline(eventId), []),
-    safeLoad(() => fetchEventLineups(eventId), []),
     safeLoad(() => fetchEventTv(eventId), []),
   ]);
   const rich = {
     event: payload[0],
     stats: payload[1],
-    timeline: payload[2],
-    lineups: payload[3],
-    tv: payload[4],
+    tv: payload[2],
   };
   state.eventDetailCache[eventId] = rich;
   return rich;
@@ -1696,30 +1670,53 @@ async function getRichEventData(eventId) {
 async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   if (!detailsEl) return;
   const eventId = event?.idEvent || "";
-  const base = renderBaseFixtureDetails(event, stateInfo);
+  const baseRows = detailRowsFromEvent(event, stateInfo);
   if (!eventId) {
-    detailsEl.innerHTML = `${base}<br><br>Detailed feed unavailable for this fixture.`;
+    detailsEl.innerHTML = `${renderDetailRows(baseRows)}<p class="detail-empty">No extra data available.</p>`;
     return;
   }
 
   detailsEl.classList.add("loading");
-  detailsEl.innerHTML = `${base}<br><br>Loading richer match data...`;
+  detailsEl.innerHTML = `${renderDetailRows(baseRows)}<p class="detail-empty">Loading match details...</p>`;
   const rich = await getRichEventData(eventId);
   const core = rich?.event || event;
-  const extra = [
-    core?.strReferee ? `Referee: ${core.strReferee}` : "",
-    core?.intSpectators ? `Attendance: ${core.intSpectators}` : "",
-    core?.strVenue ? `Venue Detail: ${core.strVenue}` : "",
-    core?.strTimeLocal ? `Local Time: ${core.strTimeLocal}` : "",
-    `Stats: ${compactStats(rich?.stats)}`,
-    `Timeline: ${compactTimeline(rich?.timeline)}`,
-    `Lineups: ${compactLineups(rich?.lineups)}`,
-    `TV: ${compactTv(rich?.tv)}`,
-  ]
-    .filter(Boolean)
-    .join("<br>");
-  detailsEl.innerHTML = `${renderBaseFixtureDetails(core, stateInfo)}<br><br>${extra}`;
+  const rows = detailRowsFromEvent(core, stateInfo);
+  const tvText = compactTv(rich?.tv);
+  if (tvText) {
+    rows.push({ label: "TV", value: tvText });
+  }
+  const statsHtml = renderStatsTable(rich?.stats);
+  const hasExtra = Boolean(statsHtml);
+  detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
   detailsEl.classList.remove("loading");
+}
+
+function teamFormFromEvents(events, team) {
+  const completed = (events || [])
+    .filter((e) => {
+      const hs = numericScore(e.intHomeScore);
+      const as = numericScore(e.intAwayScore);
+      if (hs === null || as === null) return false;
+      return (
+        e.idHomeTeam === team.idTeam ||
+        e.idAwayTeam === team.idTeam ||
+        (e.strHomeTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase() ||
+        (e.strAwayTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase()
+      );
+    })
+    .sort((a, b) => `${b.dateEvent || ""}T${b.strTime || ""}`.localeCompare(`${a.dateEvent || ""}T${a.strTime || ""}`))
+    .slice(0, 5)
+    .map((e) => {
+      const hs = Number(e.intHomeScore);
+      const as = Number(e.intAwayScore);
+      const isHome = e.idHomeTeam === team.idTeam || (e.strHomeTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase();
+      const teamScore = isHome ? hs : as;
+      const oppScore = isHome ? as : hs;
+      if (teamScore > oppScore) return "W";
+      if (teamScore < oppScore) return "L";
+      return "D";
+    });
+  return completed;
 }
 
 function renderFixtureList(target, events, mode) {
@@ -1795,7 +1792,7 @@ function renderFixtureList(target, events, mode) {
     }
 
     const detailsEl = node.querySelector(".fixture-details");
-    detailsEl.innerHTML = renderBaseFixtureDetails(event, stateInfo);
+    detailsEl.innerHTML = renderDetailRows(detailRowsFromEvent(event, stateInfo));
 
     const favName = state.favoriteTeam?.strTeam || "";
     const hasFavorite = Boolean(favName && (homeName === favName || awayName === favName));
@@ -2078,6 +2075,9 @@ function buildFavoriteOptions() {
     state.favoriteTeam = null;
     localStorage.removeItem("esra_favorite_team");
     setFavoritePickerDisplay(null);
+    if (!localStorage.getItem("ezra_player_pop_scope")) {
+      setPlayerPopScope("any");
+    }
     el.favoritePickerMenu.classList.add("hidden");
     el.favoritePickerBtn.setAttribute("aria-expanded", "false");
     await renderFavorite();
@@ -2100,6 +2100,9 @@ function buildFavoriteOptions() {
       state.favoriteTeamId = team.idTeam;
       state.favoriteTeam = team;
       localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
+      if (!localStorage.getItem("ezra_player_pop_scope")) {
+        setPlayerPopScope("favorite");
+      }
       setFavoritePickerDisplay(team);
       el.favoritePickerMenu.classList.add("hidden");
       el.favoritePickerBtn.setAttribute("aria-expanded", "false");
@@ -2379,6 +2382,10 @@ async function renderFavorite() {
     state.lastCountdownTarget = null;
     setGameDayMessage("Select a favourite team", "neutral");
     setFavoritePickerDisplay(null);
+    if (el.favoriteForm) {
+      el.favoriteForm.classList.add("hidden");
+      el.favoriteForm.innerHTML = "";
+    }
     resetFavoriteTheme();
     renderSquadPanel();
     renderDreamTeamNavState();
@@ -2399,6 +2406,10 @@ async function renderFavorite() {
     state.lastCountdownTarget = null;
     setGameDayMessage("Select a favourite team", "neutral");
     setFavoritePickerDisplay(null);
+    if (el.favoriteForm) {
+      el.favoriteForm.classList.add("hidden");
+      el.favoriteForm.innerHTML = "";
+    }
     resetFavoriteTheme();
     renderSquadPanel();
     renderDreamTeamNavState();
@@ -2475,6 +2486,18 @@ async function renderFavorite() {
   el.favoriteName.textContent = team.strTeam || "Team";
   const teamPos = getTeamTablePosition(team);
   el.favoriteLeague.textContent = teamPos ? `${team.strLeague || ""}  •  ${teamPos}` : team.strLeague || "";
+  if (el.favoriteForm) {
+    const form = teamFormFromEvents(lastEvents, team);
+    if (form.length) {
+      el.favoriteForm.classList.remove("hidden");
+      el.favoriteForm.innerHTML = `<span class="form-label">Form</span>${form
+        .map((r) => `<span class="form-pill ${r === "W" ? "win" : r === "L" ? "loss" : "draw"}">${r}</span>`)
+        .join("")}`;
+    } else {
+      el.favoriteForm.classList.add("hidden");
+      el.favoriteForm.innerHTML = "";
+    }
+  }
   setFavoritePickerDisplay(team);
   el.favoriteStatus.classList.remove("gameday", "live", "final");
 

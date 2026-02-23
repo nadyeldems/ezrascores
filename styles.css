@@ -365,6 +365,7 @@ body[data-theme="club"] .footer {
 
 .settings-menu {
   position: relative;
+  z-index: 130;
 }
 
 .settings-panel {
@@ -377,7 +378,15 @@ body[data-theme="club"] .footer {
   background: #090503;
   box-shadow: inset 0 0 0 1px rgba(255, 152, 17, 0.08);
   padding: 0.55rem;
-  z-index: 60;
+  z-index: 131;
+}
+
+.settings-cog-btn {
+  min-width: 2.1rem;
+  width: 2.1rem;
+  padding: 0;
+  line-height: 1;
+  font-size: 1.15rem;
 }
 
 body[data-theme="t90"] .settings-panel {
@@ -1136,6 +1145,48 @@ body[data-theme="club"] .btn:hover {
   font-size: clamp(1.6rem, 5vw, 2.4rem);
   line-height: 1;
   margin: 0 0 0.25rem;
+}
+
+.favorite-form {
+  margin-top: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.26rem;
+}
+
+.form-label {
+  color: var(--text-soft);
+  margin-right: 0.2rem;
+}
+
+.form-pill {
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-soft);
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.form-pill.win {
+  border-color: #2d8040;
+  background: rgba(60, 140, 76, 0.25);
+  color: #d7ffe0;
+}
+
+.form-pill.loss {
+  border-color: #c8372b;
+  background: rgba(200, 55, 43, 0.25);
+  color: #ffd2d2;
+}
+
+.form-pill.draw {
+  border-color: #6d6d6d;
+  background: rgba(120, 120, 120, 0.23);
+  color: #ebebeb;
 }
 
 .favorite-logo {
@@ -1910,6 +1961,64 @@ body[data-theme="t90"] .team-score.leading {
   line-height: 1.35;
 }
 
+.detail-grid {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.detail-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.detail-label {
+  color: #d39a4f;
+}
+
+.detail-value {
+  color: var(--text-soft);
+}
+
+.detail-empty {
+  margin: 0.4rem 0 0;
+  color: #9b6f37;
+}
+
+.stats-block {
+  margin-top: 0.45rem;
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 0.35rem;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.stats-title {
+  margin: 0 0 0.1rem;
+  color: var(--text);
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: baseline;
+  gap: 0.32rem;
+}
+
+.stat-label {
+  color: var(--text-soft);
+}
+
+.stat-home,
+.stat-away {
+  color: var(--text);
+}
+
+.stat-sep {
+  color: #9e6e35;
+}
+
 .fixture-details.loading {
   opacity: 0.72;
 }
@@ -2350,6 +2459,11 @@ body[data-motion="arcade"] .fixture-focus {
   .fixture-detail,
   .teams {
     font-size: 0.88rem;
+  }
+
+  .detail-row {
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 0.3rem;
   }
 
   .footer-right {
