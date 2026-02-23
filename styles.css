@@ -340,6 +340,7 @@ body[data-theme="club"] .footer {
   justify-content: space-between;
   gap: 0.8rem;
   margin-bottom: 0.9rem;
+  overflow: visible;
 }
 
 .hero-actions {
@@ -2165,6 +2166,11 @@ th {
 .reveal-on-scroll.in-view {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* Keep the header out of a transformed stacking context so fixed menus layer correctly */
+.hero-bar.reveal-on-scroll.in-view {
+  transform: none;
 }
 
 body[data-motion="minimal"] .ticker-content,
