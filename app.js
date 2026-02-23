@@ -92,7 +92,7 @@ const el = {
   settingsMenu: document.getElementById("settings-menu"),
   settingsToggleBtn: document.getElementById("settings-toggle-btn"),
   settingsPanel: document.getElementById("settings-panel"),
-  playerDvdToggle: document.getElementById("player-dvd-toggle"),
+  playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
   playerDvdLayer: document.getElementById("player-dvd-layer"),
   playerDvdAvatar: document.getElementById("player-dvd-avatar"),
@@ -114,18 +114,22 @@ function setThemeButtonState() {
 }
 
 function applyUiTheme(theme) {
-  const safeTheme = theme === "t90" ? "t90" : "classic";
+  const safeTheme = theme === "t90" || theme === "club" ? theme : "classic";
   state.uiTheme = safeTheme;
   document.body.setAttribute("data-theme", safeTheme);
   localStorage.setItem("ezra_ui_theme", safeTheme);
   setThemeButtonState();
+  if (safeTheme !== "club") {
+    clearClubThemeColors();
+  } else {
+    applyClubThemeFromFavoriteTeam();
+  }
 }
 
 function setPlayerPopButtonState() {
-  if (!el.playerDvdToggle) return;
-  el.playerDvdToggle.classList.toggle("active", state.playerPopEnabled);
-  el.playerDvdToggle.setAttribute("aria-pressed", String(state.playerPopEnabled));
-  el.playerDvdToggle.textContent = `Player Pop: ${state.playerPopEnabled ? "On" : "Off"}`;
+  if (!el.playerDvdToggleMain) return;
+  el.playerDvdToggleMain.classList.toggle("active", state.playerPopEnabled);
+  el.playerDvdToggleMain.setAttribute("aria-pressed", String(state.playerPopEnabled));
 }
 
 function setPlayerSourceButtonState() {
@@ -146,6 +150,105 @@ function setSettingsMenuOpen(open) {
   if (!el.settingsPanel || !el.settingsToggleBtn) return;
   el.settingsPanel.classList.toggle("hidden", !state.settingsOpen);
   el.settingsToggleBtn.setAttribute("aria-expanded", String(state.settingsOpen));
+}
+
+function normalizeHexColor(value) {
+  if (!value) return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
+  const withHash = raw.startsWith("#") ? raw : `#${raw}`;
+  const hex = withHash.replace(/[^#a-fA-F0-9]/g, "");
+  if (/^#[0-9a-fA-F]{6}$/.test(hex)) return hex.toUpperCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(hex)) {
+    const r = hex[1];
+    const g = hex[2];
+    const b = hex[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+  }
+  return "";
+}
+
+function hexToRgb(hex) {
+  const clean = normalizeHexColor(hex);
+  if (!clean) return null;
+  const n = parseInt(clean.slice(1), 16);
+  return {
+    r: (n >> 16) & 255,
+    g: (n >> 8) & 255,
+    b: n & 255,
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const toHex = (v) => clampChannel(v).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+}
+
+function blendHex(hexA, hexB, ratio = 0.5) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  if (!a && !b) return "#FF9A1F";
+  if (!a) return rgbToHex(b);
+  if (!b) return rgbToHex(a);
+  const r = a.r + (b.r - a.r) * ratio;
+  const g = a.g + (b.g - a.g) * ratio;
+  const bb = a.b + (b.b - a.b) * ratio;
+  return rgbToHex({ r, g, b: bb });
+}
+
+function tintHex(hex, amount = 0.2) {
+  return blendHex(hex, "#FFFFFF", amount);
+}
+
+function shadeHex(hex, amount = 0.25) {
+  return blendHex(hex, "#000000", amount);
+}
+
+function clearClubThemeColors() {
+  const keys = [
+    "--club-primary",
+    "--club-secondary",
+    "--club-bg",
+    "--club-panel",
+    "--club-line",
+    "--club-line-soft",
+    "--club-text",
+    "--club-text-soft",
+  ];
+  keys.forEach((key) => document.body.style.removeProperty(key));
+}
+
+function applyClubThemeFromTeam(team) {
+  if (!team) return;
+  const c1 = normalizeHexColor(team.strColour1);
+  const c2 = normalizeHexColor(team.strColour2);
+  const c3 = normalizeHexColor(team.strColour3);
+  const primary = c1 || c2 || c3 || "#FF9A1F";
+  const secondary = c2 || c3 || shadeHex(primary, 0.35);
+  const bg = blendHex(shadeHex(primary, 0.78), "#050302", 0.74);
+  const panel = blendHex(shadeHex(secondary, 0.72), "#090503", 0.66);
+  const line = shadeHex(primary, 0.36);
+  const lineSoft = shadeHex(primary, 0.56);
+  const text = tintHex(primary, 0.22);
+  const textSoft = blendHex(text, secondary, 0.32);
+
+  document.body.style.setProperty("--club-primary", primary);
+  document.body.style.setProperty("--club-secondary", secondary);
+  document.body.style.setProperty("--club-bg", bg);
+  document.body.style.setProperty("--club-panel", panel);
+  document.body.style.setProperty("--club-line", line);
+  document.body.style.setProperty("--club-line-soft", lineSoft);
+  document.body.style.setProperty("--club-text", text);
+  document.body.style.setProperty("--club-text-soft", textSoft);
+}
+
+function applyClubThemeFromFavoriteTeam() {
+  if (state.uiTheme !== "club") return;
+  if (!state.favoriteTeam) {
+    clearClubThemeColors();
+    return;
+  }
+  applyClubThemeFromTeam(state.favoriteTeam);
 }
 
 function stopPlayerPopAnimation() {
@@ -382,7 +485,7 @@ function revealAndDismissPlayerPop() {
   placePlayerPopElement();
   setTimeout(() => {
     setPlayerPopEnabled(false);
-  }, 3600);
+  }, 4000);
 }
 
 function setGameDayMessage(text, mode = "neutral") {
@@ -1369,6 +1472,8 @@ function nextFixtureSummary(team, nextEvent) {
 
 async function renderFavorite() {
   if (!state.favoriteTeamId) {
+    state.favoriteTeam = null;
+    applyClubThemeFromFavoriteTeam();
     clearFavoriteGoalCinematic();
     clearGameDayCountdownTimer();
     state.lastCountdownTarget = null;
@@ -1384,6 +1489,7 @@ async function renderFavorite() {
   if (!team) {
     state.favoriteTeamId = "";
     state.favoriteTeam = null;
+    applyClubThemeFromFavoriteTeam();
     localStorage.removeItem("esra_favorite_team");
     clearFavoriteGoalCinematic();
     clearGameDayCountdownTimer();
@@ -1397,6 +1503,7 @@ async function renderFavorite() {
   }
 
   state.favoriteTeam = team;
+  applyClubThemeFromFavoriteTeam();
   const todayIso = toISODate(new Date());
   const lastEvents = await safeLoad(() => fetchTeamLastEvents(team.idTeam), []);
   const liveEvent = findLiveForFavorite(team.strTeam);
@@ -1734,8 +1841,8 @@ function attachEvents() {
     });
   });
 
-  if (el.playerDvdToggle) {
-    el.playerDvdToggle.addEventListener("click", () => {
+  if (el.playerDvdToggleMain) {
+    el.playerDvdToggleMain.addEventListener("click", () => {
       setPlayerPopEnabled(!state.playerPopEnabled);
     });
   }
