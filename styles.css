@@ -913,6 +913,94 @@ body.dream-team-overlay-open {
   padding: 0.45rem;
 }
 
+.dream-controls {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.dream-controls-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.dream-formation-select {
+  min-height: 1.95rem;
+  border: 1px solid var(--line);
+  border-radius: 0.62rem;
+  background: #090503;
+  color: var(--text);
+  font: inherit;
+  padding: 0.1rem 0.42rem;
+}
+
+.dream-counter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.8rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  color: var(--text-soft);
+}
+
+.dream-pitch {
+  display: grid;
+  gap: 0.4rem;
+  background:
+    linear-gradient(180deg, rgba(255, 153, 32, 0.05), transparent 28%),
+    rgba(11, 7, 3, 0.75);
+}
+
+.pitch-lane {
+  display: grid;
+  grid-template-columns: 86px repeat(auto-fit, minmax(120px, 1fr));
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.pitch-label {
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pitch-slot {
+  min-height: 2.15rem;
+  border: 1px dashed var(--line-soft);
+  border-radius: 0.62rem;
+  background: rgba(255, 153, 32, 0.03);
+  color: var(--text-soft);
+  padding: 0.18rem 0.38rem;
+  font: inherit;
+}
+
+.pitch-slot.filled {
+  border-style: solid;
+  border-color: #b86d17;
+  color: #ffd39c;
+  background: rgba(255, 153, 32, 0.1);
+}
+
+.pitch-slot:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.dream-actions-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-wrap: wrap;
+}
+
+.dream-assign-xi,
+.dream-assign-bench {
+  min-width: 2.4rem;
+}
+
 .dream-group h4 {
   margin: 0 0 0.35rem;
   color: var(--text);
@@ -2299,6 +2387,19 @@ body[data-motion="arcade"] .fixture-focus {
   .dream-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .pitch-lane {
+    grid-template-columns: 1fr;
+  }
+
+  .dream-actions-inline {
+    width: 100%;
+  }
+
+  .dream-actions-inline .btn {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .game-day-message {

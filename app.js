@@ -12,6 +12,83 @@ const LEAGUES = {
 };
 const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
 const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
+const DREAM_TEAM_FORMATIONS = {
+  "4-3-3": { DEF: 4, MID: 3, FWD: 3 },
+  "4-4-2": { DEF: 4, MID: 4, FWD: 2 },
+  "3-5-2": { DEF: 3, MID: 5, FWD: 2 },
+  "4-2-3-1": { DEF: 4, MID: 5, FWD: 1 },
+  "5-3-2": { DEF: 5, MID: 3, FWD: 2 },
+};
+
+function dreamRoleFromPosition(position) {
+  const p = (position || "").toLowerCase();
+  if (p.includes("manager")) return "MGR";
+  if (p.includes("coach") || p.includes("owner") || p.includes("chairman") || p.includes("director")) return "COACH";
+  if (p.includes("goalkeeper") || p === "gk" || p.includes("keeper")) return "GK";
+  if (p.includes("defender") || p.includes("back")) return "DEF";
+  if (p.includes("midfielder") || p.includes("midfield") || p.includes("winger")) return "MID";
+  if (p.includes("forward") || p.includes("striker") || p.includes("attacker")) return "FWD";
+  return "MID";
+}
+
+function defaultDreamTeamState() {
+  return {
+    pool: [],
+    staff: { manager: null, coaches: [] },
+    formation: "4-3-3",
+    startingXI: [],
+    bench: [],
+  };
+}
+
+function loadDreamTeamState() {
+  const base = defaultDreamTeamState();
+  try {
+    const raw = localStorage.getItem("ezra_dream_team");
+    if (!raw) return base;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      // Backward compatibility for previous flat list.
+      const next = defaultDreamTeamState();
+      parsed.forEach((player) => {
+        if (!player?.key) return;
+        const role = dreamRoleFromPosition(player.position);
+        if (role === "MGR") {
+          if (!next.staff.manager) next.staff.manager = player;
+          else next.staff.coaches.push(player);
+          return;
+        }
+        if (role === "COACH") {
+          next.staff.coaches.push(player);
+          return;
+        }
+        if (next.pool.length < 18) next.pool.push(player);
+      });
+      return next;
+    }
+    if (!parsed || typeof parsed !== "object") return base;
+    const pool = Array.isArray(parsed.pool) ? parsed.pool.filter((p) => p?.key).slice(0, 18) : [];
+    const manager = parsed.staff?.manager && parsed.staff.manager.key ? parsed.staff.manager : null;
+    const coaches = Array.isArray(parsed.staff?.coaches) ? parsed.staff.coaches.filter((p) => p?.key) : [];
+    const formation = DREAM_TEAM_FORMATIONS[parsed.formation] ? parsed.formation : "4-3-3";
+    const poolKeys = new Set(pool.map((p) => p.key));
+    const startingXI = Array.isArray(parsed.startingXI)
+      ? parsed.startingXI.filter((key) => typeof key === "string" && poolKeys.has(key))
+      : [];
+    const bench = Array.isArray(parsed.bench)
+      ? parsed.bench.filter((key) => typeof key === "string" && poolKeys.has(key) && !startingXI.includes(key))
+      : [];
+    return {
+      pool,
+      staff: { manager, coaches },
+      formation,
+      startingXI,
+      bench,
+    };
+  } catch {
+    return base;
+  }
+}
 
 const state = {
   selectedLeague: "ALL",
@@ -43,15 +120,7 @@ const state = {
     isLocked: false,
   },
   squadByTeamId: {},
-  dreamTeam: (() => {
-    try {
-      const raw = localStorage.getItem("ezra_dream_team");
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  })(),
+  dreamTeam: loadDreamTeamState(),
   maxDreamTeamPlayers: 18,
   dreamTeamOpen: false,
   squadOpen: false,
@@ -457,14 +526,11 @@ function normalizeSquadPlayer(raw, team) {
 }
 
 function positionBucket(position) {
-  const p = (position || "").toLowerCase();
-  if (p.includes("manager") || p.includes("coach") || p.includes("owner") || p.includes("chairman") || p.includes("director")) {
-    return "Manager";
-  }
-  if (p.includes("goalkeeper") || p === "gk" || p.includes("keeper")) return "Goalkeepers";
-  if (p.includes("defender") || p.includes("back")) return "Defenders";
-  if (p.includes("midfielder") || p.includes("midfield") || p.includes("winger")) return "Midfielders";
-  if (p.includes("forward") || p.includes("striker") || p.includes("attacker")) return "Attackers";
+  const role = dreamRoleFromPosition(position);
+  if (role === "MGR" || role === "COACH") return "Manager";
+  if (role === "GK") return "Goalkeepers";
+  if (role === "DEF") return "Defenders";
+  if (role === "FWD") return "Attackers";
   return "Midfielders";
 }
 
@@ -623,18 +689,163 @@ function renderPlayerQuiz(player) {
 }
 
 function saveDreamTeam() {
+  normalizeDreamSelections();
   localStorage.setItem("ezra_dream_team", JSON.stringify(state.dreamTeam));
 }
 
 function isDreamPlayer(playerKeyValue) {
-  return state.dreamTeam.some((player) => player.key === playerKeyValue);
+  const inPool = state.dreamTeam.pool.some((player) => player.key === playerKeyValue);
+  const managerMatch = state.dreamTeam.staff.manager?.key === playerKeyValue;
+  const coachMatch = state.dreamTeam.staff.coaches.some((player) => player.key === playerKeyValue);
+  return inPool || managerMatch || coachMatch;
+}
+
+function dreamHasAnySelection() {
+  return Boolean(
+    state.dreamTeam.pool.length || state.dreamTeam.staff.manager || state.dreamTeam.staff.coaches.length
+  );
+}
+
+function dreamPoolByKey() {
+  return new Map((state.dreamTeam.pool || []).map((player) => [player.key, player]));
+}
+
+function getDreamPlayerByKey(key) {
+  return state.dreamTeam.pool.find((player) => player.key === key) || null;
+}
+
+function formationCaps() {
+  return DREAM_TEAM_FORMATIONS[state.dreamTeam.formation] || DREAM_TEAM_FORMATIONS["4-3-3"];
+}
+
+function roleCapacityFor(role) {
+  if (role === "GK") return 1;
+  const caps = formationCaps();
+  return caps[role] || 0;
+}
+
+function canRoleFitInXI(role, currentKeys = state.dreamTeam.startingXI) {
+  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  currentKeys.forEach((key) => {
+    const p = getDreamPlayerByKey(key);
+    const r = dreamRoleFromPosition(p?.position || "");
+    if (counts[r] !== undefined) counts[r] += 1;
+  });
+  return (counts[role] || 0) < roleCapacityFor(role);
+}
+
+function normalizeDreamSelections() {
+  const validPool = [];
+  const seen = new Set();
+  (state.dreamTeam.pool || []).forEach((player) => {
+    if (!player?.key || seen.has(player.key)) return;
+    const role = dreamRoleFromPosition(player.position);
+    if (role === "MGR" || role === "COACH") return;
+    seen.add(player.key);
+    if (validPool.length < state.maxDreamTeamPlayers) validPool.push(player);
+  });
+  state.dreamTeam.pool = validPool;
+
+  if (state.dreamTeam.staff.manager && !state.dreamTeam.staff.manager.key) {
+    state.dreamTeam.staff.manager = null;
+  }
+  state.dreamTeam.staff.coaches = (state.dreamTeam.staff.coaches || []).filter((player) => player?.key);
+
+  if (!DREAM_TEAM_FORMATIONS[state.dreamTeam.formation]) {
+    state.dreamTeam.formation = "4-3-3";
+  }
+
+  const poolMap = dreamPoolByKey();
+  const caps = formationCaps();
+  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const cleanXI = [];
+  (state.dreamTeam.startingXI || []).forEach((key) => {
+    if (cleanXI.length >= 11 || cleanXI.includes(key)) return;
+    const player = poolMap.get(key);
+    if (!player) return;
+    const role = dreamRoleFromPosition(player.position);
+    if (role === "MGR" || role === "COACH") return;
+    const limit = role === "GK" ? 1 : caps[role] || 0;
+    if ((counts[role] || 0) >= limit) return;
+    counts[role] += 1;
+    cleanXI.push(key);
+  });
+  state.dreamTeam.startingXI = cleanXI;
+
+  const cleanBench = [];
+  (state.dreamTeam.bench || []).forEach((key) => {
+    if (cleanBench.length >= 7 || cleanBench.includes(key) || cleanXI.includes(key)) return;
+    if (!poolMap.has(key)) return;
+    cleanBench.push(key);
+  });
+  state.dreamTeam.bench = cleanBench;
+}
+
+function autoFillStartingXI() {
+  normalizeDreamSelections();
+  const caps = formationCaps();
+  const counts = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+  const current = [];
+  state.dreamTeam.startingXI.forEach((key) => {
+    const player = getDreamPlayerByKey(key);
+    if (!player) return;
+    const role = dreamRoleFromPosition(player.position);
+    counts[role] += 1;
+    current.push(key);
+  });
+  const candidates = sortSquadByRole(state.dreamTeam.pool);
+  candidates.forEach((player) => {
+    if (current.length >= 11 || current.includes(player.key)) return;
+    const role = dreamRoleFromPosition(player.position);
+    const limit = role === "GK" ? 1 : caps[role] || 0;
+    if ((counts[role] || 0) >= limit) return;
+    counts[role] += 1;
+    current.push(player.key);
+  });
+  state.dreamTeam.startingXI = current.slice(0, 11);
+  state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => !state.dreamTeam.startingXI.includes(key)).slice(0, 7);
+}
+
+function setDreamFormation(formation) {
+  if (!DREAM_TEAM_FORMATIONS[formation]) return;
+  state.dreamTeam.formation = formation;
+  normalizeDreamSelections();
+  autoFillStartingXI();
+}
+
+function assignPlayerToXI(playerKeyValue) {
+  const player = getDreamPlayerByKey(playerKeyValue);
+  if (!player) return false;
+  const role = dreamRoleFromPosition(player.position);
+  if (!["GK", "DEF", "MID", "FWD"].includes(role)) return false;
+  state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
+  state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
+  if (state.dreamTeam.startingXI.length >= 11) return false;
+  if (!canRoleFitInXI(role, state.dreamTeam.startingXI)) return false;
+  state.dreamTeam.startingXI.push(playerKeyValue);
+  return true;
+}
+
+function assignPlayerToBench(playerKeyValue) {
+  const player = getDreamPlayerByKey(playerKeyValue);
+  if (!player) return false;
+  state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
+  state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
+  if (state.dreamTeam.bench.length >= 7) return false;
+  state.dreamTeam.bench.push(playerKeyValue);
+  return true;
+}
+
+function unassignDreamPlayer(playerKeyValue) {
+  state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
+  state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
 }
 
 function renderDreamTeamNavState() {
   if (!el.dreamTeamToggleBtn) return;
-  const hasPlayers = state.dreamTeam.length > 0;
+  const hasPlayers = dreamHasAnySelection();
   if (el.dreamTeamCount) {
-    el.dreamTeamCount.textContent = `${state.dreamTeam.length}/${state.maxDreamTeamPlayers}`;
+    el.dreamTeamCount.textContent = `${state.dreamTeam.pool.length}/${state.maxDreamTeamPlayers}`;
   }
   el.dreamTeamToggleBtn.classList.toggle("disabled", !hasPlayers);
   el.dreamTeamToggleBtn.classList.toggle("active", state.dreamTeamOpen);
@@ -710,18 +921,14 @@ function renderSquadPanel() {
   });
 }
 
-function groupDreamTeamPlayers() {
-  const groups = {
-    Manager: [],
-    Goalkeepers: [],
-    Defenders: [],
-    Midfielders: [],
-    Attackers: [],
-  };
-  state.dreamTeam.forEach((player) => {
-    const bucket = positionBucket(player.position);
-    if (!groups[bucket]) groups[bucket] = [];
-    groups[bucket].push(player);
+function groupedStartingXI() {
+  const groups = { GK: [], DEF: [], MID: [], FWD: [] };
+  state.dreamTeam.startingXI.forEach((key) => {
+    const player = getDreamPlayerByKey(key);
+    if (!player) return;
+    const role = dreamRoleFromPosition(player.position);
+    if (!groups[role]) return;
+    groups[role].push(player);
   });
   return groups;
 }
@@ -737,7 +944,7 @@ function renderDreamTeamPanel() {
   document.body.classList.add("dream-team-overlay-open");
   el.dreamTeamList.innerHTML = "";
 
-  if (!state.dreamTeam.length) {
+  if (!dreamHasAnySelection()) {
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.textContent = "Start by choosing a favourite team and starring players.";
@@ -745,53 +952,244 @@ function renderDreamTeamPanel() {
     return;
   }
 
-  const groups = groupDreamTeamPlayers();
-  ["Manager", "Goalkeepers", "Defenders", "Midfielders", "Attackers"].forEach((label) => {
-    const section = document.createElement("section");
-    section.className = "dream-group";
-    const title = document.createElement("h4");
-    title.textContent = label;
-    section.appendChild(title);
+  normalizeDreamSelections();
+  const caps = formationCaps();
+  const xiGroups = groupedStartingXI();
+  const benchPlayers = state.dreamTeam.bench.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
+  const inLineup = new Set([...state.dreamTeam.startingXI, ...state.dreamTeam.bench]);
+  const poolRemaining = sortSquadByRole(state.dreamTeam.pool.filter((player) => !inLineup.has(player.key)));
 
-    const players = groups[label] || [];
-    if (!players.length) {
-      const empty = document.createElement("p");
-      empty.className = "muted";
-      empty.textContent = label === "Manager" ? "No manager selected." : "No players selected.";
-      section.appendChild(empty);
-    } else {
-      players.forEach((player) => {
-        const row = document.createElement("div");
-        row.className = "dream-row";
-        const shirtNo = player.number ? player.number : "—";
-        row.innerHTML = `
-          <div class="dream-main">
-            <span class="player-no-circle ${player.number ? "" : "missing"}">${shirtNo}</span>
-            <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
-            <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
-            <div class="dream-text">
-              <span class="dream-name">${player.name}</span>
-              <span class="dream-meta">${player.nationality} • ${player.teamName}</span>
-            </div>
-          </div>
-          <button class="btn dream-remove" type="button" aria-label="Remove from Dream Team">Unstar</button>
-        `;
-        row.querySelector(".dream-remove").addEventListener("click", () => {
-          toggleDreamTeamPlayer(player);
+  const controls = document.createElement("section");
+  controls.className = "dream-group dream-controls";
+  controls.innerHTML = `
+    <div class="dream-controls-row">
+      <label for="dream-formation-select">Formation</label>
+      <select id="dream-formation-select" class="dream-formation-select">
+        ${Object.keys(DREAM_TEAM_FORMATIONS).map((key) => `<option value="${key}" ${key === state.dreamTeam.formation ? "selected" : ""}>${key}</option>`).join("")}
+      </select>
+      <span class="dream-counter">XI ${state.dreamTeam.startingXI.length}/11</span>
+      <span class="dream-counter">Bench ${state.dreamTeam.bench.length}/7</span>
+      <span class="dream-counter">Pool ${state.dreamTeam.pool.length}/${state.maxDreamTeamPlayers}</span>
+    </div>
+    <div class="dream-controls-row">
+      <button class="btn" type="button" id="dream-auto-xi-btn">Auto Pick XI</button>
+      <button class="btn" type="button" id="dream-clear-lineup-btn">Clear XI + Bench</button>
+    </div>
+  `;
+  el.dreamTeamList.appendChild(controls);
+
+  const pitch = document.createElement("section");
+  pitch.className = "dream-group dream-pitch";
+  pitch.innerHTML = `<h4>Starting XI (${state.dreamTeam.formation})</h4>`;
+  const rowDefs = [
+    { role: "FWD", label: "Attack", count: caps.FWD },
+    { role: "MID", label: "Midfield", count: caps.MID },
+    { role: "DEF", label: "Defence", count: caps.DEF },
+    { role: "GK", label: "Goalkeeper", count: 1 },
+  ];
+  rowDefs.forEach((rowDef) => {
+    const lane = document.createElement("div");
+    lane.className = "pitch-lane";
+    lane.innerHTML = `<span class="pitch-label">${rowDef.label}</span>`;
+    const group = xiGroups[rowDef.role] || [];
+    for (let i = 0; i < rowDef.count; i += 1) {
+      const player = group[i];
+      const slot = document.createElement("button");
+      slot.type = "button";
+      slot.className = `pitch-slot ${player ? "filled" : ""}`;
+      slot.textContent = player ? `${player.name} (${player.number || "—"})` : "Empty";
+      if (player) {
+        slot.addEventListener("click", () => {
+          unassignDreamPlayer(player.key);
+          saveDreamTeam();
+          renderDreamTeamNavState();
+          renderSquadPanel();
+          renderDreamTeamPanel();
         });
-        section.appendChild(row);
-      });
+      } else {
+        slot.disabled = true;
+      }
+      lane.appendChild(slot);
     }
-    el.dreamTeamList.appendChild(section);
+    pitch.appendChild(lane);
+  });
+  el.dreamTeamList.appendChild(pitch);
+
+  const benchSection = document.createElement("section");
+  benchSection.className = "dream-group";
+  const benchTitle = document.createElement("h4");
+  benchTitle.textContent = "Substitutes";
+  benchSection.appendChild(benchTitle);
+  if (!benchPlayers.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No substitutes selected.";
+    benchSection.appendChild(empty);
+  } else {
+    benchPlayers.forEach((player) => {
+      const row = document.createElement("div");
+      row.className = "dream-row";
+      row.innerHTML = `
+        <div class="dream-main">
+          <span class="player-no-circle ${player.number ? "" : "missing"}">${player.number || "—"}</span>
+          <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
+          <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
+          <div class="dream-text">
+            <span class="dream-name">${player.name}</span>
+            <span class="dream-meta">${player.nationality} • ${player.teamName}</span>
+          </div>
+        </div>
+        <button class="btn dream-remove" type="button">Remove</button>
+      `;
+      row.querySelector(".dream-remove").addEventListener("click", () => {
+        unassignDreamPlayer(player.key);
+        saveDreamTeam();
+        renderDreamTeamNavState();
+        renderSquadPanel();
+        renderDreamTeamPanel();
+      });
+      benchSection.appendChild(row);
+    });
+  }
+  el.dreamTeamList.appendChild(benchSection);
+
+  const poolSection = document.createElement("section");
+  poolSection.className = "dream-group";
+  poolSection.innerHTML = "<h4>Player Pool (Select XI / Bench)</h4>";
+  if (!state.dreamTeam.pool.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No players selected yet.";
+    poolSection.appendChild(empty);
+  } else if (!poolRemaining.length) {
+    const full = document.createElement("p");
+    full.className = "muted";
+    full.textContent = "All selected players are currently in XI or on the bench.";
+    poolSection.appendChild(full);
+  } else {
+    poolRemaining.forEach((player) => {
+      const role = dreamRoleFromPosition(player.position);
+      const row = document.createElement("div");
+      row.className = "dream-row";
+      row.innerHTML = `
+        <div class="dream-main">
+          <span class="player-no-circle ${player.number ? "" : "missing"}">${player.number || "—"}</span>
+          <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
+          <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
+          <div class="dream-text">
+            <span class="dream-name">${player.name}</span>
+            <span class="dream-meta">${player.nationality} • ${player.teamName} • ${player.position}</span>
+          </div>
+        </div>
+        <div class="dream-actions-inline">
+          <button class="btn dream-assign-xi" type="button">XI</button>
+          <button class="btn dream-assign-bench" type="button">Bench</button>
+          <button class="btn dream-remove" type="button">Unstar</button>
+        </div>
+      `;
+      row.querySelector(".dream-assign-xi").addEventListener("click", () => {
+        if (!assignPlayerToXI(player.key)) {
+          if (el.dreamTeamHint) {
+            const roleLabel = role === "GK" ? "goalkeeper" : role.toLowerCase();
+            el.dreamTeamHint.textContent = `No available ${roleLabel} slot in ${state.dreamTeam.formation}.`;
+            el.dreamTeamHint.classList.remove("hidden");
+            setTimeout(() => el.dreamTeamHint.classList.add("hidden"), 2200);
+          }
+          return;
+        }
+        saveDreamTeam();
+        renderDreamTeamPanel();
+      });
+      row.querySelector(".dream-assign-bench").addEventListener("click", () => {
+        if (!assignPlayerToBench(player.key)) return;
+        saveDreamTeam();
+        renderDreamTeamPanel();
+      });
+      row.querySelector(".dream-remove").addEventListener("click", () => {
+        toggleDreamTeamPlayer(player);
+      });
+      poolSection.appendChild(row);
+    });
+  }
+  el.dreamTeamList.appendChild(poolSection);
+
+  const staffSection = document.createElement("section");
+  staffSection.className = "dream-group";
+  staffSection.innerHTML = "<h4>Staff (not counted in 18)</h4>";
+  const staffList = [];
+  if (state.dreamTeam.staff.manager) {
+    staffList.push({ label: "Manager", player: state.dreamTeam.staff.manager });
+  }
+  state.dreamTeam.staff.coaches.forEach((coach) => {
+    staffList.push({ label: "Coach", player: coach });
+  });
+  if (!staffList.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No manager or coaches selected.";
+    staffSection.appendChild(empty);
+  } else {
+    staffList.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "dream-row";
+      row.innerHTML = `
+        <div class="dream-main">
+          <span class="player-no-circle missing">—</span>
+          <img class="player-cutout ${item.player.image ? "" : "hidden"}" src="${item.player.image || ""}" alt="${item.player.name} cutout" />
+          <img class="dream-badge ${item.player.teamBadge ? "" : "hidden"}" src="${item.player.teamBadge || ""}" alt="${item.player.teamName} badge" />
+          <div class="dream-text">
+            <span class="dream-name">${item.player.name}</span>
+            <span class="dream-meta">${item.label} • ${item.player.teamName}</span>
+          </div>
+        </div>
+        <button class="btn dream-remove" type="button">Unstar</button>
+      `;
+      row.querySelector(".dream-remove").addEventListener("click", () => {
+        toggleDreamTeamPlayer(item.player);
+      });
+      staffSection.appendChild(row);
+    });
+  }
+  el.dreamTeamList.appendChild(staffSection);
+
+  const formationSelect = controls.querySelector("#dream-formation-select");
+  formationSelect?.addEventListener("change", () => {
+    setDreamFormation(formationSelect.value);
+    saveDreamTeam();
+    renderDreamTeamPanel();
+  });
+  controls.querySelector("#dream-auto-xi-btn")?.addEventListener("click", () => {
+    autoFillStartingXI();
+    saveDreamTeam();
+    renderDreamTeamPanel();
+  });
+  controls.querySelector("#dream-clear-lineup-btn")?.addEventListener("click", () => {
+    state.dreamTeam.startingXI = [];
+    state.dreamTeam.bench = [];
+    saveDreamTeam();
+    renderDreamTeamPanel();
   });
 }
 
 function toggleDreamTeamPlayer(player) {
-  const index = state.dreamTeam.findIndex((p) => p.key === player.key);
-  if (index >= 0) {
-    state.dreamTeam.splice(index, 1);
+  const role = dreamRoleFromPosition(player.position);
+  const poolIndex = state.dreamTeam.pool.findIndex((p) => p.key === player.key);
+  const managerMatch = state.dreamTeam.staff.manager?.key === player.key;
+  const coachIndex = state.dreamTeam.staff.coaches.findIndex((p) => p.key === player.key);
+
+  if (poolIndex >= 0) {
+    state.dreamTeam.pool.splice(poolIndex, 1);
+    unassignDreamPlayer(player.key);
+  } else if (managerMatch) {
+    state.dreamTeam.staff.manager = null;
+  } else if (coachIndex >= 0) {
+    state.dreamTeam.staff.coaches.splice(coachIndex, 1);
+  } else if (role === "MGR") {
+    state.dreamTeam.staff.manager = player;
+  } else if (role === "COACH") {
+    state.dreamTeam.staff.coaches.push(player);
   } else {
-    if (state.dreamTeam.length >= state.maxDreamTeamPlayers) {
+    if (state.dreamTeam.pool.length >= state.maxDreamTeamPlayers) {
       if (el.dreamTeamHint) {
         el.dreamTeamHint.textContent = `Dream Team is full (${state.maxDreamTeamPlayers}/${state.maxDreamTeamPlayers}). Unstar a player to add another.`;
         el.dreamTeamHint.classList.remove("hidden");
@@ -803,7 +1201,10 @@ function toggleDreamTeamPlayer(player) {
       }
       return;
     }
-    state.dreamTeam.push(player);
+    state.dreamTeam.pool.push(player);
+    if (!assignPlayerToXI(player.key) && state.dreamTeam.bench.length < 7) {
+      assignPlayerToBench(player.key);
+    }
   }
   saveDreamTeam();
   renderDreamTeamNavState();
@@ -812,7 +1213,7 @@ function toggleDreamTeamPlayer(player) {
 }
 
 function toggleDreamTeamPanel() {
-  if (!state.dreamTeam.length) {
+  if (!dreamHasAnySelection()) {
     if (el.dreamTeamHint) {
       el.dreamTeamHint.classList.remove("hidden");
       setTimeout(() => el.dreamTeamHint.classList.add("hidden"), 2400);
@@ -900,12 +1301,10 @@ function drawBadgeCircle(ctx, img, cx, cy, radius) {
 }
 
 async function downloadDreamTeamImage() {
-  if (!state.dreamTeam.length) return;
-  const groups = groupDreamTeamPlayers();
-  const sections = ["Manager", "Goalkeepers", "Defenders", "Midfielders", "Attackers"];
-  const rowCount = sections.reduce((sum, key) => sum + Math.max(1, (groups[key] || []).length), 0);
+  if (!dreamHasAnySelection()) return;
+  normalizeDreamSelections();
   const width = 1400;
-  const height = 260 + rowCount * 58;
+  const height = 1040;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -925,67 +1324,105 @@ async function downloadDreamTeamImage() {
   ctx.fillText("EZRASCORES DREAM TEAM", 60, 90);
   ctx.font = "36px VT323";
   ctx.fillStyle = "#ffbf74";
-  ctx.fillText(`Generated ${new Date().toLocaleString("en-GB")}`, 60, 132);
+  ctx.fillText(`Formation ${state.dreamTeam.formation} • Generated ${new Date().toLocaleString("en-GB")}`, 60, 132);
 
-  const layout = {
-    sectionX: 60,
-    nameX: 104,
-    metaX: 548,
-    cutoutX: 64,
-    cutoutSize: 28,
-    badgeCx: 518,
-    badgeRadius: 13,
+  const caps = formationCaps();
+  const xiGroups = groupedStartingXI();
+  const rowDefs = [
+    { role: "FWD", label: "Attack", count: caps.FWD, y: 250 },
+    { role: "MID", label: "Midfield", count: caps.MID, y: 360 },
+    { role: "DEF", label: "Defence", count: caps.DEF, y: 470 },
+    { role: "GK", label: "Goalkeeper", count: 1, y: 580 },
+  ];
+
+  ctx.strokeStyle = "#6f4312";
+  ctx.lineWidth = 2;
+  clipRoundedRect(ctx, 50, 170, 860, 500, 18);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,153,32,0.05)";
+  clipRoundedRect(ctx, 50, 170, 860, 500, 18);
+  ctx.fill();
+
+  for (const row of rowDefs) {
+    ctx.fillStyle = "#c7883a";
+    ctx.font = "30px VT323";
+    ctx.fillText(row.label.toUpperCase(), 74, row.y - 16);
+    const group = xiGroups[row.role] || [];
+    const xStep = 760 / Math.max(1, row.count);
+    for (let i = 0; i < row.count; i += 1) {
+      const x = 110 + xStep * i + xStep / 2;
+      const player = group[i] || null;
+      ctx.beginPath();
+      ctx.arc(x, row.y, 36, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.strokeStyle = player ? "#ffb45c" : "#5d3710";
+      ctx.stroke();
+      if (!player) continue;
+      const [playerImg, badgeImg] = await Promise.all([loadCanvasImage(player.image), loadCanvasImage(player.teamBadge)]);
+      drawPlayerCutout(ctx, playerImg, x - 18, row.y - 22, 24);
+      drawBadgeCircle(ctx, badgeImg, x + 20, row.y - 10, 10);
+      ctx.fillStyle = "#ffd9a5";
+      ctx.font = "24px VT323";
+      ctx.textAlign = "center";
+      ctx.fillText(escapeForCanvas(player.name), x, row.y + 54);
+      ctx.textAlign = "start";
+    }
+  }
+
+  const benchPlayers = state.dreamTeam.bench.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
+  const staffPlayers = [state.dreamTeam.staff.manager, ...(state.dreamTeam.staff.coaches || [])].filter(Boolean);
+  const listX = 960;
+  let y = 210;
+
+  const drawRow = async (title, player, isStaff = false) => {
+    ctx.fillStyle = "#ffc072";
+    ctx.font = "30px VT323";
+    ctx.fillText(title, listX, y);
+    y += 30;
+    const [playerImg, badgeImg] = await Promise.all([loadCanvasImage(player?.image), loadCanvasImage(player?.teamBadge)]);
+    drawPlayerCutout(ctx, playerImg, listX, y - 22, 28);
+    drawBadgeCircle(ctx, badgeImg, listX + 202, y - 8, 11);
+    ctx.fillStyle = "#f6d5aa";
+    ctx.font = "30px VT323";
+    ctx.fillText(escapeForCanvas(player?.name || "—"), listX + 40, y);
+    ctx.fillStyle = "#c7883a";
+    ctx.font = "24px VT323";
+    const sub = isStaff
+      ? escapeForCanvas(player?.teamName || "")
+      : `${escapeForCanvas(player?.nationality || "")} | ${escapeForCanvas(player?.teamName || "")}`;
+    ctx.fillText(sub, listX + 40, y + 24);
+    y += 52;
   };
 
-  let y = 192;
-  sections.forEach((section) => {
-    ctx.fillStyle = "#ffc072";
-    ctx.font = "44px VT323";
-    ctx.fillText(section, layout.sectionX, y);
+  ctx.fillStyle = "#ffbf74";
+  ctx.font = "38px VT323";
+  ctx.fillText("SUBSTITUTES", listX, y);
+  y += 40;
+  if (!benchPlayers.length) {
+    ctx.fillStyle = "#9e6a2d";
+    ctx.font = "28px VT323";
+    ctx.fillText("No substitutes selected", listX, y);
     y += 36;
-
-    const players = groups[section] || [];
-    if (!players.length) {
-      ctx.fillStyle = "#9e6a2d";
-      ctx.font = "32px VT323";
-      ctx.fillText(section === "Manager" ? "No manager selected" : "No players selected", layout.nameX, y);
-      y += 46;
-      return;
+  } else {
+    for (const player of benchPlayers) {
+      await drawRow("SUB", player);
     }
+  }
 
-    players.forEach((player) => {
-      ctx.fillStyle = "#f6d5aa";
-      ctx.font = "34px VT323";
-      ctx.fillText(escapeForCanvas(player.name), layout.nameX, y);
-      ctx.fillStyle = "#c7883a";
-      ctx.font = "29px VT323";
-      ctx.fillText(`${escapeForCanvas(player.nationality)} | ${escapeForCanvas(player.teamName)}`, layout.metaX, y);
-      y += 42;
-    });
-    y += 6;
-  });
-
-  // Draw player cutouts + club badges after text/layout pass.
-  y = 192;
-  for (const section of sections) {
-    y += 36;
-    const players = groups[section] || [];
-    if (!players.length) {
-      y += 46;
-      continue;
+  y += 10;
+  ctx.fillStyle = "#ffbf74";
+  ctx.font = "38px VT323";
+  ctx.fillText("STAFF", listX, y);
+  y += 40;
+  if (!staffPlayers.length) {
+    ctx.fillStyle = "#9e6a2d";
+    ctx.font = "28px VT323";
+    ctx.fillText("No staff selected", listX, y);
+  } else {
+    if (state.dreamTeam.staff.manager) await drawRow("MANAGER", state.dreamTeam.staff.manager, true);
+    for (const coach of state.dreamTeam.staff.coaches) {
+      await drawRow("COACH", coach, true);
     }
-
-    for (const player of players) {
-      const [playerImg, badgeImg] = await Promise.all([
-        loadCanvasImage(player.image),
-        loadCanvasImage(player.teamBadge),
-      ]);
-      const iconY = y - 30;
-      drawPlayerCutout(ctx, playerImg, layout.cutoutX, iconY, layout.cutoutSize);
-      drawBadgeCircle(ctx, badgeImg, layout.badgeCx, iconY + layout.cutoutSize / 2, layout.badgeRadius);
-      y += 42;
-    }
-    y += 6;
   }
 
   const link = document.createElement("a");
@@ -2979,7 +3416,7 @@ function attachEvents() {
       toggleDreamTeamPanel();
     });
     el.dreamTeamToggleBtn.addEventListener("mouseenter", () => {
-      if (!state.dreamTeam.length && el.dreamTeamHint) {
+      if (!dreamHasAnySelection() && el.dreamTeamHint) {
         el.dreamTeamHint.classList.remove("hidden");
       }
     });
@@ -3131,6 +3568,7 @@ applyMotionSetting(state.motionLevel);
 setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
 refreshPlayerPopScoreBadge();
+normalizeDreamSelections();
 renderDreamTeamNavState();
 renderDreamTeamPanel();
 setSettingsMenuOpen(false);
