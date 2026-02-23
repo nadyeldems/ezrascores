@@ -448,6 +448,20 @@ function hidePlayerPopLayer() {
   if (!el.playerDvdLayer) return;
   el.playerDvdLayer.classList.add("hidden");
   el.playerDvdLayer.classList.remove("revealed");
+  el.playerDvdLayer.classList.remove("quiz-active");
+  document.body.classList.remove("player-quiz-open");
+  if (el.playerDvdAvatar) {
+    el.playerDvdAvatar.classList.remove("quiz-fade");
+    el.playerDvdAvatar.classList.remove("hidden");
+  }
+  if (el.playerQuizFocus) {
+    el.playerQuizFocus.classList.add("hidden");
+    el.playerQuizFocus.classList.remove("active", "answer-correct", "answer-wrong");
+  }
+  if (el.playerQuizFocusImage) {
+    el.playerQuizFocusImage.src = "";
+    el.playerQuizFocusImage.alt = "";
+  }
   if (el.playerDvdName) {
     el.playerDvdName.classList.add("hidden");
     el.playerDvdName.classList.remove("prominent");
@@ -503,7 +517,7 @@ function selectCutoutPlayer(players) {
     .map((p) => ({
       id: p?.idPlayer || "",
       name: p?.strPlayer || "",
-      image: p?.strCutout || p?.strRender || p?.strThumb || "",
+      image: p?.strRender || p?.strCutout || p?.strThumb || "",
       nationality: p?.strNationality || "Unknown",
       position: p?.strPosition || "Unknown",
     }))
@@ -531,7 +545,7 @@ function normalizeSquadPlayer(raw, team) {
     number,
     nationality: raw.strNationality || "Unknown",
     position: raw.strPosition || "Unknown",
-    image: raw.strCutout || raw.strRender || raw.strThumb || "",
+    image: raw.strRender || raw.strCutout || raw.strThumb || "",
     teamId: team?.idTeam || "",
     teamName: team?.strTeam || raw.strTeam || "",
     teamBadge: team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || "",
@@ -624,6 +638,22 @@ function hideQuizFeedback() {
 function hidePlayerQuizCard() {
   if (el.playerQuizCard) el.playerQuizCard.classList.add("hidden");
   if (el.playerQuizOptions) el.playerQuizOptions.innerHTML = "";
+  if (el.playerQuizFocus) {
+    el.playerQuizFocus.classList.add("hidden");
+    el.playerQuizFocus.classList.remove("active", "answer-correct", "answer-wrong");
+  }
+  if (el.playerQuizFocusImage) {
+    el.playerQuizFocusImage.src = "";
+    el.playerQuizFocusImage.alt = "";
+  }
+  if (el.playerDvdAvatar) {
+    el.playerDvdAvatar.classList.remove("quiz-fade");
+    el.playerDvdAvatar.classList.remove("hidden");
+  }
+  if (el.playerDvdLayer) {
+    el.playerDvdLayer.classList.remove("quiz-active");
+  }
+  document.body.classList.remove("player-quiz-open");
   hideQuizFeedback();
 }
 
@@ -684,6 +714,25 @@ function quizOptionsForPlayer(player) {
 
 function renderPlayerQuiz(player) {
   if (!player || !el.playerQuizCard || !el.playerQuizOptions) return;
+  if (el.playerDvdLayer) {
+    el.playerDvdLayer.classList.add("quiz-active");
+  }
+  document.body.classList.add("player-quiz-open");
+  if (el.playerDvdAvatar) {
+    el.playerDvdAvatar.classList.add("quiz-fade");
+    setTimeout(() => {
+      if (el.playerDvdAvatar) el.playerDvdAvatar.classList.add("hidden");
+    }, 240);
+  }
+  if (el.playerQuizFocus) {
+    el.playerQuizFocus.classList.remove("hidden", "answer-correct", "answer-wrong");
+    el.playerQuizFocus.classList.add("active");
+  }
+  if (el.playerQuizFocusImage) {
+    el.playerQuizFocusImage.src = player.image || "";
+    el.playerQuizFocusImage.alt = `${player.name} cutout`;
+  }
+
   const options = quizOptionsForPlayer(player);
   el.playerQuizOptions.innerHTML = "";
   options.forEach((option) => {
@@ -697,9 +746,16 @@ function renderPlayerQuiz(player) {
       setQuizLocked(true);
       if (!correct) {
         setQuizFeedback("TRY AGAIN", "wrong");
+        if (el.playerQuizFocus) {
+          el.playerQuizFocus.classList.remove("answer-correct");
+          el.playerQuizFocus.classList.add("answer-wrong");
+        }
         setTimeout(() => {
           setQuizLocked(false);
           hideQuizFeedback();
+          if (el.playerQuizFocus) {
+            el.playerQuizFocus.classList.remove("answer-wrong");
+          }
         }, 900);
         return;
       }
@@ -708,6 +764,10 @@ function renderPlayerQuiz(player) {
       state.playerQuiz.correctCount += 1;
       refreshPlayerPopScoreBadge();
       setQuizFeedback("IT'S A GOAL!", "correct");
+      if (el.playerQuizFocus) {
+        el.playerQuizFocus.classList.remove("answer-wrong");
+        el.playerQuizFocus.classList.add("answer-correct");
+      }
       setTimeout(async () => {
         hidePlayerQuizCard();
         setQuizLocked(false);
@@ -1021,6 +1081,54 @@ function groupedStartingXI() {
   return groups;
 }
 
+function visualFormationRows(formation) {
+  switch (formation) {
+    case "4-2-3-1":
+      return [
+        { role: "FWD", label: "Striker", count: 1 },
+        { role: "MID", label: "Attacking Midfield", count: 3 },
+        { role: "MID", label: "Holding Midfield", count: 2 },
+        { role: "DEF", label: "Defence", count: 4 },
+        { role: "GK", label: "Goalkeeper", count: 1 },
+      ];
+    case "4-3-3":
+      return [
+        { role: "FWD", label: "Attack", count: 3 },
+        { role: "MID", label: "Midfield", count: 3 },
+        { role: "DEF", label: "Defence", count: 4 },
+        { role: "GK", label: "Goalkeeper", count: 1 },
+      ];
+    case "4-4-2":
+      return [
+        { role: "FWD", label: "Attack", count: 2 },
+        { role: "MID", label: "Midfield", count: 4 },
+        { role: "DEF", label: "Defence", count: 4 },
+        { role: "GK", label: "Goalkeeper", count: 1 },
+      ];
+    case "3-5-2":
+      return [
+        { role: "FWD", label: "Attack", count: 2 },
+        { role: "MID", label: "Midfield", count: 5 },
+        { role: "DEF", label: "Defence", count: 3 },
+        { role: "GK", label: "Goalkeeper", count: 1 },
+      ];
+    case "5-3-2":
+      return [
+        { role: "FWD", label: "Attack", count: 2 },
+        { role: "MID", label: "Midfield", count: 3 },
+        { role: "DEF", label: "Defence", count: 5 },
+        { role: "GK", label: "Goalkeeper", count: 1 },
+      ];
+    default:
+      return [
+        { role: "FWD", label: "Attack", count: 3 },
+        { role: "MID", label: "Midfield", count: 3 },
+        { role: "DEF", label: "Defence", count: 4 },
+        { role: "GK", label: "Goalkeeper", count: 1 },
+      ];
+  }
+}
+
 function mergeDreamRenderReason(prev, next) {
   const priority = { default: 0, player: 1, open: 2, formation: 3 };
   const a = priority[prev] ?? 0;
@@ -1059,8 +1167,8 @@ function renderDreamTeamPanel(reason = "default") {
   }
 
   normalizeDreamSelections();
-  const caps = formationCaps();
   const xiGroups = groupedStartingXI();
+  const roleOffsets = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
   const benchPlayers = state.dreamTeam.bench.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
   const inLineup = new Set([...state.dreamTeam.startingXI, ...state.dreamTeam.bench]);
   const poolRemaining = sortSquadByRole(state.dreamTeam.pool.filter((player) => !inLineup.has(player.key)));
@@ -1095,12 +1203,7 @@ function renderDreamTeamPanel(reason = "default") {
           : "";
   pitch.className = `dream-group dream-pitch ${animClass}`.trim();
   pitch.innerHTML = `<h4>Starting XI (${state.dreamTeam.formation})</h4>`;
-  const rowDefs = [
-    { role: "FWD", label: "Attack", count: caps.FWD },
-    { role: "MID", label: "Midfield", count: caps.MID },
-    { role: "DEF", label: "Defence", count: caps.DEF },
-    { role: "GK", label: "Goalkeeper", count: 1 },
-  ];
+  const rowDefs = visualFormationRows(state.dreamTeam.formation);
   rowDefs.forEach((rowDef, rowIndex) => {
     const lane = document.createElement("div");
     lane.className = `pitch-lane pitch-lane-${rowDef.role.toLowerCase()}`;
@@ -1108,8 +1211,9 @@ function renderDreamTeamPanel(reason = "default") {
     lane.style.setProperty("--lane-delay", `${rowIndex * 65}ms`);
     lane.style.gridTemplateColumns = `repeat(${Math.max(1, rowDef.count)}, minmax(0, 1fr))`;
     const group = xiGroups[rowDef.role] || [];
+    const roleOffset = roleOffsets[rowDef.role] || 0;
     for (let i = 0; i < rowDef.count; i += 1) {
-      const player = group[i];
+      const player = group[roleOffset + i];
       const slot = document.createElement("button");
       slot.type = "button";
       slot.className = `pitch-slot ${player ? "filled" : ""}`;
@@ -1141,6 +1245,7 @@ function renderDreamTeamPanel(reason = "default") {
       }
       lane.appendChild(slot);
     }
+    roleOffsets[rowDef.role] = roleOffset + rowDef.count;
     pitch.appendChild(lane);
   });
   el.dreamTeamList.appendChild(pitch);
@@ -1567,12 +1672,22 @@ async function downloadDreamTeamImage() {
   if (!dreamHasAnySelection()) return;
   normalizeDreamSelections();
   const width = 1080;
-  const height = 1920;
+  const pitchTop = 190;
+  const pitchHeight = 860;
+  const listStart = pitchTop + pitchHeight + 70;
+  const benchPlayers = state.dreamTeam.bench.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
+  const staffPlayers = [state.dreamTeam.staff.manager, ...(state.dreamTeam.staff.coaches || [])].filter(Boolean);
+  const estimatedRows = Math.max(1, benchPlayers.length) + Math.max(1, staffPlayers.length);
+  const height = Math.max(1420, listStart + 230 + estimatedRows * 108);
+  const scale = 2;
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  ctx.scale(scale, scale);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   ctx.fillStyle = "#090503";
   ctx.fillRect(0, 0, width, height);
@@ -1589,29 +1704,32 @@ async function downloadDreamTeamImage() {
   ctx.fillStyle = "#ffbf74";
   ctx.fillText(`Formation ${state.dreamTeam.formation} • ${new Date().toLocaleString("en-GB")}`, 56, 136);
 
-  const caps = formationCaps();
   const xiGroups = groupedStartingXI();
-  const rowDefs = [
-    { role: "FWD", count: caps.FWD, y: 310 },
-    { role: "MID", count: caps.MID, y: 470 },
-    { role: "DEF", count: caps.DEF, y: 630 },
-    { role: "GK", count: 1, y: 790 },
-  ];
+  const baseRows = visualFormationRows(state.dreamTeam.formation);
+  const rowCount = baseRows.length;
+  const laneStep = rowCount > 1 ? 640 / (rowCount - 1) : 0;
+  const rowDefs = baseRows.map((row, idx) => ({
+    role: row.role,
+    count: row.count,
+    y: Math.round(pitchTop + 115 + idx * laneStep),
+  }));
+  const roleOffsets = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
 
   ctx.strokeStyle = "#6f4312";
   ctx.lineWidth = 2;
-  clipRoundedRect(ctx, 42, 190, 996, 760, 20);
+  clipRoundedRect(ctx, 42, pitchTop, 996, pitchHeight, 20);
   ctx.stroke();
   ctx.fillStyle = "rgba(255,153,32,0.05)";
-  clipRoundedRect(ctx, 42, 190, 996, 760, 20);
+  clipRoundedRect(ctx, 42, pitchTop, 996, pitchHeight, 20);
   ctx.fill();
 
   for (const row of rowDefs) {
     const group = xiGroups[row.role] || [];
+    const roleOffset = roleOffsets[row.role] || 0;
     const xStep = 900 / Math.max(1, row.count);
     for (let i = 0; i < row.count; i += 1) {
       const x = 90 + xStep * i + xStep / 2;
-      const player = group[i] || null;
+      const player = group[roleOffset + i] || null;
       ctx.beginPath();
       ctx.arc(x, row.y, 52, 0, Math.PI * 2);
       ctx.closePath();
@@ -1624,56 +1742,55 @@ async function downloadDreamTeamImage() {
       ctx.fillStyle = "#ffd9a5";
       ctx.font = "28px VT323";
       const textWidth = Math.max(104, xStep - 20);
-      drawCenteredWrappedText(ctx, player.name, x, row.y + 82, textWidth, 24, 2);
+      drawCenteredWrappedText(ctx, player.name, x, row.y + 88, textWidth, 24, 2);
     }
+    roleOffsets[row.role] = roleOffset + row.count;
   }
 
-  const benchPlayers = state.dreamTeam.bench.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
   const listX = 58;
-  let y = 1010;
+  let y = listStart;
 
   const drawRow = async (title, player, isStaff = false) => {
     ctx.fillStyle = "#ffc072";
     ctx.font = "32px VT323";
     ctx.fillText(title, listX, y);
-    y += 34;
+    y += 40;
     const [playerImg, badgeImg] = await Promise.all([loadCanvasImage(player?.image), loadCanvasImage(player?.teamBadge)]);
-    drawPlayerCircleCutout(ctx, playerImg, listX + 26, y - 11, 22);
-    drawBadgeCircle(ctx, badgeImg, listX + 46, y + 8, 11);
+    drawPlayerCircleCutout(ctx, playerImg, listX + 30, y - 12, 24);
+    drawBadgeCircle(ctx, badgeImg, listX + 52, y + 10, 12);
     ctx.fillStyle = "#f6d5aa";
-    ctx.font = "33px VT323";
-    const nameLines = drawWrappedText(ctx, player?.name || "—", listX + 66, y, width - listX - 84, 24, 2);
+    ctx.font = "34px VT323";
+    const nameLines = drawWrappedText(ctx, player?.name || "—", listX + 72, y, width - listX - 88, 26, 2);
     ctx.fillStyle = "#c7883a";
-    ctx.font = "25px VT323";
+    ctx.font = "24px VT323";
     const sub = isStaff
       ? escapeForCanvas(player?.teamName || "")
       : `${escapeForCanvas(nationalityWithFlag(player?.nationality || ""))} | ${escapeForCanvas(player?.teamName || "")}`;
-    const subStart = y + nameLines * 24 + 2;
-    const subLines = drawWrappedText(ctx, sub, listX + 66, subStart, width - listX - 84, 20, 2);
-    y = subStart + subLines * 20 + 16;
+    const subStart = y + nameLines * 26 + 4;
+    const subLines = drawWrappedText(ctx, sub, listX + 72, subStart, width - listX - 88, 20, 2);
+    y = subStart + subLines * 20 + 22;
   };
 
   ctx.fillStyle = "#ffbf74";
   ctx.font = "46px VT323";
   ctx.fillText("SUBSTITUTES", listX, y);
-  y += 48;
+  y += 56;
   if (!benchPlayers.length) {
     ctx.fillStyle = "#9e6a2d";
     ctx.font = "32px VT323";
     ctx.fillText("No substitutes selected", listX, y);
-    y += 36;
+    y += 44;
   } else {
     for (const player of benchPlayers) {
       await drawRow("SUB", player);
     }
   }
 
-  y += 10;
+  y += 16;
   ctx.fillStyle = "#ffbf74";
   ctx.font = "46px VT323";
   ctx.fillText("STAFF", listX, y);
-  y += 48;
-  const staffPlayers = [state.dreamTeam.staff.manager, ...(state.dreamTeam.staff.coaches || [])].filter(Boolean);
+  y += 56;
   if (!staffPlayers.length) {
     ctx.fillStyle = "#9e6a2d";
     ctx.font = "32px VT323";
@@ -1791,6 +1908,9 @@ async function showRandomPlayerPop() {
       return;
     }
     hidePlayerQuizCard();
+    document.body.classList.remove("player-quiz-open");
+    el.playerDvdLayer.classList.remove("quiz-active");
+    el.playerDvdAvatar.classList.remove("hidden", "quiz-fade");
     const pop = state.playerPop;
     pop.player = player;
     const maxX = Math.max(0, window.innerWidth - pop.size);
@@ -3352,7 +3472,7 @@ async function renderFavorite() {
     return;
   }
 
-  el.favoriteStatus.textContent = "Upcoming";
+  el.favoriteStatus.textContent = "Match Centre";
   clearFavoriteGoalCinematic();
   if (todayPrimaryEvent && todayPrimaryEvent.dateEvent === todayIso) {
     el.favoriteStatus.classList.add("gameday");
