@@ -28,6 +28,7 @@ const state = {
   favoriteTeamId: localStorage.getItem("esra_favorite_team") || "",
   uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
   playerPopEnabled: localStorage.getItem("ezra_player_pop_enabled") === "1",
+  playerPopScope: localStorage.getItem("ezra_player_pop_scope") === "favorite" ? "favorite" : "any",
   favoriteTeam: null,
   gameDayCountdownTimer: null,
   lastCountdownTarget: null,
@@ -40,6 +41,7 @@ const state = {
   lastLiveProbeAt: 0,
   lastStaticRefreshAt: 0,
   pollMode: "idle",
+  settingsOpen: false,
   playerPop: {
     rafId: null,
     running: false,
@@ -87,7 +89,11 @@ const el = {
   favoritePickerText: document.getElementById("favorite-picker-text"),
   debugGoalBtn: document.getElementById("debug-goal-btn"),
   themeButtons: [...document.querySelectorAll(".theme-btn")],
+  settingsMenu: document.getElementById("settings-menu"),
+  settingsToggleBtn: document.getElementById("settings-toggle-btn"),
+  settingsPanel: document.getElementById("settings-panel"),
   playerDvdToggle: document.getElementById("player-dvd-toggle"),
+  playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
   playerDvdLayer: document.getElementById("player-dvd-layer"),
   playerDvdAvatar: document.getElementById("player-dvd-avatar"),
   playerDvdImage: document.getElementById("player-dvd-image"),
@@ -119,6 +125,27 @@ function setPlayerPopButtonState() {
   if (!el.playerDvdToggle) return;
   el.playerDvdToggle.classList.toggle("active", state.playerPopEnabled);
   el.playerDvdToggle.setAttribute("aria-pressed", String(state.playerPopEnabled));
+  el.playerDvdToggle.textContent = `Player Pop: ${state.playerPopEnabled ? "On" : "Off"}`;
+}
+
+function setPlayerSourceButtonState() {
+  el.playerSourceButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.playerSource === state.playerPopScope);
+  });
+}
+
+function setPlayerPopScope(scope) {
+  const safeScope = scope === "favorite" ? "favorite" : "any";
+  state.playerPopScope = safeScope;
+  localStorage.setItem("ezra_player_pop_scope", safeScope);
+  setPlayerSourceButtonState();
+}
+
+function setSettingsMenuOpen(open) {
+  state.settingsOpen = Boolean(open);
+  if (!el.settingsPanel || !el.settingsToggleBtn) return;
+  el.settingsPanel.classList.toggle("hidden", !state.settingsOpen);
+  el.settingsToggleBtn.setAttribute("aria-expanded", String(state.settingsOpen));
 }
 
 function stopPlayerPopAnimation() {
@@ -137,6 +164,8 @@ function hidePlayerPopLayer() {
   el.playerDvdLayer.classList.remove("revealed");
   if (el.playerDvdName) {
     el.playerDvdName.classList.add("hidden");
+    el.playerDvdName.classList.remove("prominent");
+    el.playerDvdName.style.transform = "";
     el.playerDvdName.textContent = "";
   }
 }
@@ -182,7 +211,19 @@ async function randomLeaguePlayerWithCutout() {
   const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].filter((t) => t?.strTeam);
   if (!allTeams.length) return null;
 
-  const shuffled = [...allTeams].sort(() => Math.random() - 0.5);
+  let pool = allTeams;
+  if (state.playerPopScope === "favorite") {
+    const favoriteId = state.favoriteTeamId || "";
+    const favoriteName = (state.favoriteTeam?.strTeam || "").toLowerCase();
+    pool = allTeams.filter(
+      (team) =>
+        (favoriteId && team.idTeam === favoriteId) ||
+        (favoriteName && (team.strTeam || "").toLowerCase() === favoriteName)
+    );
+    if (!pool.length) return null;
+  }
+
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
   const maxAttempts = Math.min(16, shuffled.length);
   for (let i = 0; i < maxAttempts; i += 1) {
     const team = shuffled[i];
@@ -205,7 +246,11 @@ function placePlayerPopElement() {
   if (!el.playerDvdAvatar) return;
   el.playerDvdAvatar.style.transform = `translate(${pop.x}px, ${pop.y}px)`;
 
-  if (el.playerDvdName && !el.playerDvdName.classList.contains("hidden")) {
+  if (
+    el.playerDvdName &&
+    !el.playerDvdName.classList.contains("hidden") &&
+    !el.playerDvdName.classList.contains("prominent")
+  ) {
     const nameY = Math.min(maxY, pop.y + pop.size + 8);
     el.playerDvdName.style.transform = `translate(${pop.x}px, ${nameY}px)`;
   }
@@ -290,6 +335,7 @@ async function showRandomPlayerPop() {
   try {
     const player = await randomLeaguePlayerWithCutout();
     if (!player || !state.playerPopEnabled) {
+      hidePlayerPopLayer();
       return;
     }
     const pop = state.playerPop;
@@ -306,6 +352,8 @@ async function showRandomPlayerPop() {
     el.playerDvdLayer.classList.remove("hidden");
     el.playerDvdLayer.classList.remove("revealed");
     el.playerDvdName.classList.add("hidden");
+    el.playerDvdName.classList.remove("prominent");
+    el.playerDvdName.style.transform = "";
     placePlayerPopElement();
     startPlayerPopAnimation();
   } finally {
@@ -329,10 +377,12 @@ function revealAndDismissPlayerPop() {
   stopPlayerPopAnimation();
   el.playerDvdLayer.classList.add("revealed");
   el.playerDvdName.classList.remove("hidden");
+  el.playerDvdName.classList.add("prominent");
+  el.playerDvdName.style.transform = "";
   placePlayerPopElement();
   setTimeout(() => {
     setPlayerPopEnabled(false);
-  }, 1100);
+  }, 3600);
 }
 
 function setGameDayMessage(text, mode = "neutral") {
@@ -1671,6 +1721,13 @@ async function fullRefresh() {
 }
 
 function attachEvents() {
+  if (el.settingsToggleBtn) {
+    el.settingsToggleBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setSettingsMenuOpen(!state.settingsOpen);
+    });
+  }
+
   el.themeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       applyUiTheme(btn.dataset.theme);
@@ -1682,6 +1739,15 @@ function attachEvents() {
       setPlayerPopEnabled(!state.playerPopEnabled);
     });
   }
+
+  el.playerSourceButtons.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      setPlayerPopScope(btn.dataset.playerSource);
+      if (state.playerPopEnabled) {
+        await showRandomPlayerPop();
+      }
+    });
+  });
 
   if (el.playerDvdAvatar) {
     el.playerDvdAvatar.addEventListener("pointerdown", (event) => {
@@ -1711,6 +1777,9 @@ function attachEvents() {
   });
 
   document.addEventListener("click", (e) => {
+    if (el.settingsMenu && !el.settingsMenu.contains(e.target)) {
+      setSettingsMenuOpen(false);
+    }
     if (!el.favoritePicker.contains(e.target)) {
       el.favoritePickerMenu.classList.add("hidden");
       el.favoritePickerBtn.setAttribute("aria-expanded", "false");
@@ -1761,7 +1830,9 @@ function attachEvents() {
 
 attachEvents();
 applyUiTheme(state.uiTheme);
+setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
+setSettingsMenuOpen(false);
 if (state.playerPopEnabled) {
   showRandomPlayerPop();
 }
