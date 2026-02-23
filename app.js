@@ -125,6 +125,7 @@ const el = {
   dreamTeamPanel: document.getElementById("dream-team-panel"),
   dreamTeamList: document.getElementById("dream-team-list"),
   dreamTeamDownloadBtn: document.getElementById("dream-team-download-btn"),
+  dreamTeamCloseBtn: document.getElementById("dream-team-close-btn"),
   squadPanel: document.getElementById("squad-panel"),
   squadTitle: document.getElementById("squad-title"),
   squadToggleBtn: document.getElementById("squad-toggle-btn"),
@@ -389,12 +390,26 @@ function normalizeSquadPlayer(raw, team) {
 
 function positionBucket(position) {
   const p = (position || "").toLowerCase();
-  if (p.includes("manager") || p.includes("coach")) return "Manager";
+  if (p.includes("manager") || p.includes("coach") || p.includes("owner") || p.includes("chairman") || p.includes("director")) {
+    return "Manager";
+  }
   if (p.includes("goalkeeper") || p === "gk" || p.includes("keeper")) return "Goalkeepers";
   if (p.includes("defender") || p.includes("back")) return "Defenders";
   if (p.includes("midfielder") || p.includes("midfield") || p.includes("winger")) return "Midfielders";
   if (p.includes("forward") || p.includes("striker") || p.includes("attacker")) return "Attackers";
   return "Midfielders";
+}
+
+function squadRoleOrder(position) {
+  const bucket = positionBucket(position);
+  const order = {
+    Manager: 0,
+    Goalkeepers: 1,
+    Defenders: 2,
+    Midfielders: 3,
+    Attackers: 4,
+  };
+  return order[bucket] ?? 5;
 }
 
 function getTeamById(id) {
@@ -567,6 +582,14 @@ function sortedByName(list) {
   return [...list].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
+function sortSquadByRole(list) {
+  return [...list].sort((a, b) => {
+    const roleDelta = squadRoleOrder(a.position) - squadRoleOrder(b.position);
+    if (roleDelta !== 0) return roleDelta;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+}
+
 function renderSquadPanel() {
   if (!el.squadPanel || !el.squadList || !el.squadTitle || !el.squadToggleBtn || !el.squadBody) return;
   const favorite = state.favoriteTeam;
@@ -595,7 +618,7 @@ function renderSquadPanel() {
     return;
   }
 
-  sortedByName(squad).forEach((player) => {
+  sortSquadByRole(squad).forEach((player) => {
     const row = document.createElement("div");
     row.className = "squad-row";
     const starOn = isDreamPlayer(player.key);
@@ -604,6 +627,7 @@ function renderSquadPanel() {
       <div class="squad-main">
         <div class="squad-line">
           <span class="player-no-circle ${player.number ? "" : "missing"}">${shirtNo}</span>
+          <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
           <span class="squad-name">${player.name}</span>
         </div>
         <span class="squad-meta">${player.nationality} • ${player.position}</span>
@@ -638,9 +662,11 @@ function renderDreamTeamPanel() {
   if (!el.dreamTeamPanel || !el.dreamTeamList) return;
   if (!state.dreamTeamOpen) {
     el.dreamTeamPanel.classList.add("hidden");
+    document.body.classList.remove("dream-team-overlay-open");
     return;
   }
   el.dreamTeamPanel.classList.remove("hidden");
+  document.body.classList.add("dream-team-overlay-open");
   el.dreamTeamList.innerHTML = "";
 
   if (!state.dreamTeam.length) {
@@ -673,6 +699,7 @@ function renderDreamTeamPanel() {
         row.innerHTML = `
           <div class="dream-main">
             <span class="player-no-circle ${player.number ? "" : "missing"}">${shirtNo}</span>
+            <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
             <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
             <div class="dream-text">
               <span class="dream-name">${player.name}</span>
@@ -2356,6 +2383,23 @@ function attachEvents() {
     });
   }
 
+  if (el.dreamTeamCloseBtn) {
+    el.dreamTeamCloseBtn.addEventListener("click", () => {
+      state.dreamTeamOpen = false;
+      renderDreamTeamNavState();
+      renderDreamTeamPanel();
+    });
+  }
+
+  if (el.dreamTeamPanel) {
+    el.dreamTeamPanel.addEventListener("click", (event) => {
+      if (event.target !== el.dreamTeamPanel) return;
+      state.dreamTeamOpen = false;
+      renderDreamTeamNavState();
+      renderDreamTeamPanel();
+    });
+  }
+
   if (el.squadToggleBtn) {
     el.squadToggleBtn.addEventListener("click", () => {
       state.squadOpen = !state.squadOpen;
@@ -2391,6 +2435,13 @@ function attachEvents() {
       el.favoritePickerMenu.classList.add("hidden");
       el.favoritePickerBtn.setAttribute("aria-expanded", "false");
     }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !state.dreamTeamOpen) return;
+    state.dreamTeamOpen = false;
+    renderDreamTeamNavState();
+    renderDreamTeamPanel();
   });
 
   el.leagueButtons.forEach((btn) => {

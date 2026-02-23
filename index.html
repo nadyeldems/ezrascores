@@ -112,10 +112,13 @@
           </div>
         </section>
 
-        <section class="panel hidden" id="dream-team-panel">
+        <section class="panel dream-team-overlay hidden" id="dream-team-panel" aria-modal="true" role="dialog" aria-label="Dream Team">
           <div class="panel-head dream-team-head">
             <h3>Dream Team</h3>
-            <button id="dream-team-download-btn" class="btn" type="button">Download Image</button>
+            <div class="dream-team-actions">
+              <button id="dream-team-download-btn" class="btn" type="button">Download Image</button>
+              <button id="dream-team-close-btn" class="btn" type="button" aria-label="Close Dream Team">Close</button>
+            </div>
           </div>
           <div id="dream-team-list" class="dream-team-list"></div>
         </section>
