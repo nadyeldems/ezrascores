@@ -997,6 +997,8 @@ body.dream-team-overlay-open::before {
   border-radius: 999px;
   padding: 0.05rem 0.5rem;
   color: var(--text-soft);
+  text-align: center;
+  white-space: nowrap;
 }
 
 .dream-pitch {
@@ -1043,9 +1045,10 @@ body.dream-team-overlay-open::before {
   font: inherit;
   display: grid;
   justify-items: center;
-  align-content: start;
+  align-content: center;
   gap: 0.28rem;
   transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
+  text-align: center;
 }
 
 .dream-pitch-open .pitch-slot,
@@ -1126,17 +1129,26 @@ body.dream-team-overlay-open::before {
 .pitch-player-name {
   color: #ffe2bc;
   text-align: center;
-  line-height: 1;
+  line-height: 1.05;
   font-size: clamp(0.78rem, 2.8vw, 1.02rem);
   overflow-wrap: anywhere;
   word-break: break-word;
+  width: 100%;
+  max-width: 100%;
+  min-height: 2.1em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .pitch-empty {
-  margin-top: 1.85rem;
+  margin-top: 0;
   color: #9d6e3d;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  width: 100%;
+  text-align: center;
 }
 
 @keyframes pitch-lane-in {
@@ -2507,6 +2519,8 @@ body[data-motion="arcade"] .fixture-focus {
   .hero-bar {
     flex-direction: column;
     align-items: flex-start;
+    padding: 0.75rem 0.75rem 0.7rem;
+    gap: 0.55rem;
   }
 
   .hero-left {
@@ -2521,18 +2535,33 @@ body[data-motion="arcade"] .fixture-focus {
 
   .hero-actions {
     width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    column-gap: 0.45rem;
+    row-gap: 0.45rem;
     position: relative;
   }
 
+  .settings-menu {
+    grid-column: 1;
+    justify-self: start;
+  }
+
   .player-pop-main {
-    align-self: flex-end;
+    grid-column: 3;
+    justify-self: end;
+    min-width: 0;
   }
 
   .dream-team-nav {
+    grid-column: 1 / -1;
     width: 100%;
+  }
+
+  .dream-team-toggle {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .dream-team-hint {
@@ -2553,11 +2582,13 @@ body[data-motion="arcade"] .fixture-focus {
 
   .dream-team-head {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
+    text-align: center;
   }
 
   .dream-team-actions {
     width: 100%;
+    justify-content: center;
   }
 
   .dream-team-actions .btn {
@@ -2592,12 +2623,25 @@ body[data-motion="arcade"] .fixture-focus {
     min-width: 0;
   }
 
-  .game-day-message {
+  .dream-controls-row {
+    justify-content: center;
+    text-align: center;
+  }
+
+  .dream-controls-row label {
     width: 100%;
     text-align: center;
   }
 
+  .game-day-message {
+    grid-column: 1 / -1;
+    width: 100%;
+    text-align: center;
+    margin: 0;
+  }
+
   .header-picker {
+    grid-column: 1 / -1;
     width: 100%;
     display: flex;
     justify-content: stretch;

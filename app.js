@@ -154,6 +154,8 @@ const state = {
     lastTs: 0,
     player: null,
   },
+  dreamRenderRaf: null,
+  dreamRenderReason: "default",
   lastRefresh: null,
 };
 
@@ -213,6 +215,8 @@ const el = {
   playerDvdLayer: document.getElementById("player-dvd-layer"),
   playerDvdAvatar: document.getElementById("player-dvd-avatar"),
   playerDvdImage: document.getElementById("player-dvd-image"),
+  playerQuizFocus: document.getElementById("player-quiz-focus"),
+  playerQuizFocusImage: document.getElementById("player-quiz-focus-image"),
   playerDvdName: document.getElementById("player-dvd-name"),
   playerQuizCard: document.getElementById("player-quiz-card"),
   playerQuizOptions: document.getElementById("player-quiz-options"),
@@ -1017,6 +1021,24 @@ function groupedStartingXI() {
   return groups;
 }
 
+function mergeDreamRenderReason(prev, next) {
+  const priority = { default: 0, player: 1, open: 2, formation: 3 };
+  const a = priority[prev] ?? 0;
+  const b = priority[next] ?? 0;
+  return b >= a ? next : prev;
+}
+
+function requestDreamTeamRender(reason = "default") {
+  state.dreamRenderReason = mergeDreamRenderReason(state.dreamRenderReason || "default", reason);
+  if (state.dreamRenderRaf) return;
+  state.dreamRenderRaf = requestAnimationFrame(() => {
+    state.dreamRenderRaf = null;
+    const nextReason = state.dreamRenderReason || "default";
+    state.dreamRenderReason = "default";
+    renderDreamTeamPanel(nextReason);
+  });
+}
+
 function renderDreamTeamPanel(reason = "default") {
   if (!el.dreamTeamPanel || !el.dreamTeamList) return;
   if (!state.dreamTeamOpen) {
@@ -1110,7 +1132,7 @@ function renderDreamTeamPanel(reason = "default") {
           saveDreamTeam();
           renderDreamTeamNavState();
           renderSquadPanel();
-          renderDreamTeamPanel("player");
+          requestDreamTeamRender("player");
         });
       } else {
         slot.title = `${rowDef.label} slot`;
@@ -1153,7 +1175,7 @@ function renderDreamTeamPanel(reason = "default") {
         saveDreamTeam();
         renderDreamTeamNavState();
         renderSquadPanel();
-        renderDreamTeamPanel("player");
+        requestDreamTeamRender("player");
       });
       benchSection.appendChild(row);
     });
@@ -1205,12 +1227,12 @@ function renderDreamTeamPanel(reason = "default") {
           return;
         }
         saveDreamTeam();
-        renderDreamTeamPanel("player");
+        requestDreamTeamRender("player");
       });
       row.querySelector(".dream-assign-bench").addEventListener("click", () => {
         if (!assignPlayerToBench(player.key)) return;
         saveDreamTeam();
-        renderDreamTeamPanel("player");
+        requestDreamTeamRender("player");
       });
       row.querySelector(".dream-remove").addEventListener("click", () => {
         toggleDreamTeamPlayer(player);
@@ -1263,18 +1285,18 @@ function renderDreamTeamPanel(reason = "default") {
   formationSelect?.addEventListener("change", () => {
     setDreamFormation(formationSelect.value);
     saveDreamTeam();
-    renderDreamTeamPanel("formation");
+    requestDreamTeamRender("formation");
   });
   controls.querySelector("#dream-auto-xi-btn")?.addEventListener("click", () => {
     autoFillStartingXI();
     saveDreamTeam();
-    renderDreamTeamPanel("player");
+    requestDreamTeamRender("player");
   });
   controls.querySelector("#dream-clear-lineup-btn")?.addEventListener("click", () => {
     state.dreamTeam.startingXI = [];
     state.dreamTeam.bench = [];
     saveDreamTeam();
-    renderDreamTeamPanel("player");
+    requestDreamTeamRender("player");
   });
 }
 
@@ -1316,7 +1338,7 @@ function toggleDreamTeamPlayer(player) {
   saveDreamTeam();
   renderDreamTeamNavState();
   renderSquadPanel();
-  renderDreamTeamPanel("player");
+  requestDreamTeamRender("player");
 }
 
 function toggleDreamTeamPanel() {
@@ -1329,7 +1351,7 @@ function toggleDreamTeamPanel() {
   }
   state.dreamTeamOpen = !state.dreamTeamOpen;
   renderDreamTeamNavState();
-  renderDreamTeamPanel(state.dreamTeamOpen ? "open" : "default");
+  requestDreamTeamRender(state.dreamTeamOpen ? "open" : "default");
 }
 
 function escapeForCanvas(text) {
@@ -3148,7 +3170,7 @@ async function renderFavorite() {
     resetFavoriteTheme();
     renderSquadPanel();
     renderDreamTeamNavState();
-    renderDreamTeamPanel();
+    requestDreamTeamRender();
     el.favoriteEmpty.classList.remove("hidden");
     el.favoriteContent.classList.add("hidden");
     return;
@@ -3172,7 +3194,7 @@ async function renderFavorite() {
     resetFavoriteTheme();
     renderSquadPanel();
     renderDreamTeamNavState();
-    renderDreamTeamPanel();
+    requestDreamTeamRender();
     el.favoriteEmpty.classList.remove("hidden");
     el.favoriteContent.classList.add("hidden");
     return;
@@ -3188,7 +3210,7 @@ async function renderFavorite() {
   }
   renderSquadPanel();
   renderDreamTeamNavState();
-  renderDreamTeamPanel();
+  requestDreamTeamRender();
   const todayIso = toISODate(new Date());
   const lastEvents = await safeLoad(() => fetchTeamLastEvents(team.idTeam), []);
   const liveEvent = findLiveForFavorite(team.strTeam);
@@ -3630,7 +3652,7 @@ function attachEvents() {
     el.dreamTeamCloseBtn.addEventListener("click", () => {
       state.dreamTeamOpen = false;
       renderDreamTeamNavState();
-      renderDreamTeamPanel();
+      requestDreamTeamRender();
     });
   }
 
@@ -3639,7 +3661,7 @@ function attachEvents() {
       if (event.target !== el.dreamTeamPanel) return;
       state.dreamTeamOpen = false;
       renderDreamTeamNavState();
-      renderDreamTeamPanel();
+      requestDreamTeamRender();
     });
   }
 
@@ -3671,7 +3693,7 @@ function attachEvents() {
     if (state.dreamTeamOpen) {
       state.dreamTeamOpen = false;
       renderDreamTeamNavState();
-      renderDreamTeamPanel();
+      requestDreamTeamRender();
     }
     toggleFavoritePickerMenu();
   });
@@ -3689,7 +3711,7 @@ function attachEvents() {
     if (event.key !== "Escape" || !state.dreamTeamOpen) return;
     state.dreamTeamOpen = false;
     renderDreamTeamNavState();
-    renderDreamTeamPanel();
+    requestDreamTeamRender();
   });
 
   el.leagueButtons.forEach((btn) => {
@@ -3763,7 +3785,7 @@ setPlayerPopButtonState();
 refreshPlayerPopScoreBadge();
 normalizeDreamSelections();
 renderDreamTeamNavState();
-renderDreamTeamPanel();
+requestDreamTeamRender();
 setSettingsMenuOpen(false);
 initRevealOnScroll();
 updateStickyDateBarVisibility();
