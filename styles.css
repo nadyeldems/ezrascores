@@ -948,45 +948,113 @@ body.dream-team-overlay-open {
 
 .dream-pitch {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.95rem;
   background:
-    linear-gradient(180deg, rgba(255, 153, 32, 0.05), transparent 28%),
-    rgba(11, 7, 3, 0.75);
+    radial-gradient(circle at 50% 50%, rgba(255, 153, 32, 0.12), transparent 56%),
+    linear-gradient(180deg, rgba(255, 153, 32, 0.07), transparent 30%),
+    rgba(11, 7, 3, 0.8);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 152, 17, 0.09),
+    0 8px 22px rgba(0, 0, 0, 0.26);
 }
 
 .pitch-lane {
-  display: grid;
-  grid-template-columns: 86px repeat(auto-fit, minmax(120px, 1fr));
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.32rem;
-}
-
-.pitch-label {
-  color: var(--text-soft);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  gap: 0.55rem;
 }
 
 .pitch-slot {
-  min-height: 2.15rem;
-  border: 1px dashed var(--line-soft);
-  border-radius: 0.62rem;
-  background: rgba(255, 153, 32, 0.03);
+  width: clamp(90px, 18vw, 120px);
+  min-height: 118px;
+  border: 1px dashed #5e3810;
+  border-radius: 0.95rem;
+  background: rgba(255, 153, 32, 0.035);
   color: var(--text-soft);
-  padding: 0.18rem 0.38rem;
+  padding: 0.4rem 0.32rem 0.34rem;
   font: inherit;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 0.28rem;
+  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
 }
 
 .pitch-slot.filled {
   border-style: solid;
   border-color: #b86d17;
-  color: #ffd39c;
-  background: rgba(255, 153, 32, 0.1);
+  color: #ffd9a4;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(255, 176, 74, 0.14), rgba(255, 153, 32, 0.04) 58%),
+    rgba(255, 153, 32, 0.07);
+}
+
+.pitch-slot.filled:hover {
+  transform: translateY(-1px);
+  border-color: #d58a2e;
 }
 
 .pitch-slot:disabled {
   opacity: 0.75;
   cursor: not-allowed;
+}
+
+.pitch-avatar-ring {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid #b87424;
+  background: #140a04;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.pitch-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pitch-avatar-fallback {
+  font-size: 1.3rem;
+  color: #ffcf8b;
+}
+
+.pitch-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #b87424;
+  background: #120a04;
+  object-fit: contain;
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+}
+
+.pitch-player-name {
+  color: #ffe2bc;
+  text-align: center;
+  line-height: 1;
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pitch-empty {
+  margin-top: 1.85rem;
+  color: #9d6e3d;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .dream-actions-inline {
@@ -2390,7 +2458,7 @@ body[data-motion="arcade"] .fixture-focus {
   }
 
   .pitch-lane {
-    grid-template-columns: 1fr;
+    justify-content: center;
   }
 
   .dream-actions-inline {

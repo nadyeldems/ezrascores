@@ -989,16 +989,27 @@ function renderDreamTeamPanel() {
   ];
   rowDefs.forEach((rowDef) => {
     const lane = document.createElement("div");
-    lane.className = "pitch-lane";
-    lane.innerHTML = `<span class="pitch-label">${rowDef.label}</span>`;
+    lane.className = `pitch-lane pitch-lane-${rowDef.role.toLowerCase()}`;
     const group = xiGroups[rowDef.role] || [];
     for (let i = 0; i < rowDef.count; i += 1) {
       const player = group[i];
       const slot = document.createElement("button");
       slot.type = "button";
       slot.className = `pitch-slot ${player ? "filled" : ""}`;
-      slot.textContent = player ? `${player.name} (${player.number || "—"})` : "Empty";
       if (player) {
+        slot.innerHTML = `
+          <span class="pitch-avatar-ring">
+            <img class="pitch-avatar ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
+            <span class="pitch-avatar-fallback ${player.image ? "hidden" : ""}">${(player.name || "").slice(0, 1)}</span>
+            <img class="pitch-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
+          </span>
+          <span class="pitch-player-name">${player.name}</span>
+        `;
+      } else {
+        slot.innerHTML = `<span class="pitch-empty">Empty</span>`;
+      }
+      if (player) {
+        slot.title = `${rowDef.label}: ${player.name} (${player.number || "—"})`;
         slot.addEventListener("click", () => {
           unassignDreamPlayer(player.key);
           saveDreamTeam();
@@ -1007,6 +1018,7 @@ function renderDreamTeamPanel() {
           renderDreamTeamPanel();
         });
       } else {
+        slot.title = `${rowDef.label} slot`;
         slot.disabled = true;
       }
       lane.appendChild(slot);
