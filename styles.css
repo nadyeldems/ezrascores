@@ -365,7 +365,7 @@ body[data-theme="club"] .footer {
 
 .settings-menu {
   position: relative;
-  z-index: 130;
+  z-index: 320;
 }
 
 .settings-panel {
@@ -378,7 +378,7 @@ body[data-theme="club"] .footer {
   background: #090503;
   box-shadow: inset 0 0 0 1px rgba(255, 152, 17, 0.08);
   padding: 0.55rem;
-  z-index: 131;
+  z-index: 325;
 }
 
 .settings-cog-btn {
@@ -1406,7 +1406,7 @@ body[data-theme="t90"] .status-pill.final {
   left: 50%;
   bottom: 0.72rem;
   transform: translateX(-50%);
-  z-index: 72;
+  z-index: 180;
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -1503,12 +1503,12 @@ body[data-theme="t90"] .status-pill.final {
   border: 1px solid var(--line);
   border-radius: 0.75rem;
   background: #090503;
-  z-index: 30;
+  z-index: 310;
   box-shadow: inset 0 0 0 1px rgba(255, 152, 17, 0.08);
 }
 
 .header-picker {
-  z-index: 40;
+  z-index: 300;
 }
 
 .favorite-option {

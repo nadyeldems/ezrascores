@@ -1296,6 +1296,23 @@ function parseStatusText(event) {
   return (event?.strStatus || event?.strProgress || "").toLowerCase();
 }
 
+function liveProgressLabel(event) {
+  const raw = String(event?.strStatus || event?.strProgress || "").trim();
+  if (!raw) return "LIVE";
+  const low = raw.toLowerCase();
+
+  if (/\bht|half time\b/.test(low)) return "HT";
+  if (/\b1h|first half\b/.test(low)) return "1H";
+  if (/\b2h|second half\b/.test(low)) return "2H";
+  if (/\bet|extra time\b/.test(low)) return "ET";
+  if (/\bpen|pens|penalties\b/.test(low)) return "PENS";
+
+  const minuteMatch = raw.match(/(\d{1,3}(?:\+\d{1,2})?)\s*'?/);
+  if (minuteMatch?.[1]) return `${minuteMatch[1]}'`;
+  if (/\blive|in play|playing\b/.test(low)) return "LIVE";
+  return "LIVE";
+}
+
 function hasScore(event) {
   return event?.intHomeScore !== null && event?.intHomeScore !== undefined && event?.intAwayScore !== null && event?.intAwayScore !== undefined;
 }
@@ -1317,7 +1334,9 @@ function eventState(event) {
   const today = toISODate(new Date());
   const date = event?.dateEvent;
   if (isLiveEvent(event)) {
-    return { key: "live", label: "live" };
+    const progress = liveProgressLabel(event);
+    const label = progress === "LIVE" ? "live" : `live ${progress}`;
+    return { key: "live", label };
   }
   if (isFinalEvent(event)) {
     return { key: "final", label: "final score" };
@@ -2481,7 +2500,8 @@ async function renderFavorite() {
   el.favoriteStatus.classList.remove("gameday", "live", "final");
 
   if (chosenToday && chosenToday.dateEvent === todayIso && chosenTodayState === "live") {
-    el.favoriteStatus.textContent = "LIVE";
+    const progress = liveProgressLabel(chosenToday);
+    el.favoriteStatus.textContent = progress === "LIVE" ? "LIVE" : `LIVE ${progress}`;
     el.favoriteStatus.classList.add("live");
     el.favoriteFixtureLine.textContent = scoreLine(chosenToday);
     el.favoriteFixtureDetail.textContent = `${chosenToday.strVenue || "Venue TBD"} | ${chosenToday.strLeague || ""}`;
