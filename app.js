@@ -760,7 +760,66 @@ function escapeForCanvas(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
-function downloadDreamTeamImage() {
+function loadCanvasImage(url) {
+  return new Promise((resolve) => {
+    if (!url) {
+      resolve(null);
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+function clipRoundedRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function drawPlayerCutout(ctx, img, x, y, size) {
+  if (!img) return;
+  ctx.save();
+  clipRoundedRect(ctx, x, y, size, size, 8);
+  ctx.clip();
+  ctx.fillStyle = "#120a04";
+  ctx.fillRect(x, y, size, size);
+  ctx.drawImage(img, x, y, size, size);
+  ctx.restore();
+  ctx.strokeStyle = "#6f4312";
+  ctx.lineWidth = 1;
+  clipRoundedRect(ctx, x, y, size, size, 8);
+  ctx.stroke();
+}
+
+function drawBadgeCircle(ctx, img, cx, cy, radius) {
+  if (!img) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  ctx.fillStyle = "#120a04";
+  ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+  ctx.drawImage(img, cx - radius, cy - radius, radius * 2, radius * 2);
+  ctx.restore();
+  ctx.strokeStyle = "#6f4312";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+async function downloadDreamTeamImage() {
   if (!state.dreamTeam.length) return;
   const groups = groupDreamTeamPlayers();
   const sections = ["Manager", "Goalkeepers", "Defenders", "Midfielders", "Attackers"];
@@ -815,6 +874,29 @@ function downloadDreamTeamImage() {
     });
     y += 6;
   });
+
+  // Draw player cutouts + club badges after text/layout pass.
+  y = 192;
+  for (const section of sections) {
+    y += 36;
+    const players = groups[section] || [];
+    if (!players.length) {
+      y += 46;
+      continue;
+    }
+
+    for (const player of players) {
+      const [playerImg, badgeImg] = await Promise.all([
+        loadCanvasImage(player.image),
+        loadCanvasImage(player.teamBadge),
+      ]);
+      const iconY = y - 30;
+      drawPlayerCutout(ctx, playerImg, 44, iconY, 28);
+      drawBadgeCircle(ctx, badgeImg, 520, iconY + 14, 13);
+      y += 42;
+    }
+    y += 6;
+  }
 
   const link = document.createElement("a");
   link.download = "ezrascores-dream-team.png";
