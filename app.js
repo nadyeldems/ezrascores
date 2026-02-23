@@ -1604,13 +1604,23 @@ function isMobileViewport() {
 function positionFavoritePickerMenu() {
   if (!el.favoritePickerMenu || !el.favoritePickerBtn) return;
   if (el.favoritePickerMenu.classList.contains("hidden")) return;
-  if (!isMobileViewport()) {
-    el.favoritePickerMenu.style.removeProperty("--favorite-picker-menu-top");
-    return;
-  }
   const rect = el.favoritePickerBtn.getBoundingClientRect();
-  const top = Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 280));
+  const viewportPadding = 8;
+  const mobile = isMobileViewport();
+  const preferredWidth = mobile ? window.innerWidth - viewportPadding * 2 : Math.max(300, Math.min(420, rect.width + 140));
+  const maxWidth = Math.max(220, window.innerWidth - viewportPadding * 2);
+  const width = Math.max(220, Math.min(preferredWidth, maxWidth));
+  const left = Math.max(viewportPadding, Math.min(rect.right - width, window.innerWidth - width - viewportPadding));
+  const availableDown = window.innerHeight - rect.bottom - viewportPadding;
+  const availableUp = rect.top - viewportPadding;
+  const preferUp = availableDown < 240 && availableUp > availableDown;
+  const maxHeight = Math.max(180, Math.min(360, (preferUp ? availableUp : availableDown) - 6));
+  const top = preferUp ? Math.max(viewportPadding, rect.top - maxHeight - 8) : Math.max(viewportPadding, rect.bottom + 8);
+
   el.favoritePickerMenu.style.setProperty("--favorite-picker-menu-top", `${Math.round(top)}px`);
+  el.favoritePickerMenu.style.setProperty("--favorite-picker-menu-left", `${Math.round(left)}px`);
+  el.favoritePickerMenu.style.setProperty("--favorite-picker-menu-width", `${Math.round(width)}px`);
+  el.favoritePickerMenu.style.setProperty("--favorite-picker-menu-max-height", `${Math.round(maxHeight)}px`);
 }
 
 function closeFavoritePickerMenu() {

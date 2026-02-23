@@ -1493,12 +1493,13 @@ body[data-theme="t90"] .status-pill.final {
 }
 
 .favorite-picker-menu {
-  position: absolute;
-  top: calc(100% + 0.35rem);
-  right: 0;
-  width: min(360px, calc(100vw - 1.2rem));
+  position: fixed;
+  top: var(--favorite-picker-menu-top, 6rem);
+  left: var(--favorite-picker-menu-left, 0.6rem);
+  width: var(--favorite-picker-menu-width, min(360px, calc(100vw - 1.2rem)));
+  max-width: calc(100vw - 1.2rem);
   min-width: 280px;
-  max-height: 260px;
+  max-height: var(--favorite-picker-menu-max-height, 320px);
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 0.75rem;
@@ -2341,14 +2342,12 @@ body[data-motion="arcade"] .fixture-focus {
   }
 
   .header-picker .favorite-picker-menu {
-    position: fixed;
-    left: 0.5rem;
-    right: 0.5rem;
-    width: auto;
+    left: var(--favorite-picker-menu-left, 0.5rem);
+    width: var(--favorite-picker-menu-width, calc(100vw - 1rem));
     min-width: 0;
     max-width: calc(100vw - 1rem);
     top: var(--favorite-picker-menu-top, 7rem);
-    max-height: min(56vh, 360px);
+    max-height: var(--favorite-picker-menu-max-height, min(56vh, 360px));
     z-index: 760;
   }
 
