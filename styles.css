@@ -1023,8 +1023,7 @@ body.dream-team-overlay-open::before {
 }
 
 .dream-pitch-open .pitch-lane,
-.dream-pitch-formation .pitch-lane,
-.dream-pitch-player .pitch-lane {
+.dream-pitch-formation .pitch-lane {
   opacity: 0;
   transform: translateY(8px);
   animation: pitch-lane-in 360ms ease forwards;
@@ -1050,8 +1049,7 @@ body.dream-team-overlay-open::before {
 }
 
 .dream-pitch-open .pitch-slot,
-.dream-pitch-formation .pitch-slot,
-.dream-pitch-player .pitch-slot {
+.dream-pitch-formation .pitch-slot {
   opacity: 0;
   transform: translateY(6px) scale(0.97);
   animation: pitch-slot-in 430ms ease forwards;
@@ -2445,13 +2443,19 @@ body[data-motion="minimal"] .match-state.live,
 body[data-motion="minimal"] .game-day-message.gameday,
 body[data-motion="minimal"] .dream-pitch-open .pitch-lane,
 body[data-motion="minimal"] .dream-pitch-formation .pitch-lane,
-body[data-motion="minimal"] .dream-pitch-player .pitch-lane,
 body[data-motion="minimal"] .dream-pitch-open .pitch-slot,
 body[data-motion="minimal"] .dream-pitch-formation .pitch-slot,
-body[data-motion="minimal"] .dream-pitch-player .pitch-slot,
 body[data-motion="minimal"] .dream-pitch-player .pitch-slot.filled,
 body[data-motion="minimal"] .dream-pitch-formation .pitch-slot.filled {
   animation: none !important;
+}
+
+body[data-motion="minimal"] .dream-pitch-open .pitch-lane,
+body[data-motion="minimal"] .dream-pitch-formation .pitch-lane,
+body[data-motion="minimal"] .dream-pitch-open .pitch-slot,
+body[data-motion="minimal"] .dream-pitch-formation .pitch-slot {
+  opacity: 1 !important;
+  transform: none !important;
 }
 
 body[data-motion="minimal"] * {
