@@ -384,7 +384,11 @@ body[data-theme="club"] .footer {
 .settings-cog-btn {
   min-width: 2.1rem;
   width: 2.1rem;
+  height: 2.1rem;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
   font-size: 1.15rem;
 }

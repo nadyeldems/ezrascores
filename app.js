@@ -1523,12 +1523,6 @@ async function fetchEventStats(eventId) {
   return safeArray(data, "eventstats");
 }
 
-async function fetchEventTv(eventId) {
-  if (!eventId) return [];
-  const data = await apiGetV1(`lookuptv.php?id=${eventId}`);
-  return safeArray(data, "tvevent");
-}
-
 function teamLeagueCode(team) {
   if (!team) return "";
   const leagueName = team.strLeague || "";
@@ -1641,27 +1635,16 @@ function renderStatsTable(stats) {
   return `<div class="stats-block"><p class="stats-title">Match Stats</p>${body}</div>`;
 }
 
-function compactTv(tvRows) {
-  if (!Array.isArray(tvRows) || !tvRows.length) return "";
-  const channels = tvRows
-    .map((row) => row.strChannel || row.strChannel1 || row.strCountry || "")
-    .filter(Boolean)
-    .slice(0, 4);
-  return channels.join(", ");
-}
-
 async function getRichEventData(eventId) {
   if (!eventId) return null;
   if (state.eventDetailCache[eventId]) return state.eventDetailCache[eventId];
   const payload = await Promise.all([
     safeLoad(() => fetchEventById(eventId), null),
     safeLoad(() => fetchEventStats(eventId), []),
-    safeLoad(() => fetchEventTv(eventId), []),
   ]);
   const rich = {
     event: payload[0],
     stats: payload[1],
-    tv: payload[2],
   };
   state.eventDetailCache[eventId] = rich;
   return rich;
@@ -1681,10 +1664,6 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   const rich = await getRichEventData(eventId);
   const core = rich?.event || event;
   const rows = detailRowsFromEvent(core, stateInfo);
-  const tvText = compactTv(rich?.tv);
-  if (tvText) {
-    rows.push({ label: "TV", value: tvText });
-  }
   const statsHtml = renderStatsTable(rich?.stats);
   const hasExtra = Boolean(statsHtml);
   detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
