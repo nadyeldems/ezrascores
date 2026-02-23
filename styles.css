@@ -1016,8 +1016,8 @@ body.dream-team-overlay-open::before {
 
 .pitch-lane {
   display: grid;
-  width: 100%;
-  grid-template-columns: repeat(var(--slot-count, 1), minmax(0, 1fr));
+  width: min(940px, 100%);
+  margin: 0 auto;
   align-items: start;
   gap: 0.55rem;
 }
@@ -1033,6 +1033,8 @@ body.dream-team-overlay-open::before {
 
 .pitch-slot {
   width: 100%;
+  max-width: 190px;
+  justify-self: center;
   min-height: 118px;
   border: 1px dashed #5e3810;
   border-radius: 0.95rem;

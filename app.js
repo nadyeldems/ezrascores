@@ -1083,7 +1083,7 @@ function renderDreamTeamPanel(reason = "default") {
     const lane = document.createElement("div");
     lane.className = `pitch-lane pitch-lane-${rowDef.role.toLowerCase()}`;
     lane.style.setProperty("--lane-delay", `${rowIndex * 65}ms`);
-    lane.style.setProperty("--slot-count", String(rowDef.count));
+    lane.style.gridTemplateColumns = `repeat(${Math.max(1, rowDef.count)}, minmax(0, 1fr))`;
     const group = xiGroups[rowDef.role] || [];
     for (let i = 0; i < rowDef.count; i += 1) {
       const player = group[i];
