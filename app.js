@@ -761,16 +761,28 @@ function escapeForCanvas(text) {
 }
 
 function loadCanvasImage(url) {
+  const proxyUrl = url ? `/api/image?url=${encodeURIComponent(url)}` : "";
   return new Promise((resolve) => {
-    if (!url) {
+    if (!proxyUrl) {
       resolve(null);
       return;
     }
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = url;
+    img.onerror = () => {
+      // Fallback to direct URL in case proxy is unavailable in local/static preview.
+      if (!url) {
+        resolve(null);
+        return;
+      }
+      const direct = new Image();
+      direct.crossOrigin = "anonymous";
+      direct.onload = () => resolve(direct);
+      direct.onerror = () => resolve(null);
+      direct.src = url;
+    };
+    img.src = proxyUrl;
   });
 }
 
