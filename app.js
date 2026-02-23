@@ -1601,6 +1601,37 @@ function isMobileViewport() {
   return window.matchMedia("(max-width: 720px)").matches;
 }
 
+function positionFavoritePickerMenu() {
+  if (!el.favoritePickerMenu || !el.favoritePickerBtn) return;
+  if (el.favoritePickerMenu.classList.contains("hidden")) return;
+  if (!isMobileViewport()) {
+    el.favoritePickerMenu.style.removeProperty("--favorite-picker-menu-top");
+    return;
+  }
+  const rect = el.favoritePickerBtn.getBoundingClientRect();
+  const top = Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 280));
+  el.favoritePickerMenu.style.setProperty("--favorite-picker-menu-top", `${Math.round(top)}px`);
+}
+
+function closeFavoritePickerMenu() {
+  if (!el.favoritePickerMenu || !el.favoritePickerBtn) return;
+  el.favoritePickerMenu.classList.add("hidden");
+  el.favoritePickerBtn.setAttribute("aria-expanded", "false");
+}
+
+function toggleFavoritePickerMenu() {
+  if (!el.favoritePickerMenu || !el.favoritePickerBtn) return;
+  const isOpen = !el.favoritePickerMenu.classList.contains("hidden");
+  if (isOpen) {
+    closeFavoritePickerMenu();
+    return;
+  }
+  setSettingsMenuOpen(false);
+  el.favoritePickerMenu.classList.remove("hidden");
+  el.favoritePickerBtn.setAttribute("aria-expanded", "true");
+  positionFavoritePickerMenu();
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -1990,6 +2021,98 @@ function renderFixtures() {
   setDateButtonState();
 }
 
+function selectedEventsForCurrentView() {
+  return state.selectedLeague === "ALL"
+    ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
+    : [...state.selectedDateFixtures[state.selectedLeague]];
+}
+
+function canPatchFixtureRows(events) {
+  if (!Array.isArray(events) || !events.length) return false;
+  const nodes = [...(el.fixturesList?.querySelectorAll(".fixture-item") || [])];
+  if (!nodes.length || nodes.length !== events.length) return false;
+  const keys = new Set(events.map((event) => fixtureKey(event)));
+  return nodes.every((node) => keys.has(node.dataset.fixtureKey || ""));
+}
+
+function patchVisibleFixtureRows(events) {
+  if (!el.fixturesList) return false;
+  const byKey = new Map(events.map((event) => [fixtureKey(event), event]));
+  const nodes = [...el.fixturesList.querySelectorAll(".fixture-item")];
+  if (!nodes.length) return false;
+
+  nodes.forEach((node) => {
+    const key = node.dataset.fixtureKey || "";
+    const event = byKey.get(key);
+    if (!event) return;
+    const stateInfo = eventState(event);
+    const statusEl = node.querySelector(".match-state");
+    const homeScoreEl = node.querySelector(".home-score");
+    const awayScoreEl = node.querySelector(".away-score");
+    const homeInlineScoreEl = node.querySelector(".home-inline-score");
+    const awayInlineScoreEl = node.querySelector(".away-inline-score");
+    const goalFlashEl = node.querySelector(".goal-flash");
+
+    if (statusEl) {
+      statusEl.classList.remove("live", "upcoming", "final");
+      statusEl.classList.add(stateInfo.key);
+      statusEl.textContent = stateInfo.label;
+    }
+
+    const home = event.intHomeScore;
+    const away = event.intAwayScore;
+    const hasScores = home !== null && home !== undefined && away !== null && away !== undefined;
+    const homeText = hasScores ? String(home) : "–";
+    const awayText = hasScores ? String(away) : "–";
+    [homeScoreEl, awayScoreEl, homeInlineScoreEl, awayInlineScoreEl].forEach((elNode) => {
+      elNode?.classList.remove("leading", "score-update");
+    });
+    if (homeScoreEl) homeScoreEl.textContent = homeText;
+    if (awayScoreEl) awayScoreEl.textContent = awayText;
+    if (homeInlineScoreEl) homeInlineScoreEl.textContent = homeText;
+    if (awayInlineScoreEl) awayInlineScoreEl.textContent = awayText;
+
+    if (hasScores) {
+      const prev = state.fixtureScoreSnapshot.get(key);
+      const homeChanged = prev && prev.home !== Number(home);
+      const awayChanged = prev && prev.away !== Number(away);
+      if (homeChanged) {
+        homeScoreEl?.classList.add("score-update");
+        homeInlineScoreEl?.classList.add("score-update");
+      }
+      if (awayChanged) {
+        awayScoreEl?.classList.add("score-update");
+        awayInlineScoreEl?.classList.add("score-update");
+      }
+      state.fixtureScoreSnapshot.set(key, { home: Number(home), away: Number(away) });
+      if (Number(home) > Number(away)) {
+        homeScoreEl?.classList.add("leading");
+        homeInlineScoreEl?.classList.add("leading");
+      }
+      if (Number(away) > Number(home)) {
+        awayScoreEl?.classList.add("leading");
+        awayInlineScoreEl?.classList.add("leading");
+      }
+    }
+
+    if (goalFlashEl) {
+      const goalFlash = state.goalFlashes.get(key);
+      if (goalFlash && goalFlash.expiresAt > Date.now() && (stateInfo.key === "live" || goalFlash.force)) {
+        goalFlashEl.classList.remove("hidden");
+        goalFlashEl.classList.add("active");
+        const team = goalFlashEl.querySelector(".goal-team-name");
+        const score = goalFlashEl.querySelector(".goal-scoreline");
+        if (team) team.textContent = goalFlash.team;
+        if (score) score.textContent = goalFlash.score;
+      } else {
+        goalFlashEl.classList.add("hidden");
+        goalFlashEl.classList.remove("active");
+      }
+    }
+  });
+  return true;
+}
+
 function renderFixtureSkeletons(count = 6) {
   if (!el.fixturesList) return;
   el.fixturesList.innerHTML = "";
@@ -2076,8 +2199,7 @@ function buildFavoriteOptions() {
     if (!localStorage.getItem("ezra_player_pop_scope")) {
       setPlayerPopScope("any");
     }
-    el.favoritePickerMenu.classList.add("hidden");
-    el.favoritePickerBtn.setAttribute("aria-expanded", "false");
+    closeFavoritePickerMenu();
     await renderFavorite();
   });
   el.favoritePickerMenu.appendChild(clearBtn);
@@ -2102,8 +2224,7 @@ function buildFavoriteOptions() {
         setPlayerPopScope("favorite");
       }
       setFavoritePickerDisplay(team);
-      el.favoritePickerMenu.classList.add("hidden");
-      el.favoritePickerBtn.setAttribute("aria-expanded", "false");
+      closeFavoritePickerMenu();
       await renderFavorite();
     });
     el.favoritePickerMenu.appendChild(btn);
@@ -2570,6 +2691,7 @@ async function safeLoad(loader, fallback) {
 async function loadCoreData(options = {}) {
   const includeLive = options.includeLive !== false;
   const includeStatic = options.includeStatic !== false;
+  const includeSurroundingDays = options.includeSurroundingDays !== false;
   const now = new Date();
   const prev = new Date(now);
   prev.setDate(now.getDate() - 1);
@@ -2602,10 +2724,10 @@ async function loadCoreData(options = {}) {
     safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.today), []),
     includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.EPL.id), []) : Promise.resolve([]),
     includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.CHAMP.id), []) : Promise.resolve([]),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.prev), []),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.prev), []),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.next), []),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.next), []),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.prev), []) : Promise.resolve(state.fixtures.previous.EPL || []),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.prev), []) : Promise.resolve(state.fixtures.previous.CHAMP || []),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.next), []) : Promise.resolve(state.fixtures.next.EPL || []),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.next), []) : Promise.resolve(state.fixtures.next.CHAMP || []),
     includeStatic ? safeLoad(() => fetchTable(LEAGUES.EPL.id), []) : Promise.resolve(state.tables.EPL || []),
     includeStatic ? safeLoad(() => fetchTable(LEAGUES.CHAMP.id), []) : Promise.resolve(state.tables.CHAMP || []),
     includeStatic ? safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []) : Promise.resolve(state.teamsByLeague.EPL || []),
@@ -2740,9 +2862,11 @@ async function fullRefresh() {
   state.refreshInFlight = true;
   let nextContext = currentPollContext();
   try {
-    if (state.lastRefresh) {
+    if (state.lastRefresh && state.pollMode !== "live") {
       renderFixtureSkeletons(6);
-      renderTableSkeletons(2);
+      if (shouldFetchStaticData()) {
+        renderTableSkeletons(2);
+      }
     }
     if (!state.selectedDate) {
       state.selectedDate = toISODate(new Date());
@@ -2752,13 +2876,33 @@ async function fullRefresh() {
     }
     const includeLive = shouldFetchLiveData(nextContext);
     const includeStatic = shouldFetchStaticData();
-    await loadCoreData({ includeLive, includeStatic });
+    const todayIso = toISODate(new Date());
+    const includeSurroundingDays =
+      includeStatic ||
+      state.selectedDate !== todayIso ||
+      !state.fixtures.previous.EPL.length ||
+      !state.fixtures.previous.CHAMP.length ||
+      !state.fixtures.next.EPL.length ||
+      !state.fixtures.next.CHAMP.length;
+    await loadCoreData({ includeLive, includeStatic, includeSurroundingDays });
     detectGoalFlashes();
     await refreshSelectedDateFixtures();
     buildFavoriteOptions();
     await safeLoad(() => renderFavorite(), null);
-    renderFixtures();
-    renderTables();
+    const currentEvents = selectedEventsForCurrentView();
+    const canPatchLive =
+      !includeStatic &&
+      state.selectedDate === todayIso &&
+      nextContext.hasLive &&
+      canPatchFixtureRows(currentEvents);
+    if (canPatchLive) {
+      patchVisibleFixtureRows(currentEvents);
+    } else {
+      renderFixtures();
+    }
+    if (includeStatic || !el.tablesWrap.children.length || el.tablesWrap.querySelector(".error")) {
+      renderTables();
+    }
     updateStickyDateBarVisibility();
     setLeagueButtonState();
     if (state.playerPopEnabled && el.playerDvdLayer?.classList.contains("hidden")) {
@@ -2781,6 +2925,7 @@ function attachEvents() {
   if (el.settingsToggleBtn) {
     el.settingsToggleBtn.addEventListener("click", (event) => {
       event.stopPropagation();
+      closeFavoritePickerMenu();
       setSettingsMenuOpen(!state.settingsOpen);
     });
   }
@@ -2867,6 +3012,7 @@ function attachEvents() {
 
   window.addEventListener("resize", () => {
     updateStickyDateBarVisibility();
+    positionFavoritePickerMenu();
     if (!state.playerPopEnabled || !el.playerDvdLayer || el.playerDvdLayer.classList.contains("hidden")) return;
     const pop = state.playerPop;
     pop.x = Math.max(0, Math.min(pop.x, window.innerWidth - pop.size));
@@ -2880,10 +3026,14 @@ function attachEvents() {
     });
   }
 
-  el.favoritePickerBtn.addEventListener("click", () => {
-    const isOpen = !el.favoritePickerMenu.classList.contains("hidden");
-    el.favoritePickerMenu.classList.toggle("hidden", isOpen);
-    el.favoritePickerBtn.setAttribute("aria-expanded", String(!isOpen));
+  el.favoritePickerBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (state.dreamTeamOpen) {
+      state.dreamTeamOpen = false;
+      renderDreamTeamNavState();
+      renderDreamTeamPanel();
+    }
+    toggleFavoritePickerMenu();
   });
 
   document.addEventListener("click", (e) => {
@@ -2891,8 +3041,7 @@ function attachEvents() {
       setSettingsMenuOpen(false);
     }
     if (!el.favoritePicker.contains(e.target)) {
-      el.favoritePickerMenu.classList.add("hidden");
-      el.favoritePickerBtn.setAttribute("aria-expanded", "false");
+      closeFavoritePickerMenu();
     }
   });
 
@@ -2962,6 +3111,7 @@ function attachEvents() {
 
   window.addEventListener("scroll", () => {
     updateStickyDateBarVisibility();
+    positionFavoritePickerMenu();
   });
 }
 

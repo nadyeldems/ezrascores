@@ -365,7 +365,7 @@ body[data-theme="club"] .footer {
 
 .settings-menu {
   position: relative;
-  z-index: 320;
+  z-index: 640;
 }
 
 .settings-panel {
@@ -378,7 +378,7 @@ body[data-theme="club"] .footer {
   background: #090503;
   box-shadow: inset 0 0 0 1px rgba(255, 152, 17, 0.08);
   padding: 0.55rem;
-  z-index: 325;
+  z-index: 650;
 }
 
 .settings-cog-btn {
@@ -789,7 +789,7 @@ body[data-theme="t90"] .dream-team-toggle.disabled {
 .dream-team-overlay {
   position: fixed;
   inset: 0.7rem;
-  z-index: 70;
+  z-index: 700;
   overflow: auto;
   padding: 0.8rem;
   background:
@@ -1503,12 +1503,12 @@ body[data-theme="t90"] .status-pill.final {
   border: 1px solid var(--line);
   border-radius: 0.75rem;
   background: #090503;
-  z-index: 310;
+  z-index: 620;
   box-shadow: inset 0 0 0 1px rgba(255, 152, 17, 0.08);
 }
 
 .header-picker {
-  z-index: 300;
+  z-index: 610;
 }
 
 .favorite-option {
@@ -2341,13 +2341,15 @@ body[data-motion="arcade"] .fixture-focus {
   }
 
   .header-picker .favorite-picker-menu {
-    left: 0;
-    right: 0;
+    position: fixed;
+    left: 0.5rem;
+    right: 0.5rem;
     width: auto;
     min-width: 0;
-    max-width: 100%;
-    top: calc(100% + 0.3rem);
+    max-width: calc(100vw - 1rem);
+    top: var(--favorite-picker-menu-top, 7rem);
     max-height: min(56vh, 360px);
+    z-index: 760;
   }
 
   .favorite-option {
