@@ -909,7 +909,7 @@ function renderSquadPanel() {
           <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
           <span class="squad-name">${player.name}</span>
         </div>
-        <span class="squad-meta">${player.nationality} • ${player.position}</span>
+        <span class="squad-meta">${nationalityWithFlag(player.nationality)} • ${player.position}</span>
       </div>
       <button class="btn squad-star ${starOn ? "active" : ""}" type="button" aria-label="Toggle Dream Team player">${starOn ? "★" : "☆"}</button>
     `;
@@ -1036,7 +1036,7 @@ function renderDreamTeamPanel() {
           <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
           <div class="dream-text">
             <span class="dream-name">${player.name}</span>
-            <span class="dream-meta">${player.nationality} • ${player.teamName}</span>
+            <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.teamName}</span>
           </div>
         </div>
         <button class="btn dream-remove" type="button">Remove</button>
@@ -1078,7 +1078,7 @@ function renderDreamTeamPanel() {
           <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
           <div class="dream-text">
             <span class="dream-name">${player.name}</span>
-            <span class="dream-meta">${player.nationality} • ${player.teamName} • ${player.position}</span>
+            <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.teamName}</span>
           </div>
         </div>
         <div class="dream-actions-inline">
@@ -1281,6 +1281,26 @@ function drawPlayerCutout(ctx, img, x, y, size) {
   ctx.stroke();
 }
 
+function drawPlayerCircleCutout(ctx, img, cx, cy, radius) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  ctx.fillStyle = "#120a04";
+  ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+  if (img) {
+    ctx.drawImage(img, cx - radius, cy - radius, radius * 2, radius * 2);
+  }
+  ctx.restore();
+  ctx.strokeStyle = "#b87424";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.stroke();
+}
+
 function drawBadgeCircle(ctx, img, cx, cy, radius) {
   if (!img) return;
   ctx.save();
@@ -1298,6 +1318,75 @@ function drawBadgeCircle(ctx, img, cx, cy, radius) {
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.closePath();
   ctx.stroke();
+}
+
+const COUNTRY_TO_ISO2 = {
+  england: "GB",
+  scotland: "GB",
+  wales: "GB",
+  "northern ireland": "GB",
+  "united kingdom": "GB",
+  ireland: "IE",
+  bosnia: "BA",
+  "bosnia and herzegovina": "BA",
+  "czech republic": "CZ",
+  korea: "KR",
+  "south korea": "KR",
+  usa: "US",
+  "united states": "US",
+  "ivory coast": "CI",
+  "cote d'ivoire": "CI",
+};
+
+function countryToIso2(country) {
+  const raw = String(country || "").trim();
+  if (!raw) return "";
+  if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase();
+  if (/^[A-Za-z]{3}$/.test(raw)) {
+    const by3 = {
+      ENG: "GB",
+      SCO: "GB",
+      WAL: "GB",
+      NIR: "GB",
+      USA: "US",
+      KOR: "KR",
+      CZE: "CZ",
+      BIH: "BA",
+      CIV: "CI",
+    };
+    return by3[raw.toUpperCase()] || "";
+  }
+  const key = raw.toLowerCase();
+  if (COUNTRY_TO_ISO2[key]) return COUNTRY_TO_ISO2[key];
+  try {
+    const canonical = new Intl.DisplayNames(["en"], { type: "region" });
+    for (let code = 65; code <= 90; code += 1) {
+      for (let code2 = 65; code2 <= 90; code2 += 1) {
+        const iso = String.fromCharCode(code, code2);
+        const name = canonical.of(iso);
+        if (name && name.toLowerCase() === key) return iso;
+      }
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function flagFromCountry(country) {
+  const iso = countryToIso2(country);
+  if (!iso || iso.length !== 2) return "";
+  const chars = iso
+    .toUpperCase()
+    .split("")
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
+  return chars.join("");
+}
+
+function nationalityWithFlag(nationality) {
+  const label = nationality || "Unknown";
+  const flag = flagFromCountry(label);
+  return flag ? `${flag} ${label}` : label;
 }
 
 async function downloadDreamTeamImage() {
@@ -1329,10 +1418,10 @@ async function downloadDreamTeamImage() {
   const caps = formationCaps();
   const xiGroups = groupedStartingXI();
   const rowDefs = [
-    { role: "FWD", label: "Attack", count: caps.FWD, y: 250 },
-    { role: "MID", label: "Midfield", count: caps.MID, y: 360 },
-    { role: "DEF", label: "Defence", count: caps.DEF, y: 470 },
-    { role: "GK", label: "Goalkeeper", count: 1, y: 580 },
+    { role: "FWD", count: caps.FWD, y: 250 },
+    { role: "MID", count: caps.MID, y: 360 },
+    { role: "DEF", count: caps.DEF, y: 470 },
+    { role: "GK", count: 1, y: 580 },
   ];
 
   ctx.strokeStyle = "#6f4312";
@@ -1344,9 +1433,6 @@ async function downloadDreamTeamImage() {
   ctx.fill();
 
   for (const row of rowDefs) {
-    ctx.fillStyle = "#c7883a";
-    ctx.font = "30px VT323";
-    ctx.fillText(row.label.toUpperCase(), 74, row.y - 16);
     const group = xiGroups[row.role] || [];
     const xStep = 760 / Math.max(1, row.count);
     for (let i = 0; i < row.count; i += 1) {
@@ -1359,8 +1445,8 @@ async function downloadDreamTeamImage() {
       ctx.stroke();
       if (!player) continue;
       const [playerImg, badgeImg] = await Promise.all([loadCanvasImage(player.image), loadCanvasImage(player.teamBadge)]);
-      drawPlayerCutout(ctx, playerImg, x - 18, row.y - 22, 24);
-      drawBadgeCircle(ctx, badgeImg, x + 20, row.y - 10, 10);
+      drawPlayerCircleCutout(ctx, playerImg, x, row.y, 31);
+      drawBadgeCircle(ctx, badgeImg, x + 23, row.y + 20, 10);
       ctx.fillStyle = "#ffd9a5";
       ctx.font = "24px VT323";
       ctx.textAlign = "center";
@@ -1380,8 +1466,8 @@ async function downloadDreamTeamImage() {
     ctx.fillText(title, listX, y);
     y += 30;
     const [playerImg, badgeImg] = await Promise.all([loadCanvasImage(player?.image), loadCanvasImage(player?.teamBadge)]);
-    drawPlayerCutout(ctx, playerImg, listX, y - 22, 28);
-    drawBadgeCircle(ctx, badgeImg, listX + 202, y - 8, 11);
+    drawPlayerCircleCutout(ctx, playerImg, listX + 14, y - 8, 14);
+    drawBadgeCircle(ctx, badgeImg, listX + 204, y - 8, 11);
     ctx.fillStyle = "#f6d5aa";
     ctx.font = "30px VT323";
     ctx.fillText(escapeForCanvas(player?.name || "—"), listX + 40, y);
@@ -1389,7 +1475,7 @@ async function downloadDreamTeamImage() {
     ctx.font = "24px VT323";
     const sub = isStaff
       ? escapeForCanvas(player?.teamName || "")
-      : `${escapeForCanvas(player?.nationality || "")} | ${escapeForCanvas(player?.teamName || "")}`;
+      : `${escapeForCanvas(nationalityWithFlag(player?.nationality || ""))} | ${escapeForCanvas(player?.teamName || "")}`;
     ctx.fillText(sub, listX + 40, y + 24);
     y += 52;
   };
