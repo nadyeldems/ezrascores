@@ -120,6 +120,8 @@ const state = {
     isLocked: false,
   },
   squadByTeamId: {},
+  playerProfileCache: {},
+  selectedSquadPlayerKey: "",
   dreamTeam: loadDreamTeamState(),
   maxDreamTeamPlayers: 18,
   dreamTeamOpen: false,
@@ -485,6 +487,13 @@ async function fetchPlayersForTeam(team) {
   return byLookup;
 }
 
+async function fetchPlayerProfile(playerId) {
+  if (!playerId) return null;
+  const data = await apiGetV1(`lookupplayer.php?id=${encodeURIComponent(playerId)}`);
+  const rows = firstArrayValue(data);
+  return rows?.[0] || null;
+}
+
 function selectCutoutPlayer(players) {
   const valid = (players || [])
     .map((p) => ({
@@ -523,6 +532,26 @@ function normalizeSquadPlayer(raw, team) {
     teamName: team?.strTeam || raw.strTeam || "",
     teamBadge: team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || "",
   };
+}
+
+function formatAgeFromBirthDate(dateBorn) {
+  if (!dateBorn) return "";
+  const birth = new Date(dateBorn);
+  if (Number.isNaN(birth.getTime())) return "";
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age -= 1;
+  return age > 0 ? String(age) : "";
+}
+
+function compactPlayerSummary(profile) {
+  const source = profile?.strDescriptionEN || profile?.strDescriptionFR || profile?.strDescriptionDE || "";
+  if (!source) return "";
+  const clean = source.replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  const firstSentence = clean.split(". ").slice(0, 1).join(". ").trim();
+  return (firstSentence || clean).slice(0, 220);
 }
 
 function positionBucket(position) {
@@ -874,6 +903,7 @@ function renderSquadPanel() {
   const favorite = state.favoriteTeam;
   if (!favorite?.idTeam) {
     state.squadOpen = false;
+    state.selectedSquadPlayerKey = "";
     el.squadPanel.classList.add("hidden");
     el.squadBody.classList.add("hidden");
     el.squadToggleBtn.setAttribute("aria-expanded", "false");
@@ -882,6 +912,9 @@ function renderSquadPanel() {
     return;
   }
   const squad = state.squadByTeamId[favorite.idTeam] || [];
+  if (state.selectedSquadPlayerKey && !squad.some((p) => p.key === state.selectedSquadPlayerKey)) {
+    state.selectedSquadPlayerKey = "";
+  }
   el.squadPanel.classList.remove("hidden");
   el.squadBody.classList.toggle("hidden", !state.squadOpen);
   el.squadToggleBtn.setAttribute("aria-expanded", String(state.squadOpen));
@@ -898,6 +931,8 @@ function renderSquadPanel() {
   }
 
   sortSquadByRole(squad).forEach((player) => {
+    const item = document.createElement("div");
+    item.className = `squad-item ${state.selectedSquadPlayerKey === player.key ? "open" : ""}`;
     const row = document.createElement("div");
     row.className = "squad-row";
     const starOn = isDreamPlayer(player.key);
@@ -913,11 +948,60 @@ function renderSquadPanel() {
       </div>
       <button class="btn squad-star ${starOn ? "active" : ""}" type="button" aria-label="Toggle Dream Team player">${starOn ? "★" : "☆"}</button>
     `;
+    row.addEventListener("click", async () => {
+      const opening = state.selectedSquadPlayerKey !== player.key;
+      state.selectedSquadPlayerKey = opening ? player.key : "";
+      renderSquadPanel();
+      if (!opening || !player.idPlayer) return;
+      const cached = state.playerProfileCache[player.idPlayer];
+      if (cached?.loading || cached?.loaded) return;
+      state.playerProfileCache[player.idPlayer] = { loading: true };
+      renderSquadPanel();
+      const profile = await safeLoad(() => fetchPlayerProfile(player.idPlayer), null);
+      state.playerProfileCache[player.idPlayer] = { loading: false, loaded: true, profile };
+      renderSquadPanel();
+    });
     const starBtn = row.querySelector(".squad-star");
-    starBtn.addEventListener("click", () => {
+    starBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
       toggleDreamTeamPlayer(player);
     });
-    el.squadList.appendChild(row);
+    item.appendChild(row);
+
+    if (state.selectedSquadPlayerKey === player.key) {
+      const detail = document.createElement("div");
+      detail.className = "squad-detail";
+      const cache = player.idPlayer ? state.playerProfileCache[player.idPlayer] : null;
+      if (cache?.loading) {
+        detail.innerHTML = `<p class="muted">Loading player details...</p>`;
+      } else {
+        const profile = cache?.profile || null;
+        const age = formatAgeFromBirthDate(profile?.dateBorn);
+        const ageLine = age ? `${age}` : "--";
+        const height = profile?.strHeight || "--";
+        const weight = profile?.strWeight || "--";
+        const birthplace = profile?.strBirthLocation || "--";
+        const foot = profile?.strSide || "--";
+        const role = profile?.strPosition || player.position || "--";
+        const summary = compactPlayerSummary(profile);
+        detail.innerHTML = `
+          <div class="squad-detail-grid">
+            <div><span class="label">Name</span><span class="value">${player.name}</span></div>
+            <div><span class="label">Nationality</span><span class="value">${nationalityWithFlag(profile?.strNationality || player.nationality)}</span></div>
+            <div><span class="label">Position</span><span class="value">${role}</span></div>
+            <div><span class="label">Age</span><span class="value">${ageLine}</span></div>
+            <div><span class="label">Height</span><span class="value">${height}</span></div>
+            <div><span class="label">Weight</span><span class="value">${weight}</span></div>
+            <div><span class="label">Preferred Foot</span><span class="value">${foot}</span></div>
+            <div><span class="label">Birth Place</span><span class="value">${birthplace}</span></div>
+          </div>
+          ${summary ? `<p class="squad-summary">${summary}</p>` : ""}
+        `;
+      }
+      item.appendChild(detail);
+    }
+
+    el.squadList.appendChild(item);
   });
 }
 
@@ -933,7 +1017,7 @@ function groupedStartingXI() {
   return groups;
 }
 
-function renderDreamTeamPanel() {
+function renderDreamTeamPanel(reason = "default") {
   if (!el.dreamTeamPanel || !el.dreamTeamList) return;
   if (!state.dreamTeamOpen) {
     el.dreamTeamPanel.classList.add("hidden");
@@ -979,7 +1063,15 @@ function renderDreamTeamPanel() {
   el.dreamTeamList.appendChild(controls);
 
   const pitch = document.createElement("section");
-  pitch.className = "dream-group dream-pitch";
+  const animClass =
+    reason === "formation"
+      ? "dream-pitch-formation"
+      : reason === "player"
+        ? "dream-pitch-player"
+        : reason === "open"
+          ? "dream-pitch-open"
+          : "";
+  pitch.className = `dream-group dream-pitch ${animClass}`.trim();
   pitch.innerHTML = `<h4>Starting XI (${state.dreamTeam.formation})</h4>`;
   const rowDefs = [
     { role: "FWD", label: "Attack", count: caps.FWD },
@@ -987,15 +1079,18 @@ function renderDreamTeamPanel() {
     { role: "DEF", label: "Defence", count: caps.DEF },
     { role: "GK", label: "Goalkeeper", count: 1 },
   ];
-  rowDefs.forEach((rowDef) => {
+  rowDefs.forEach((rowDef, rowIndex) => {
     const lane = document.createElement("div");
     lane.className = `pitch-lane pitch-lane-${rowDef.role.toLowerCase()}`;
+    lane.style.setProperty("--lane-delay", `${rowIndex * 65}ms`);
+    lane.style.setProperty("--slot-count", String(rowDef.count));
     const group = xiGroups[rowDef.role] || [];
     for (let i = 0; i < rowDef.count; i += 1) {
       const player = group[i];
       const slot = document.createElement("button");
       slot.type = "button";
       slot.className = `pitch-slot ${player ? "filled" : ""}`;
+      slot.style.setProperty("--slot-delay", `${rowIndex * 65 + i * 40}ms`);
       if (player) {
         slot.innerHTML = `
           <span class="pitch-avatar-ring">
@@ -1015,7 +1110,7 @@ function renderDreamTeamPanel() {
           saveDreamTeam();
           renderDreamTeamNavState();
           renderSquadPanel();
-          renderDreamTeamPanel();
+          renderDreamTeamPanel("player");
         });
       } else {
         slot.title = `${rowDef.label} slot`;
@@ -1058,7 +1153,7 @@ function renderDreamTeamPanel() {
         saveDreamTeam();
         renderDreamTeamNavState();
         renderSquadPanel();
-        renderDreamTeamPanel();
+        renderDreamTeamPanel("player");
       });
       benchSection.appendChild(row);
     });
@@ -1110,12 +1205,12 @@ function renderDreamTeamPanel() {
           return;
         }
         saveDreamTeam();
-        renderDreamTeamPanel();
+        renderDreamTeamPanel("player");
       });
       row.querySelector(".dream-assign-bench").addEventListener("click", () => {
         if (!assignPlayerToBench(player.key)) return;
         saveDreamTeam();
-        renderDreamTeamPanel();
+        renderDreamTeamPanel("player");
       });
       row.querySelector(".dream-remove").addEventListener("click", () => {
         toggleDreamTeamPlayer(player);
@@ -1168,18 +1263,18 @@ function renderDreamTeamPanel() {
   formationSelect?.addEventListener("change", () => {
     setDreamFormation(formationSelect.value);
     saveDreamTeam();
-    renderDreamTeamPanel();
+    renderDreamTeamPanel("formation");
   });
   controls.querySelector("#dream-auto-xi-btn")?.addEventListener("click", () => {
     autoFillStartingXI();
     saveDreamTeam();
-    renderDreamTeamPanel();
+    renderDreamTeamPanel("player");
   });
   controls.querySelector("#dream-clear-lineup-btn")?.addEventListener("click", () => {
     state.dreamTeam.startingXI = [];
     state.dreamTeam.bench = [];
     saveDreamTeam();
-    renderDreamTeamPanel();
+    renderDreamTeamPanel("player");
   });
 }
 
@@ -1221,7 +1316,7 @@ function toggleDreamTeamPlayer(player) {
   saveDreamTeam();
   renderDreamTeamNavState();
   renderSquadPanel();
-  renderDreamTeamPanel();
+  renderDreamTeamPanel("player");
 }
 
 function toggleDreamTeamPanel() {
@@ -1234,7 +1329,7 @@ function toggleDreamTeamPanel() {
   }
   state.dreamTeamOpen = !state.dreamTeamOpen;
   renderDreamTeamNavState();
-  renderDreamTeamPanel();
+  renderDreamTeamPanel(state.dreamTeamOpen ? "open" : "default");
 }
 
 function escapeForCanvas(text) {
@@ -1404,8 +1499,8 @@ function nationalityWithFlag(nationality) {
 async function downloadDreamTeamImage() {
   if (!dreamHasAnySelection()) return;
   normalizeDreamSelections();
-  const width = 1400;
-  const height = 1040;
+  const width = 1080;
+  const height = 1920;
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -1421,84 +1516,83 @@ async function downloadDreamTeamImage() {
   ctx.fillRect(0, 0, width, height);
 
   ctx.fillStyle = "#ff9a1f";
-  ctx.font = "72px VT323";
-  ctx.fillText("EZRASCORES DREAM TEAM", 60, 90);
-  ctx.font = "36px VT323";
+  ctx.font = "74px VT323";
+  ctx.fillText("EZRASCORES DREAM TEAM", 56, 94);
+  ctx.font = "34px VT323";
   ctx.fillStyle = "#ffbf74";
-  ctx.fillText(`Formation ${state.dreamTeam.formation} • Generated ${new Date().toLocaleString("en-GB")}`, 60, 132);
+  ctx.fillText(`Formation ${state.dreamTeam.formation} • ${new Date().toLocaleString("en-GB")}`, 56, 136);
 
   const caps = formationCaps();
   const xiGroups = groupedStartingXI();
   const rowDefs = [
-    { role: "FWD", count: caps.FWD, y: 250 },
-    { role: "MID", count: caps.MID, y: 360 },
-    { role: "DEF", count: caps.DEF, y: 470 },
-    { role: "GK", count: 1, y: 580 },
+    { role: "FWD", count: caps.FWD, y: 310 },
+    { role: "MID", count: caps.MID, y: 470 },
+    { role: "DEF", count: caps.DEF, y: 630 },
+    { role: "GK", count: 1, y: 790 },
   ];
 
   ctx.strokeStyle = "#6f4312";
   ctx.lineWidth = 2;
-  clipRoundedRect(ctx, 50, 170, 860, 500, 18);
+  clipRoundedRect(ctx, 42, 190, 996, 760, 20);
   ctx.stroke();
   ctx.fillStyle = "rgba(255,153,32,0.05)";
-  clipRoundedRect(ctx, 50, 170, 860, 500, 18);
+  clipRoundedRect(ctx, 42, 190, 996, 760, 20);
   ctx.fill();
 
   for (const row of rowDefs) {
     const group = xiGroups[row.role] || [];
-    const xStep = 760 / Math.max(1, row.count);
+    const xStep = 900 / Math.max(1, row.count);
     for (let i = 0; i < row.count; i += 1) {
-      const x = 110 + xStep * i + xStep / 2;
+      const x = 90 + xStep * i + xStep / 2;
       const player = group[i] || null;
       ctx.beginPath();
-      ctx.arc(x, row.y, 36, 0, Math.PI * 2);
+      ctx.arc(x, row.y, 52, 0, Math.PI * 2);
       ctx.closePath();
       ctx.strokeStyle = player ? "#ffb45c" : "#5d3710";
       ctx.stroke();
       if (!player) continue;
       const [playerImg, badgeImg] = await Promise.all([loadCanvasImage(player.image), loadCanvasImage(player.teamBadge)]);
-      drawPlayerCircleCutout(ctx, playerImg, x, row.y, 31);
-      drawBadgeCircle(ctx, badgeImg, x + 23, row.y + 20, 10);
+      drawPlayerCircleCutout(ctx, playerImg, x, row.y, 46);
+      drawBadgeCircle(ctx, badgeImg, x + 42, row.y + 36, 14);
       ctx.fillStyle = "#ffd9a5";
-      ctx.font = "24px VT323";
+      ctx.font = "30px VT323";
       ctx.textAlign = "center";
-      ctx.fillText(escapeForCanvas(player.name), x, row.y + 54);
+      ctx.fillText(escapeForCanvas(player.name), x, row.y + 84);
       ctx.textAlign = "start";
     }
   }
 
   const benchPlayers = state.dreamTeam.bench.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
-  const staffPlayers = [state.dreamTeam.staff.manager, ...(state.dreamTeam.staff.coaches || [])].filter(Boolean);
-  const listX = 960;
-  let y = 210;
+  const listX = 58;
+  let y = 1010;
 
   const drawRow = async (title, player, isStaff = false) => {
     ctx.fillStyle = "#ffc072";
-    ctx.font = "30px VT323";
+    ctx.font = "32px VT323";
     ctx.fillText(title, listX, y);
-    y += 30;
+    y += 34;
     const [playerImg, badgeImg] = await Promise.all([loadCanvasImage(player?.image), loadCanvasImage(player?.teamBadge)]);
-    drawPlayerCircleCutout(ctx, playerImg, listX + 14, y - 8, 14);
-    drawBadgeCircle(ctx, badgeImg, listX + 204, y - 8, 11);
+    drawPlayerCircleCutout(ctx, playerImg, listX + 26, y - 11, 22);
+    drawBadgeCircle(ctx, badgeImg, listX + 46, y + 8, 11);
     ctx.fillStyle = "#f6d5aa";
-    ctx.font = "30px VT323";
-    ctx.fillText(escapeForCanvas(player?.name || "—"), listX + 40, y);
+    ctx.font = "36px VT323";
+    ctx.fillText(escapeForCanvas(player?.name || "—"), listX + 66, y);
     ctx.fillStyle = "#c7883a";
-    ctx.font = "24px VT323";
+    ctx.font = "27px VT323";
     const sub = isStaff
       ? escapeForCanvas(player?.teamName || "")
       : `${escapeForCanvas(nationalityWithFlag(player?.nationality || ""))} | ${escapeForCanvas(player?.teamName || "")}`;
-    ctx.fillText(sub, listX + 40, y + 24);
-    y += 52;
+    ctx.fillText(sub, listX + 66, y + 26);
+    y += 62;
   };
 
   ctx.fillStyle = "#ffbf74";
-  ctx.font = "38px VT323";
+  ctx.font = "46px VT323";
   ctx.fillText("SUBSTITUTES", listX, y);
-  y += 40;
+  y += 48;
   if (!benchPlayers.length) {
     ctx.fillStyle = "#9e6a2d";
-    ctx.font = "28px VT323";
+    ctx.font = "32px VT323";
     ctx.fillText("No substitutes selected", listX, y);
     y += 36;
   } else {
@@ -1509,12 +1603,13 @@ async function downloadDreamTeamImage() {
 
   y += 10;
   ctx.fillStyle = "#ffbf74";
-  ctx.font = "38px VT323";
+  ctx.font = "46px VT323";
   ctx.fillText("STAFF", listX, y);
-  y += 40;
+  y += 48;
+  const staffPlayers = [state.dreamTeam.staff.manager, ...(state.dreamTeam.staff.coaches || [])].filter(Boolean);
   if (!staffPlayers.length) {
     ctx.fillStyle = "#9e6a2d";
-    ctx.font = "28px VT323";
+    ctx.font = "32px VT323";
     ctx.fillText("No staff selected", listX, y);
   } else {
     if (state.dreamTeam.staff.manager) await drawRow("MANAGER", state.dreamTeam.staff.manager, true);

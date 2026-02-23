@@ -805,6 +805,17 @@ body.dream-team-overlay-open {
   overflow: hidden;
 }
 
+body.dream-team-overlay-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(0, 0, 0, 0.52), rgba(0, 0, 0, 0.72)),
+    rgba(0, 0, 0, 0.45);
+  z-index: 690;
+  pointer-events: none;
+}
+
 .dream-team-overlay .dream-team-list {
   margin-top: 0.4rem;
 }
@@ -830,6 +841,16 @@ body.dream-team-overlay-open {
   gap: 0.5rem;
 }
 
+.squad-item {
+  border: 1px solid transparent;
+  border-radius: 0.8rem;
+}
+
+.squad-item.open {
+  border-color: var(--line-soft);
+  background: rgba(255, 153, 32, 0.04);
+}
+
 .squad-row {
   border: 1px solid var(--line-soft);
   border-radius: 0.72rem;
@@ -838,6 +859,7 @@ body.dream-team-overlay-open {
   align-items: center;
   justify-content: space-between;
   gap: 0.55rem;
+  cursor: pointer;
 }
 
 .squad-main {
@@ -902,6 +924,37 @@ body.dream-team-overlay-open {
   border-color: #c98220;
 }
 
+.squad-detail {
+  border-top: 1px dashed var(--line-soft);
+  margin-top: 0.32rem;
+  padding: 0.5rem 0.62rem 0.58rem;
+}
+
+.squad-detail-grid {
+  display: grid;
+  gap: 0.38rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.squad-detail-grid .label {
+  display: block;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.squad-detail-grid .value {
+  display: block;
+  color: var(--text);
+}
+
+.squad-summary {
+  margin: 0.45rem 0 0;
+  color: var(--text-soft);
+  line-height: 1.2;
+}
+
 .dream-team-list {
   display: grid;
   gap: 0.6rem;
@@ -962,16 +1015,24 @@ body.dream-team-overlay-open {
 }
 
 .pitch-lane {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(var(--slot-count, 1), minmax(0, 1fr));
+  align-items: start;
   gap: 0.55rem;
 }
 
+.dream-pitch-open .pitch-lane,
+.dream-pitch-formation .pitch-lane,
+.dream-pitch-player .pitch-lane {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: pitch-lane-in 360ms ease forwards;
+  animation-delay: var(--lane-delay, 0ms);
+}
+
 .pitch-slot {
-  width: clamp(90px, 18vw, 120px);
+  width: 100%;
   min-height: 118px;
   border: 1px dashed #5e3810;
   border-radius: 0.95rem;
@@ -986,6 +1047,15 @@ body.dream-team-overlay-open {
   transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
 }
 
+.dream-pitch-open .pitch-slot,
+.dream-pitch-formation .pitch-slot,
+.dream-pitch-player .pitch-slot {
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  animation: pitch-slot-in 430ms ease forwards;
+  animation-delay: var(--slot-delay, 0ms);
+}
+
 .pitch-slot.filled {
   border-style: solid;
   border-color: #b86d17;
@@ -998,6 +1068,16 @@ body.dream-team-overlay-open {
 .pitch-slot.filled:hover {
   transform: translateY(-1px);
   border-color: #d58a2e;
+}
+
+.dream-pitch-player .pitch-slot.filled {
+  animation: pitch-player-swap 520ms ease both;
+  animation-delay: var(--slot-delay, 0ms);
+}
+
+.dream-pitch-formation .pitch-slot.filled {
+  animation: pitch-formation-shift 620ms ease both;
+  animation-delay: var(--slot-delay, 0ms);
 }
 
 .pitch-slot:disabled {
@@ -1015,13 +1095,14 @@ body.dream-team-overlay-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .pitch-avatar {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 50%;
 }
 
 .pitch-avatar-fallback {
@@ -1037,15 +1118,16 @@ body.dream-team-overlay-open {
   background: #120a04;
   object-fit: contain;
   position: absolute;
-  right: -1px;
-  bottom: -1px;
+  right: -7px;
+  bottom: -7px;
+  z-index: 2;
 }
 
 .pitch-player-name {
   color: #ffe2bc;
   text-align: center;
   line-height: 1;
-  font-size: 1.02rem;
+  font-size: clamp(0.78rem, 2.8vw, 1.02rem);
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -1055,6 +1137,28 @@ body.dream-team-overlay-open {
   color: #9d6e3d;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+@keyframes pitch-lane-in {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pitch-slot-in {
+  0% { opacity: 0; transform: translateY(6px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes pitch-player-swap {
+  0% { filter: brightness(1.18); transform: scale(0.96); }
+  60% { filter: brightness(1.06); transform: scale(1.02); }
+  100% { filter: brightness(1); transform: scale(1); }
+}
+
+@keyframes pitch-formation-shift {
+  0% { opacity: 0; transform: translateY(10px) scale(0.95); }
+  65% { opacity: 1; transform: translateY(0) scale(1.02); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .dream-actions-inline {
@@ -2336,7 +2440,15 @@ body[data-motion="minimal"] .team-score.score-update,
 body[data-motion="minimal"] .skeleton-line,
 body[data-motion="minimal"] .status-pill.live,
 body[data-motion="minimal"] .match-state.live,
-body[data-motion="minimal"] .game-day-message.gameday {
+body[data-motion="minimal"] .game-day-message.gameday,
+body[data-motion="minimal"] .dream-pitch-open .pitch-lane,
+body[data-motion="minimal"] .dream-pitch-formation .pitch-lane,
+body[data-motion="minimal"] .dream-pitch-player .pitch-lane,
+body[data-motion="minimal"] .dream-pitch-open .pitch-slot,
+body[data-motion="minimal"] .dream-pitch-formation .pitch-slot,
+body[data-motion="minimal"] .dream-pitch-player .pitch-slot,
+body[data-motion="minimal"] .dream-pitch-player .pitch-slot.filled,
+body[data-motion="minimal"] .dream-pitch-formation .pitch-slot.filled {
   animation: none !important;
 }
 
@@ -2455,6 +2567,10 @@ body[data-motion="arcade"] .fixture-focus {
   .dream-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .squad-detail-grid {
+    grid-template-columns: 1fr;
   }
 
   .pitch-lane {
