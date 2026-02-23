@@ -49,7 +49,9 @@ const state = {
       return [];
     }
   })(),
+  maxDreamTeamPlayers: 18,
   dreamTeamOpen: false,
+  squadOpen: false,
   favoriteTeam: null,
   gameDayCountdownTimer: null,
   lastCountdownTarget: null,
@@ -118,12 +120,15 @@ const el = {
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
   playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
   dreamTeamToggleBtn: document.getElementById("dream-team-toggle-btn"),
+  dreamTeamCount: document.getElementById("dream-team-count"),
   dreamTeamHint: document.getElementById("dream-team-hint"),
   dreamTeamPanel: document.getElementById("dream-team-panel"),
   dreamTeamList: document.getElementById("dream-team-list"),
   dreamTeamDownloadBtn: document.getElementById("dream-team-download-btn"),
   squadPanel: document.getElementById("squad-panel"),
   squadTitle: document.getElementById("squad-title"),
+  squadToggleBtn: document.getElementById("squad-toggle-btn"),
+  squadBody: document.getElementById("squad-body"),
   squadList: document.getElementById("squad-list"),
   playerDvdLayer: document.getElementById("player-dvd-layer"),
   playerDvdAvatar: document.getElementById("player-dvd-avatar"),
@@ -148,7 +153,7 @@ function setThemeButtonState() {
 }
 
 function applyUiTheme(theme) {
-  const safeTheme = theme === "t90" || theme === "club" ? theme : "classic";
+  const safeTheme = theme === "club" ? "club" : "classic";
   state.uiTheme = safeTheme;
   document.body.setAttribute("data-theme", safeTheme);
   localStorage.setItem("ezra_ui_theme", safeTheme);
@@ -366,10 +371,13 @@ function normalizeSquadPlayer(raw, team) {
   if (!raw) return null;
   const name = raw.strPlayer || raw.name || "";
   if (!name) return null;
+  const numberRaw = raw.strNumber || raw.intSquadNumber || raw.intNumber || "";
+  const number = String(numberRaw || "").trim();
   return {
     key: playerKey({ id: raw.idPlayer, name, teamId: team?.idTeam }),
     idPlayer: raw.idPlayer || "",
     name,
+    number,
     nationality: raw.strNationality || "Unknown",
     position: raw.strPosition || "Unknown",
     image: raw.strCutout || raw.strRender || raw.strThumb || "",
@@ -542,6 +550,9 @@ function isDreamPlayer(playerKeyValue) {
 function renderDreamTeamNavState() {
   if (!el.dreamTeamToggleBtn) return;
   const hasPlayers = state.dreamTeam.length > 0;
+  if (el.dreamTeamCount) {
+    el.dreamTeamCount.textContent = `${state.dreamTeam.length}/${state.maxDreamTeamPlayers}`;
+  }
   el.dreamTeamToggleBtn.classList.toggle("disabled", !hasPlayers);
   el.dreamTeamToggleBtn.classList.toggle("active", state.dreamTeamOpen);
   el.dreamTeamToggleBtn.setAttribute("aria-expanded", String(state.dreamTeamOpen));
@@ -557,15 +568,22 @@ function sortedByName(list) {
 }
 
 function renderSquadPanel() {
-  if (!el.squadPanel || !el.squadList || !el.squadTitle) return;
+  if (!el.squadPanel || !el.squadList || !el.squadTitle || !el.squadToggleBtn || !el.squadBody) return;
   const favorite = state.favoriteTeam;
   if (!favorite?.idTeam) {
+    state.squadOpen = false;
     el.squadPanel.classList.add("hidden");
+    el.squadBody.classList.add("hidden");
+    el.squadToggleBtn.setAttribute("aria-expanded", "false");
+    el.squadToggleBtn.textContent = "Show Squad";
     el.squadList.innerHTML = "";
     return;
   }
   const squad = state.squadByTeamId[favorite.idTeam] || [];
   el.squadPanel.classList.remove("hidden");
+  el.squadBody.classList.toggle("hidden", !state.squadOpen);
+  el.squadToggleBtn.setAttribute("aria-expanded", String(state.squadOpen));
+  el.squadToggleBtn.textContent = state.squadOpen ? "Hide Squad" : "Show Squad";
   el.squadTitle.textContent = `${favorite.strTeam} Squad`;
   el.squadList.innerHTML = "";
 
@@ -581,9 +599,13 @@ function renderSquadPanel() {
     const row = document.createElement("div");
     row.className = "squad-row";
     const starOn = isDreamPlayer(player.key);
+    const shirtNo = player.number ? player.number : "—";
     row.innerHTML = `
       <div class="squad-main">
-        <span class="squad-name">${player.name}</span>
+        <div class="squad-line">
+          <span class="player-no-circle ${player.number ? "" : "missing"}">${shirtNo}</span>
+          <span class="squad-name">${player.name}</span>
+        </div>
         <span class="squad-meta">${player.nationality} • ${player.position}</span>
       </div>
       <button class="btn squad-star ${starOn ? "active" : ""}" type="button" aria-label="Toggle Dream Team player">${starOn ? "★" : "☆"}</button>
@@ -641,14 +663,16 @@ function renderDreamTeamPanel() {
     if (!players.length) {
       const empty = document.createElement("p");
       empty.className = "muted";
-      empty.textContent = "No players selected.";
+      empty.textContent = label === "Manager" ? "No manager selected." : "No players selected.";
       section.appendChild(empty);
     } else {
       players.forEach((player) => {
         const row = document.createElement("div");
         row.className = "dream-row";
+        const shirtNo = player.number ? player.number : "—";
         row.innerHTML = `
           <div class="dream-main">
+            <span class="player-no-circle ${player.number ? "" : "missing"}">${shirtNo}</span>
             <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
             <div class="dream-text">
               <span class="dream-name">${player.name}</span>
@@ -672,6 +696,18 @@ function toggleDreamTeamPlayer(player) {
   if (index >= 0) {
     state.dreamTeam.splice(index, 1);
   } else {
+    if (state.dreamTeam.length >= state.maxDreamTeamPlayers) {
+      if (el.dreamTeamHint) {
+        el.dreamTeamHint.textContent = `Dream Team is full (${state.maxDreamTeamPlayers}/${state.maxDreamTeamPlayers}). Unstar a player to add another.`;
+        el.dreamTeamHint.classList.remove("hidden");
+        setTimeout(() => {
+          if (!el.dreamTeamHint) return;
+          el.dreamTeamHint.classList.add("hidden");
+          el.dreamTeamHint.textContent = "Choose a favourite team, then star players to start your Dream Team.";
+        }, 2600);
+      }
+      return;
+    }
     state.dreamTeam.push(player);
   }
   saveDreamTeam();
@@ -736,7 +772,7 @@ function downloadDreamTeamImage() {
     if (!players.length) {
       ctx.fillStyle = "#9e6a2d";
       ctx.font = "32px VT323";
-      ctx.fillText("No players selected", 84, y);
+      ctx.fillText(section === "Manager" ? "No manager selected" : "No players selected", 84, y);
       y += 46;
       return;
     }
@@ -1939,7 +1975,10 @@ async function renderFavorite() {
   const liveEventDetailed = liveEvent?.idEvent ? (await safeLoad(() => fetchEventById(liveEvent.idEvent), null)) || liveEvent : liveEvent;
   const chosenToday = liveEventDetailed || todayEventDetailed;
   const nextEvents = await safeLoad(() => fetchTeamNextEvents(team.idTeam), []);
-  const nextEvent = nextEvents.find((event) => !isSameFixture(event, chosenToday)) || null;
+  const todayUpcomingFromNext = nextEvents.find((event) => event.dateEvent === todayIso) || null;
+  const todayPrimaryEvent =
+    (chosenToday && chosenToday.dateEvent === todayIso && chosenToday) || todayUpcomingFromNext || null;
+  const nextEvent = nextEvents.find((event) => !isSameFixture(event, todayPrimaryEvent || chosenToday)) || null;
   const hasFixtureToday = Boolean(
     (chosenToday && chosenToday.dateEvent === todayIso) || nextEvents.some((event) => event.dateEvent === todayIso)
   );
@@ -2013,11 +2052,16 @@ async function renderFavorite() {
 
   el.favoriteStatus.textContent = "Upcoming";
   clearFavoriteGoalCinematic();
-  if (nextEvent && nextEvent.dateEvent === todayIso) {
+  if (todayPrimaryEvent && todayPrimaryEvent.dateEvent === todayIso) {
     el.favoriteStatus.classList.add("gameday");
   }
 
-  if (lastCompleted) {
+  if (todayPrimaryEvent && eventState(todayPrimaryEvent).key === "upcoming") {
+    const todaySummary = nextFixtureSummary(team, todayPrimaryEvent);
+    el.favoriteFixtureLine.textContent = todaySummary.line;
+    el.favoriteFixtureDetail.textContent = todaySummary.detail;
+    el.favoriteLiveStrip.classList.remove("ticker-static");
+  } else if (lastCompleted) {
     el.favoriteFixtureLine.textContent = `Previous: ${scoreLine(lastCompleted)}`;
     el.favoriteFixtureDetail.textContent = `Last played ${formatDateTime(lastCompleted.dateEvent, lastCompleted.strTime)}`;
     el.favoriteLiveStrip.classList.remove("ticker-static");
@@ -2309,6 +2353,13 @@ function attachEvents() {
   if (el.dreamTeamDownloadBtn) {
     el.dreamTeamDownloadBtn.addEventListener("click", () => {
       downloadDreamTeamImage();
+    });
+  }
+
+  if (el.squadToggleBtn) {
+    el.squadToggleBtn.addEventListener("click", () => {
+      state.squadOpen = !state.squadOpen;
+      renderSquadPanel();
     });
   }
 

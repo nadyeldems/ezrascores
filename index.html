@@ -26,7 +26,6 @@
                 <p class="settings-label">Theme</p>
                 <div class="theme-toggle" role="tablist" aria-label="UI theme">
                   <button class="btn theme-btn active" type="button" data-theme="classic">Classic</button>
-                  <button class="btn theme-btn" type="button" data-theme="t90">Total 90</button>
                   <button class="btn theme-btn" type="button" data-theme="club">Favourite Team</button>
                 </div>
               </div>
@@ -43,12 +42,15 @@
               </div>
             </div>
           </div>
-          <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop">
-            POP
+          <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop Quiz">
+            POP QUIZ
             <span id="player-pop-score-badge" class="player-pop-score-badge">0</span>
           </button>
           <div class="dream-team-nav">
-            <button id="dream-team-toggle-btn" class="btn dream-team-toggle disabled" type="button" aria-expanded="false" title="Choose a favourite team, then star players to start your Dream Team">Dream Team</button>
+            <button id="dream-team-toggle-btn" class="btn dream-team-toggle disabled" type="button" aria-expanded="false" title="Choose a favourite team, then star players to start your Dream Team">
+              Dream Team
+              <span id="dream-team-count" class="dream-team-count">0/18</span>
+            </button>
             <p id="dream-team-hint" class="dream-team-hint hidden">Choose a favourite team, then star players to start your Dream Team.</p>
           </div>
           <p id="game-day-message" class="game-day-message neutral">Select a favourite team</p>
@@ -101,10 +103,13 @@
 
       <main>
         <section class="panel hidden" id="squad-panel">
-          <div class="panel-head">
+          <div class="panel-head squad-head">
             <h3 id="squad-title">Squad</h3>
+            <button id="squad-toggle-btn" class="btn" type="button" aria-expanded="false">Show Squad</button>
           </div>
-          <div id="squad-list" class="squad-list"></div>
+          <div id="squad-body" class="hidden">
+            <div id="squad-list" class="squad-list"></div>
+          </div>
         </section>
 
         <section class="panel hidden" id="dream-team-panel">
