@@ -1104,6 +1104,7 @@ function renderDreamTeamPanel(reason = "default") {
   rowDefs.forEach((rowDef, rowIndex) => {
     const lane = document.createElement("div");
     lane.className = `pitch-lane pitch-lane-${rowDef.role.toLowerCase()}`;
+    lane.classList.toggle("compact", rowDef.count >= 5);
     lane.style.setProperty("--lane-delay", `${rowIndex * 65}ms`);
     lane.style.gridTemplateColumns = `repeat(${Math.max(1, rowDef.count)}, minmax(0, 1fr))`;
     const group = xiGroups[rowDef.role] || [];
@@ -1358,6 +1359,50 @@ function escapeForCanvas(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+function wrapTextLines(ctx, text, maxWidth, maxLines = 2) {
+  const clean = escapeForCanvas(text);
+  if (!clean) return [""];
+  const words = clean.split(" ");
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    const probe = current ? `${current} ${word}` : word;
+    if (ctx.measureText(probe).width <= maxWidth) {
+      current = probe;
+      return;
+    }
+    if (current) lines.push(current);
+    current = word;
+  });
+  if (current) lines.push(current);
+  if (lines.length <= maxLines) return lines;
+  const trimmed = lines.slice(0, maxLines);
+  let last = trimmed[maxLines - 1];
+  while (last.length > 3 && ctx.measureText(`${last}...`).width > maxWidth) {
+    last = last.slice(0, -1);
+  }
+  trimmed[maxLines - 1] = `${last}...`;
+  return trimmed;
+}
+
+function drawCenteredWrappedText(ctx, text, centerX, startY, maxWidth, lineHeight = 26, maxLines = 2) {
+  const lines = wrapTextLines(ctx, text, maxWidth, maxLines);
+  ctx.textAlign = "center";
+  lines.forEach((line, idx) => {
+    ctx.fillText(line, centerX, startY + idx * lineHeight);
+  });
+  ctx.textAlign = "start";
+  return lines.length;
+}
+
+function drawWrappedText(ctx, text, x, startY, maxWidth, lineHeight = 22, maxLines = 2) {
+  const lines = wrapTextLines(ctx, text, maxWidth, maxLines);
+  lines.forEach((line, idx) => {
+    ctx.fillText(line, x, startY + idx * lineHeight);
+  });
+  return lines.length;
+}
+
 function loadCanvasImage(url) {
   const proxyUrl = url ? `/api/image?url=${encodeURIComponent(url)}` : "";
   return new Promise((resolve) => {
@@ -1577,10 +1622,9 @@ async function downloadDreamTeamImage() {
       drawPlayerCircleCutout(ctx, playerImg, x, row.y, 46);
       drawBadgeCircle(ctx, badgeImg, x + 42, row.y + 36, 14);
       ctx.fillStyle = "#ffd9a5";
-      ctx.font = "30px VT323";
-      ctx.textAlign = "center";
-      ctx.fillText(escapeForCanvas(player.name), x, row.y + 84);
-      ctx.textAlign = "start";
+      ctx.font = "28px VT323";
+      const textWidth = Math.max(104, xStep - 20);
+      drawCenteredWrappedText(ctx, player.name, x, row.y + 82, textWidth, 24, 2);
     }
   }
 
@@ -1597,15 +1641,16 @@ async function downloadDreamTeamImage() {
     drawPlayerCircleCutout(ctx, playerImg, listX + 26, y - 11, 22);
     drawBadgeCircle(ctx, badgeImg, listX + 46, y + 8, 11);
     ctx.fillStyle = "#f6d5aa";
-    ctx.font = "36px VT323";
-    ctx.fillText(escapeForCanvas(player?.name || "—"), listX + 66, y);
+    ctx.font = "33px VT323";
+    const nameLines = drawWrappedText(ctx, player?.name || "—", listX + 66, y, width - listX - 84, 24, 2);
     ctx.fillStyle = "#c7883a";
-    ctx.font = "27px VT323";
+    ctx.font = "25px VT323";
     const sub = isStaff
       ? escapeForCanvas(player?.teamName || "")
       : `${escapeForCanvas(nationalityWithFlag(player?.nationality || ""))} | ${escapeForCanvas(player?.teamName || "")}`;
-    ctx.fillText(sub, listX + 66, y + 26);
-    y += 62;
+    const subStart = y + nameLines * 24 + 2;
+    const subLines = drawWrappedText(ctx, sub, listX + 66, subStart, width - listX - 84, 20, 2);
+    y = subStart + subLines * 20 + 16;
   };
 
   ctx.fillStyle = "#ffbf74";
