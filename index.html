@@ -40,6 +40,14 @@
                 <p class="settings-label">Debug</p>
                 <button id="debug-goal-btn" class="btn debug-btn" type="button">Trigger Goal Animation</button>
               </div>
+              <div class="settings-group">
+                <p class="settings-label">Motion</p>
+                <div class="motion-toggle" role="tablist" aria-label="Motion intensity">
+                  <button class="btn motion-btn" type="button" data-motion="minimal">Minimal</button>
+                  <button class="btn motion-btn active" type="button" data-motion="standard">Standard</button>
+                  <button class="btn motion-btn" type="button" data-motion="arcade">Arcade</button>
+                </div>
+              </div>
             </div>
           </div>
           <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop Quiz">
@@ -71,6 +79,12 @@
           </div>
         </div>
       </header>
+      <div id="sticky-date-bar" class="sticky-date-bar hidden" aria-label="Quick date controls">
+        <button id="sticky-date-prev" class="btn sticky-date-btn" type="button" aria-label="Previous day">◀</button>
+        <button id="sticky-date-today" class="btn sticky-date-btn" type="button">Today</button>
+        <span id="sticky-date-label" class="sticky-date-label">--</span>
+        <button id="sticky-date-next" class="btn sticky-date-btn" type="button" aria-label="Next day">▶</button>
+      </div>
 
       <section id="favorite-banner" class="favorite-banner" aria-live="polite">
         <div class="favorite-empty" id="favorite-empty">

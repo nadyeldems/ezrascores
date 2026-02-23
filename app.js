@@ -27,6 +27,7 @@ const state = {
   teamsByLeague: { EPL: [], CHAMP: [] },
   favoriteTeamId: localStorage.getItem("esra_favorite_team") || "",
   uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
+  motionLevel: localStorage.getItem("ezra_motion_level") || "standard",
   playerPopEnabled: localStorage.getItem("ezra_player_pop_enabled") === "1",
   playerPopScope: localStorage.getItem("ezra_player_pop_scope") === "favorite" ? "favorite" : "any",
   teamPlayersCache: {},
@@ -65,6 +66,9 @@ const state = {
   lastStaticRefreshAt: 0,
   pollMode: "idle",
   settingsOpen: false,
+  focusedFixtureKey: "",
+  eventDetailCache: {},
+  fixtureScoreSnapshot: new Map(),
   playerPop: {
     rafId: null,
     running: false,
@@ -116,6 +120,7 @@ const el = {
   settingsMenu: document.getElementById("settings-menu"),
   settingsToggleBtn: document.getElementById("settings-toggle-btn"),
   settingsPanel: document.getElementById("settings-panel"),
+  motionButtons: [...document.querySelectorAll(".motion-btn")],
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
   playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
@@ -138,6 +143,12 @@ const el = {
   playerQuizCard: document.getElementById("player-quiz-card"),
   playerQuizOptions: document.getElementById("player-quiz-options"),
   playerQuizFeedback: document.getElementById("player-quiz-feedback"),
+  controlsPanel: document.querySelector(".controls-panel"),
+  stickyDateBar: document.getElementById("sticky-date-bar"),
+  stickyDateLabel: document.getElementById("sticky-date-label"),
+  stickyDatePrev: document.getElementById("sticky-date-prev"),
+  stickyDateToday: document.getElementById("sticky-date-today"),
+  stickyDateNext: document.getElementById("sticky-date-next"),
 };
 
 function clearGameDayCountdownTimer() {
@@ -151,6 +162,20 @@ function setThemeButtonState() {
   el.themeButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.theme === state.uiTheme);
   });
+}
+
+function setMotionButtonState() {
+  el.motionButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.motion === state.motionLevel);
+  });
+}
+
+function applyMotionSetting(level) {
+  const safeLevel = ["minimal", "standard", "arcade"].includes(level) ? level : "standard";
+  state.motionLevel = safeLevel;
+  document.body.setAttribute("data-motion", safeLevel);
+  localStorage.setItem("ezra_motion_level", safeLevel);
+  setMotionButtonState();
 }
 
 function applyUiTheme(theme) {
@@ -244,6 +269,44 @@ function shadeHex(hex, amount = 0.25) {
   return blendHex(hex, "#000000", amount);
 }
 
+function relativeLuminanceFromRgb({ r, g, b }) {
+  const channel = (v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function contrastRatio(hexA, hexB) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  if (!a || !b) return 1;
+  const l1 = relativeLuminanceFromRgb(a);
+  const l2 = relativeLuminanceFromRgb(b);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function ensureTextContrast(foreground, background, minRatio = 4.5) {
+  const fg = normalizeHexColor(foreground);
+  const bg = normalizeHexColor(background);
+  if (!fg || !bg) return fg || background || "#FFE4BE";
+  if (contrastRatio(fg, bg) >= minRatio) return fg;
+
+  for (let i = 1; i <= 10; i += 1) {
+    const towardWhite = blendHex(fg, "#FFFFFF", i / 10);
+    if (contrastRatio(towardWhite, bg) >= minRatio) return towardWhite;
+  }
+
+  for (let i = 1; i <= 10; i += 1) {
+    const towardBlack = blendHex(fg, "#000000", i / 10);
+    if (contrastRatio(towardBlack, bg) >= minRatio) return towardBlack;
+  }
+
+  return contrastRatio("#FFF1DA", bg) >= contrastRatio("#101010", bg) ? "#FFF1DA" : "#101010";
+}
+
 function clearClubThemeColors() {
   const keys = [
     "--club-primary",
@@ -269,8 +332,10 @@ function applyClubThemeFromTeam(team) {
   const panel = blendHex(shadeHex(secondary, 0.72), "#090503", 0.66);
   const line = shadeHex(primary, 0.36);
   const lineSoft = shadeHex(primary, 0.56);
-  const text = tintHex(primary, 0.22);
-  const textSoft = blendHex(text, secondary, 0.32);
+  const textBase = tintHex(primary, 0.22);
+  const text = ensureTextContrast(textBase, panel, 4.8);
+  const textSoftBase = blendHex(text, secondary, 0.24);
+  const textSoft = ensureTextContrast(textSoftBase, panel, 3.4);
 
   document.body.style.setProperty("--club-primary", primary);
   document.body.style.setProperty("--club-secondary", secondary);
@@ -859,18 +924,28 @@ async function downloadDreamTeamImage() {
   ctx.fillStyle = "#ffbf74";
   ctx.fillText(`Generated ${new Date().toLocaleString("en-GB")}`, 60, 132);
 
+  const layout = {
+    sectionX: 60,
+    nameX: 104,
+    metaX: 548,
+    cutoutX: 64,
+    cutoutSize: 28,
+    badgeCx: 518,
+    badgeRadius: 13,
+  };
+
   let y = 192;
   sections.forEach((section) => {
     ctx.fillStyle = "#ffc072";
     ctx.font = "44px VT323";
-    ctx.fillText(section, 60, y);
+    ctx.fillText(section, layout.sectionX, y);
     y += 36;
 
     const players = groups[section] || [];
     if (!players.length) {
       ctx.fillStyle = "#9e6a2d";
       ctx.font = "32px VT323";
-      ctx.fillText(section === "Manager" ? "No manager selected" : "No players selected", 84, y);
+      ctx.fillText(section === "Manager" ? "No manager selected" : "No players selected", layout.nameX, y);
       y += 46;
       return;
     }
@@ -878,10 +953,10 @@ async function downloadDreamTeamImage() {
     players.forEach((player) => {
       ctx.fillStyle = "#f6d5aa";
       ctx.font = "34px VT323";
-      ctx.fillText(escapeForCanvas(player.name), 84, y);
+      ctx.fillText(escapeForCanvas(player.name), layout.nameX, y);
       ctx.fillStyle = "#c7883a";
       ctx.font = "29px VT323";
-      ctx.fillText(`${escapeForCanvas(player.nationality)} | ${escapeForCanvas(player.teamName)}`, 540, y);
+      ctx.fillText(`${escapeForCanvas(player.nationality)} | ${escapeForCanvas(player.teamName)}`, layout.metaX, y);
       y += 42;
     });
     y += 6;
@@ -903,8 +978,8 @@ async function downloadDreamTeamImage() {
         loadCanvasImage(player.teamBadge),
       ]);
       const iconY = y - 30;
-      drawPlayerCutout(ctx, playerImg, 44, iconY, 28);
-      drawBadgeCircle(ctx, badgeImg, 520, iconY + 14, 13);
+      drawPlayerCutout(ctx, playerImg, layout.cutoutX, iconY, layout.cutoutSize);
+      drawBadgeCircle(ctx, badgeImg, layout.badgeCx, iconY + layout.cutoutSize / 2, layout.badgeRadius);
       y += 42;
     }
     y += 6;
@@ -1439,6 +1514,30 @@ async function fetchEventById(eventId) {
   return Array.isArray(data?.events) && data.events[0] ? data.events[0] : null;
 }
 
+async function fetchEventTimeline(eventId) {
+  if (!eventId) return [];
+  const data = await apiGetV1(`lookuptimeline.php?id=${eventId}`);
+  return safeArray(data, "timeline");
+}
+
+async function fetchEventStats(eventId) {
+  if (!eventId) return [];
+  const data = await apiGetV1(`lookupeventstats.php?id=${eventId}`);
+  return safeArray(data, "eventstats");
+}
+
+async function fetchEventLineups(eventId) {
+  if (!eventId) return [];
+  const data = await apiGetV1(`lookuplineup.php?id=${eventId}`);
+  return safeArray(data, "lineup");
+}
+
+async function fetchEventTv(eventId) {
+  if (!eventId) return [];
+  const data = await apiGetV1(`lookuptv.php?id=${eventId}`);
+  return safeArray(data, "tvevent");
+}
+
 function teamLeagueCode(team) {
   if (!team) return "";
   const leagueName = team.strLeague || "";
@@ -1494,6 +1593,135 @@ function ensureDefaultFavoriteTeam() {
   localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
 }
 
+function isMobileViewport() {
+  return window.matchMedia("(max-width: 720px)").matches;
+}
+
+function renderBaseFixtureDetails(event, stateInfo) {
+  const leagueText = event.strLeague || "Unknown competition";
+  const venueText = event.strVenue || "Venue TBD";
+  const dt = formatDateTime(event.dateEvent, event.strTime);
+  return [
+    `League: ${leagueText}`,
+    `Kickoff: ${dt}`,
+    `Venue: ${venueText}`,
+    event.strCity ? `City: ${event.strCity}` : "",
+    event.strCountry ? `Country: ${event.strCountry}` : "",
+    `Match State: ${stateInfo.label}`,
+    event.strStatus ? `API Status: ${event.strStatus}` : "",
+    event.strSeason ? `Season: ${event.strSeason}` : "",
+    event.intRound ? `Round: ${event.intRound}` : "",
+    event.strResult ? `Result Type: ${event.strResult}` : "",
+  ]
+    .filter(Boolean)
+    .join("<br>");
+}
+
+function compactTimeline(timeline) {
+  if (!Array.isArray(timeline) || !timeline.length) return "Timeline unavailable.";
+  const rows = timeline
+    .map((entry) => {
+      const mins = entry.intTime || entry.strTimeline || "";
+      const home = entry.strHome || "";
+      const away = entry.strAway || "";
+      const detail = [home, away].filter(Boolean).join(" | ");
+      return detail ? `${mins}' ${detail}` : "";
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+  return rows.length ? rows.join("  •  ") : "Timeline unavailable.";
+}
+
+function compactStats(stats) {
+  if (!Array.isArray(stats) || !stats.length) return "Stats unavailable.";
+  const rows = stats
+    .map((row) => {
+      const label = row.strStat || row.strType || "";
+      const home = row.strHome || row.intHome || row.strValue1 || "";
+      const away = row.strAway || row.intAway || row.strValue2 || "";
+      if (!label && !home && !away) return "";
+      return `${label || "Stat"} ${home} - ${away}`;
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+  return rows.length ? rows.join("  •  ") : "Stats unavailable.";
+}
+
+function compactLineups(lineups) {
+  if (!Array.isArray(lineups) || !lineups.length) return "Lineups unavailable.";
+  const home = lineups.find((x) => x.strSide === "Home") || lineups[0];
+  const away = lineups.find((x) => x.strSide === "Away") || lineups[1];
+  const pick = (raw) =>
+    String(raw || "")
+      .split(";")
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(", ");
+  const homeNames = pick(home?.strLineup) || "Unavailable";
+  const awayNames = pick(away?.strLineup) || "Unavailable";
+  return `Home XI: ${homeNames}  |  Away XI: ${awayNames}`;
+}
+
+function compactTv(tvRows) {
+  if (!Array.isArray(tvRows) || !tvRows.length) return "Broadcast data unavailable.";
+  const channels = tvRows
+    .map((row) => row.strChannel || row.strChannel1 || row.strCountry || "")
+    .filter(Boolean)
+    .slice(0, 6);
+  return channels.length ? channels.join(", ") : "Broadcast data unavailable.";
+}
+
+async function getRichEventData(eventId) {
+  if (!eventId) return null;
+  if (state.eventDetailCache[eventId]) return state.eventDetailCache[eventId];
+  const payload = await Promise.all([
+    safeLoad(() => fetchEventById(eventId), null),
+    safeLoad(() => fetchEventStats(eventId), []),
+    safeLoad(() => fetchEventTimeline(eventId), []),
+    safeLoad(() => fetchEventLineups(eventId), []),
+    safeLoad(() => fetchEventTv(eventId), []),
+  ]);
+  const rich = {
+    event: payload[0],
+    stats: payload[1],
+    timeline: payload[2],
+    lineups: payload[3],
+    tv: payload[4],
+  };
+  state.eventDetailCache[eventId] = rich;
+  return rich;
+}
+
+async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
+  if (!detailsEl) return;
+  const eventId = event?.idEvent || "";
+  const base = renderBaseFixtureDetails(event, stateInfo);
+  if (!eventId) {
+    detailsEl.innerHTML = `${base}<br><br>Detailed feed unavailable for this fixture.`;
+    return;
+  }
+
+  detailsEl.classList.add("loading");
+  detailsEl.innerHTML = `${base}<br><br>Loading richer match data...`;
+  const rich = await getRichEventData(eventId);
+  const core = rich?.event || event;
+  const extra = [
+    core?.strReferee ? `Referee: ${core.strReferee}` : "",
+    core?.intSpectators ? `Attendance: ${core.intSpectators}` : "",
+    core?.strVenue ? `Venue Detail: ${core.strVenue}` : "",
+    core?.strTimeLocal ? `Local Time: ${core.strTimeLocal}` : "",
+    `Stats: ${compactStats(rich?.stats)}`,
+    `Timeline: ${compactTimeline(rich?.timeline)}`,
+    `Lineups: ${compactLineups(rich?.lineups)}`,
+    `TV: ${compactTv(rich?.tv)}`,
+  ]
+    .filter(Boolean)
+    .join("<br>");
+  detailsEl.innerHTML = `${renderBaseFixtureDetails(core, stateInfo)}<br><br>${extra}`;
+  detailsEl.classList.remove("loading");
+}
+
 function renderFixtureList(target, events, mode) {
   target.innerHTML = "";
   const sortedEvents = sortEventsForColumn(events, mode);
@@ -1509,6 +1737,7 @@ function renderFixtureList(target, events, mode) {
     const node = el.fixtureTemplate.content.firstElementChild.cloneNode(true);
     const stateInfo = eventState(event);
     const key = fixtureKey(event);
+    node.dataset.fixtureKey = key;
     const homeName = event.strHomeTeam || "TBC";
     const awayName = event.strAwayTeam || "TBC";
 
@@ -1543,6 +1772,18 @@ function renderFixtureList(target, events, mode) {
     if (!homeBadgeUrl) homeBadge.classList.add("hidden");
     if (!awayBadgeUrl) awayBadge.classList.add("hidden");
     if (hasScores) {
+      const prev = state.fixtureScoreSnapshot.get(key);
+      const homeChanged = prev && prev.home !== Number(home);
+      const awayChanged = prev && prev.away !== Number(away);
+      if (homeChanged) {
+        homeScoreEl.classList.add("score-update");
+        homeInlineScoreEl.classList.add("score-update");
+      }
+      if (awayChanged) {
+        awayScoreEl.classList.add("score-update");
+        awayInlineScoreEl.classList.add("score-update");
+      }
+      state.fixtureScoreSnapshot.set(key, { home: Number(home), away: Number(away) });
       if (Number(home) > Number(away)) {
         homeScoreEl.classList.add("leading");
         homeInlineScoreEl.classList.add("leading");
@@ -1553,19 +1794,23 @@ function renderFixtureList(target, events, mode) {
       }
     }
 
-    const leagueText = event.strLeague || "Unknown competition";
-    const venueText = event.strVenue || "Venue TBD";
-    const dt = formatDateTime(event.dateEvent, event.strTime);
+    const detailsEl = node.querySelector(".fixture-details");
+    detailsEl.innerHTML = renderBaseFixtureDetails(event, stateInfo);
 
-    node.querySelector(".fixture-details").innerHTML = [
-      `League: ${leagueText}`,
-      `Kickoff: ${dt}`,
-      `Venue: ${venueText}`,
-      `Match State: ${stateInfo.label}`,
-      event.strStatus ? `API Status: ${event.strStatus}` : "",
-    ]
-      .filter(Boolean)
-      .join("<br>");
+    const favName = state.favoriteTeam?.strTeam || "";
+    const hasFavorite = Boolean(favName && (homeName === favName || awayName === favName));
+    if (hasFavorite) {
+      node.classList.add("has-favorite");
+      const ribbon = document.createElement("span");
+      ribbon.className = "fixture-ribbon";
+      ribbon.textContent = "Pinned Team";
+      node.querySelector("summary")?.appendChild(ribbon);
+    }
+
+    if (state.focusedFixtureKey) {
+      node.classList.toggle("fixture-focus", state.focusedFixtureKey === key);
+      node.classList.toggle("fixture-dimmed", state.focusedFixtureKey !== key);
+    }
 
     const goalFlash = state.goalFlashes.get(key);
     const goalFlashEl = node.querySelector(".goal-flash");
@@ -1580,6 +1825,25 @@ function renderFixtureList(target, events, mode) {
       goalFlashEl.querySelector(".goal-team-name").textContent = "";
       goalFlashEl.querySelector(".goal-scoreline").textContent = "";
     }
+
+    const summaryEl = node.querySelector("summary");
+    summaryEl?.addEventListener("click", (ev) => {
+      if (!isMobileViewport()) return;
+      ev.stopPropagation();
+      const isSame = state.focusedFixtureKey === key;
+      state.focusedFixtureKey = isSame ? "" : key;
+      [...target.querySelectorAll(".fixture-item")].forEach((item) => {
+        const itemKey = item.dataset.fixtureKey || "";
+        const focused = Boolean(state.focusedFixtureKey && state.focusedFixtureKey === itemKey);
+        item.classList.toggle("fixture-focus", focused);
+        item.classList.toggle("fixture-dimmed", Boolean(state.focusedFixtureKey) && !focused);
+      });
+    });
+
+    node.addEventListener("toggle", async () => {
+      if (!node.open) return;
+      await hydrateFixtureDetails(detailsEl, event, stateInfo);
+    });
 
     target.appendChild(node);
   });
@@ -1724,7 +1988,74 @@ function renderFixtures() {
   if (el.datePicker) {
     el.datePicker.value = state.selectedDate;
   }
+  if (el.stickyDateLabel) {
+    const d = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
+    el.stickyDateLabel.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  }
   setDateButtonState();
+}
+
+function renderFixtureSkeletons(count = 6) {
+  if (!el.fixturesList) return;
+  el.fixturesList.innerHTML = "";
+  for (let i = 0; i < count; i += 1) {
+    const row = document.createElement("div");
+    row.className = "fixture-skeleton";
+    row.innerHTML = `
+      <span class="skeleton-line w-20"></span>
+      <span class="skeleton-line w-65"></span>
+      <span class="skeleton-line w-45"></span>
+    `;
+    el.fixturesList.appendChild(row);
+  }
+}
+
+function renderTableSkeletons(count = 2) {
+  if (!el.tablesWrap) return;
+  el.tablesWrap.innerHTML = "";
+  for (let i = 0; i < count; i += 1) {
+    const row = document.createElement("div");
+    row.className = "table-skeleton";
+    row.innerHTML = `
+      <span class="skeleton-line w-40"></span>
+      <span class="skeleton-line w-90"></span>
+      <span class="skeleton-line w-90"></span>
+      <span class="skeleton-line w-90"></span>
+    `;
+    el.tablesWrap.appendChild(row);
+  }
+}
+
+function updateStickyDateBarVisibility() {
+  if (!el.stickyDateBar || !el.controlsPanel) return;
+  if (!isMobileViewport()) {
+    el.stickyDateBar.classList.add("hidden");
+    return;
+  }
+  const rect = el.controlsPanel.getBoundingClientRect();
+  const shouldShow = rect.bottom < 70;
+  el.stickyDateBar.classList.toggle("hidden", !shouldShow);
+}
+
+function initRevealOnScroll() {
+  const revealTargets = document.querySelectorAll(".hero-bar, .favorite-banner, .panel, .footer");
+  revealTargets.forEach((item, idx) => {
+    item.classList.add("reveal-on-scroll");
+    item.style.setProperty("--reveal-delay", `${idx * 35}ms`);
+  });
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("in-view");
+        }
+      });
+    },
+    { threshold: 0.2 }
+  );
+
+  revealTargets.forEach((item) => observer.observe(item));
 }
 
 function buildFavoriteOptions() {
@@ -2387,6 +2718,10 @@ async function fullRefresh() {
   state.refreshInFlight = true;
   let nextContext = currentPollContext();
   try {
+    if (state.lastRefresh) {
+      renderFixtureSkeletons(6);
+      renderTableSkeletons(2);
+    }
     if (!state.selectedDate) {
       state.selectedDate = toISODate(new Date());
     }
@@ -2402,6 +2737,7 @@ async function fullRefresh() {
     await safeLoad(() => renderFavorite(), null);
     renderFixtures();
     renderTables();
+    updateStickyDateBarVisibility();
     setLeagueButtonState();
     if (state.playerPopEnabled && el.playerDvdLayer?.classList.contains("hidden")) {
       showRandomPlayerPop();
@@ -2430,6 +2766,12 @@ function attachEvents() {
   el.themeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       applyUiTheme(btn.dataset.theme);
+    });
+  });
+
+  el.motionButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyMotionSetting(btn.dataset.motion);
     });
   });
 
@@ -2502,6 +2844,7 @@ function attachEvents() {
   }
 
   window.addEventListener("resize", () => {
+    updateStickyDateBarVisibility();
     if (!state.playerPopEnabled || !el.playerDvdLayer || el.playerDvdLayer.classList.contains("hidden")) return;
     const pop = state.playerPop;
     pop.x = Math.max(0, Math.min(pop.x, window.innerWidth - pop.size));
@@ -2578,16 +2921,39 @@ function attachEvents() {
       await shiftSelectedDate(1);
     });
   }
+
+  if (el.stickyDatePrev) {
+    el.stickyDatePrev.addEventListener("click", async () => {
+      await shiftSelectedDate(-1);
+    });
+  }
+  if (el.stickyDateNext) {
+    el.stickyDateNext.addEventListener("click", async () => {
+      await shiftSelectedDate(1);
+    });
+  }
+  if (el.stickyDateToday) {
+    el.stickyDateToday.addEventListener("click", async () => {
+      await setSelectedDate(toISODate(new Date()));
+    });
+  }
+
+  window.addEventListener("scroll", () => {
+    updateStickyDateBarVisibility();
+  });
 }
 
 attachEvents();
 applyUiTheme(state.uiTheme);
+applyMotionSetting(state.motionLevel);
 setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
 refreshPlayerPopScoreBadge();
 renderDreamTeamNavState();
 renderDreamTeamPanel();
 setSettingsMenuOpen(false);
+initRevealOnScroll();
+updateStickyDateBarVisibility();
 if (state.playerPopEnabled) {
   showRandomPlayerPop();
 }
