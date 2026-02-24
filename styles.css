@@ -2384,6 +2384,10 @@ body[data-theme="club"] .btn:hover {
   gap: 0.26rem;
 }
 
+.favorite-form-right {
+  margin-top: 0;
+}
+
 .form-label {
   color: var(--text-soft);
   margin-right: 0.2rem;
@@ -2414,9 +2418,9 @@ body[data-theme="club"] .btn:hover {
 }
 
 .form-pill.draw {
-  border-color: #6d6d6d;
-  background: rgba(120, 120, 120, 0.23);
-  color: #ebebeb;
+  border-color: #2e68c5;
+  background: rgba(56, 114, 214, 0.3);
+  color: #dceaff;
 }
 
 .favorite-logo {
@@ -2442,6 +2446,14 @@ body[data-theme="club"] .btn:hover {
   border-radius: 0.75rem;
   padding: 0.55rem;
   background: rgba(0, 0, 0, 0.28);
+}
+
+.favorite-fixture-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.22rem;
 }
 
 .favorite-goal-cinematic {
@@ -2507,7 +2519,7 @@ body[data-theme="club"] .btn:hover {
 }
 
 .status-pill {
-  margin: 0 0 0.35rem;
+  margin: 0;
   display: inline-block;
   font-size: 0.74rem;
   letter-spacing: 0.05em;

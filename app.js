@@ -227,6 +227,7 @@ const el = {
   favoriteName: document.getElementById("favorite-name"),
   favoriteLeague: document.getElementById("favorite-league"),
   favoriteForm: document.getElementById("favorite-form"),
+  favoriteFormRight: document.getElementById("favorite-form-right"),
   favoriteStatus: document.getElementById("favorite-status"),
   favoriteFixtureLine: document.getElementById("favorite-fixture-line"),
   favoriteFixtureDetail: document.getElementById("favorite-fixture-detail"),
@@ -5301,6 +5302,14 @@ function scoreLine(event) {
   return `${event?.strHomeTeam || "Home"} ${hs} - ${as} ${event?.strAwayTeam || "Away"}`;
 }
 
+function renderFavoriteFormBadges(form) {
+  if (!Array.isArray(form) || !form.length) return "";
+  return `<span class="form-label">Last 5</span>${form
+    .slice(0, 5)
+    .map((r) => `<span class="form-pill ${r === "W" ? "win" : r === "L" ? "loss" : "draw"}">${r}</span>`)
+    .join("")}`;
+}
+
 function isSameFixture(a, b) {
   if (!a || !b) return false;
   if (a.idEvent && b.idEvent) return a.idEvent === b.idEvent;
@@ -5512,6 +5521,10 @@ async function renderFavorite() {
       el.favoriteForm.classList.add("hidden");
       el.favoriteForm.innerHTML = "";
     }
+    if (el.favoriteFormRight) {
+      el.favoriteFormRight.classList.add("hidden");
+      el.favoriteFormRight.innerHTML = "";
+    }
     resetFavoriteTheme();
     renderSquadPanel();
     renderDreamTeamNavState();
@@ -5536,6 +5549,10 @@ async function renderFavorite() {
     if (el.favoriteForm) {
       el.favoriteForm.classList.add("hidden");
       el.favoriteForm.innerHTML = "";
+    }
+    if (el.favoriteFormRight) {
+      el.favoriteFormRight.classList.add("hidden");
+      el.favoriteFormRight.innerHTML = "";
     }
     resetFavoriteTheme();
     renderSquadPanel();
@@ -5616,14 +5633,21 @@ async function renderFavorite() {
   el.favoriteLeague.textContent = teamPos ? `${team.strLeague || ""}  •  ${teamPos}` : team.strLeague || "";
   if (el.favoriteForm) {
     const form = teamFormFromEvents(lastEvents, team);
+    const formHtml = renderFavoriteFormBadges(form);
     if (form.length) {
       el.favoriteForm.classList.remove("hidden");
-      el.favoriteForm.innerHTML = `<span class="form-label">Form</span>${form
-        .map((r) => `<span class="form-pill ${r === "W" ? "win" : r === "L" ? "loss" : "draw"}">${r}</span>`)
-        .join("")}`;
+      el.favoriteForm.innerHTML = formHtml;
+      if (el.favoriteFormRight) {
+        el.favoriteFormRight.classList.remove("hidden");
+        el.favoriteFormRight.innerHTML = formHtml;
+      }
     } else {
       el.favoriteForm.classList.add("hidden");
       el.favoriteForm.innerHTML = "";
+      if (el.favoriteFormRight) {
+        el.favoriteFormRight.classList.add("hidden");
+        el.favoriteFormRight.innerHTML = "";
+      }
     }
   }
   setFavoritePickerDisplay(team);
@@ -5838,7 +5862,9 @@ function shouldFetchStaticData() {
 
 function shouldFetchTables(context) {
   if (!state.tables.EPL.length || !state.tables.CHAMP.length) return true;
-  const intervalMs = context?.hasLive ? 60 * 1000 : 15 * 60 * 1000;
+  const nearKickoff = Number.isFinite(Number(context?.minutesToNextKickoff)) && Number(context.minutesToNextKickoff) <= 90;
+  const hasMatchdayActivity = Boolean(context?.hasLive || context?.hasTodayFixtures || nearKickoff);
+  const intervalMs = context?.hasLive ? 60 * 1000 : hasMatchdayActivity ? 2 * 60 * 1000 : 15 * 60 * 1000;
   return Date.now() - state.lastTableRefreshAt >= intervalMs;
 }
 

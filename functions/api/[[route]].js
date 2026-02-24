@@ -187,6 +187,95 @@ function extractPointsFromState(state, userId) {
   return 0;
 }
 
+function numericScore(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function predictionResultCode(home, away) {
+  if (home > away) return "H";
+  if (away > home) return "A";
+  return "D";
+}
+
+function parseStatusText(event) {
+  return String(event?.strStatus || event?.strProgress || "")
+    .toLowerCase()
+    .trim();
+}
+
+function isFinalEvent(event) {
+  const s = parseStatusText(event);
+  return /\b(ft|full time|match finished|finished|aet|after pen|final)\b/.test(s);
+}
+
+function eventLikelyFinal(event) {
+  if (!event || typeof event !== "object") return false;
+  if (isFinalEvent(event)) return true;
+  const home = numericScore(event.intHomeScore);
+  const away = numericScore(event.intAwayScore);
+  if (home === null || away === null) return false;
+  const date = String(event.dateEvent || "");
+  if (!date) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return date < today;
+}
+
+function questBonusPointsFromState(state, userId) {
+  const byDate = state?.familyLeague?.questBonusByDate;
+  if (!byDate || typeof byDate !== "object") return 0;
+  const prefix = `acct:${String(userId || "")}:`;
+  let count = 0;
+  for (const value of Object.values(byDate)) {
+    if (!value || typeof value !== "object") continue;
+    for (const [key, done] of Object.entries(value)) {
+      if (done && key.startsWith(prefix)) count += 1;
+    }
+  }
+  return count * 5;
+}
+
+function predictionEntriesForUser(state, userId) {
+  const predictions = state?.familyLeague?.predictions;
+  if (!predictions || typeof predictions !== "object") return [];
+  const memberKey = `acct:${String(userId || "")}`;
+  const rows = [];
+  for (const record of Object.values(predictions)) {
+    if (!record || typeof record !== "object") continue;
+    const eventId = String(record.eventId || "").trim();
+    if (!eventId) continue;
+    const entries = record.entries && typeof record.entries === "object" ? record.entries : {};
+    const pick = entries[memberKey] || null;
+    if (!pick || typeof pick !== "object") continue;
+    const home = numericScore(pick.home);
+    const away = numericScore(pick.away);
+    if (home === null || away === null) continue;
+    rows.push({ eventId, home, away });
+  }
+  return rows;
+}
+
+async function fetchEventResultById(key, eventId, resultCache) {
+  const cacheKey = String(eventId || "").trim();
+  if (!cacheKey) return { final: false, home: null, away: null };
+  if (resultCache.has(cacheKey)) return resultCache.get(cacheKey);
+  const fallback = { final: false, home: null, away: null };
+  try {
+    const data = await fetchSportsDb("v1", key, `lookupevent.php?id=${encodeURIComponent(cacheKey)}`);
+    const event = firstArray(data)?.[0] || null;
+    const home = numericScore(event?.intHomeScore);
+    const away = numericScore(event?.intAwayScore);
+    const final = eventLikelyFinal(event) && home !== null && away !== null;
+    const result = { final, home, away };
+    resultCache.set(cacheKey, result);
+    return result;
+  } catch {
+    resultCache.set(cacheKey, fallback);
+    return fallback;
+  }
+}
+
 async function upsertUserScore(db, userId, points) {
   const safePoints = Math.max(0, Number(points || 0));
   const nowIso = new Date().toISOString();
@@ -243,8 +332,8 @@ async function listLeaguesForUser(db, userId) {
   return rows?.results || [];
 }
 
-async function leagueStandings(db, code) {
-  await syncLeagueScoresFromStates(db, code);
+async function leagueStandings(db, code, key) {
+  await syncLeagueScoresFromStates(db, code, key);
   const rows = await db
     .prepare(`
       SELECT u.id AS user_id, u.name,
@@ -260,7 +349,7 @@ async function leagueStandings(db, code) {
   return rows?.results || [];
 }
 
-async function syncLeagueScoresFromStates(db, code) {
+async function syncLeagueScoresFromStates(db, code, key) {
   if (!code) return;
   const members = await db
     .prepare("SELECT user_id FROM ezra_league_members WHERE league_code = ?1")
@@ -269,6 +358,8 @@ async function syncLeagueScoresFromStates(db, code) {
   const ids = (members?.results || []).map((row) => String(row?.user_id || "")).filter(Boolean);
   if (!ids.length) return;
 
+  const sportsKey = String(key || "074910");
+  const resultCache = new Map();
   await Promise.all(
     ids.map(async (userId) => {
       const row = await db
@@ -276,8 +367,23 @@ async function syncLeagueScoresFromStates(db, code) {
         .bind(userId)
         .first();
       const state = safeParseJsonText(row?.state_json || "{}");
-      const points = extractPointsFromState(state, userId);
-      await upsertUserScore(db, userId, points);
+      const predictionRows = predictionEntriesForUser(state, userId);
+      let predictionPoints = 0;
+      for (const pick of predictionRows) {
+        const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache);
+        if (!result.final || result.home === null || result.away === null) continue;
+        if (pick.home === result.home && pick.away === result.away) {
+          predictionPoints += 2;
+          continue;
+        }
+        if (predictionResultCode(pick.home, pick.away) === predictionResultCode(result.home, result.away)) {
+          predictionPoints += 1;
+        }
+      }
+      const questBonusPoints = questBonusPointsFromState(state, userId);
+      const fallbackPoints = extractPointsFromState(state, userId);
+      const total = Math.max(predictionPoints + questBonusPoints, fallbackPoints);
+      await upsertUserScore(db, userId, total);
     })
   );
 }
@@ -483,7 +589,7 @@ async function handleLeagueJoin(db, request) {
   return json({ ok: true, code }, 200);
 }
 
-async function handleLeagueList(db, request) {
+async function handleLeagueList(db, request, key) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
   await ensureDefaultLeagueForUser(db, session.user_id);
@@ -495,7 +601,7 @@ async function handleLeagueList(db, request) {
       ownerUserId: league.owner_user_id,
       isOwner: String(league.owner_user_id || "") === String(session.user_id || ""),
       memberCount: Number(league.member_count || 0),
-      standings: await leagueStandings(db, league.code),
+      standings: await leagueStandings(db, league.code, key),
     }))
   );
   return json({ leagues: detailed }, 200);
@@ -599,7 +705,7 @@ async function handleLeagueMemberView(db, request) {
   );
 }
 
-async function handlePublicLeagueStandings(db, request) {
+async function handlePublicLeagueStandings(db, request, key) {
   const url = new URL(request.url);
   const code = normalizeLeagueCode(url.searchParams.get("code"));
   if (!code) return json({ error: "Invalid league code." }, 400);
@@ -608,7 +714,7 @@ async function handlePublicLeagueStandings(db, request) {
     .bind(code)
     .first();
   if (!league) return json({ error: "League code not found." }, 404);
-  const standings = await leagueStandings(db, code);
+  const standings = await leagueStandings(db, code, key);
   return json(
     {
       league: {
@@ -624,7 +730,34 @@ async function handlePublicLeagueStandings(db, request) {
   );
 }
 
-async function handleEzraAccountRoute(context, accountPath) {
+async function handleCronSettle(db, request, key, env) {
+  const expected = String(env?.EZRA_CRON_SECRET || "").trim();
+  if (!expected) {
+    return json({ error: "Cron secret is not configured. Add EZRA_CRON_SECRET." }, 503);
+  }
+  const url = new URL(request.url);
+  const provided =
+    String(request.headers.get("x-ezra-cron-secret") || "").trim() ||
+    String(url.searchParams.get("secret") || "").trim();
+  if (!provided || provided !== expected) {
+    return json({ error: "Unauthorized cron trigger." }, 401);
+  }
+  const rows = await db.prepare("SELECT code FROM ezra_leagues").all();
+  const codes = (rows?.results || []).map((row) => normalizeLeagueCode(row?.code)).filter(Boolean);
+  for (const code of codes) {
+    await syncLeagueScoresFromStates(db, code, key);
+  }
+  return json(
+    {
+      ok: true,
+      leaguesProcessed: codes.length,
+      settledAt: new Date().toISOString(),
+    },
+    200
+  );
+}
+
+async function handleEzraAccountRoute(context, accountPath, key) {
   const { request, env } = context;
   const db = env.EZRA_DB;
   if (!db) {
@@ -665,10 +798,13 @@ async function handleEzraAccountRoute(context, accountPath) {
       return handleLeagueMemberView(db, request);
     }
     if (route === "league/standings" && request.method === "GET") {
-      return handlePublicLeagueStandings(db, request);
+      return handlePublicLeagueStandings(db, request, key);
+    }
+    if (route === "cron/settle" && (request.method === "POST" || request.method === "GET")) {
+      return handleCronSettle(db, request, key, env);
     }
     if (route === "leagues" && request.method === "GET") {
-      return handleLeagueList(db, request);
+      return handleLeagueList(db, request, key);
     }
 
     return json({ error: "Unsupported account route or method" }, 405);
@@ -685,6 +821,7 @@ async function handleEzraAccountRoute(context, accountPath) {
 
 const TABLE_LEAGUE_IDS = ["4328", "4329"];
 const TABLE_REFRESH_LIVE_MS = 60 * 1000;
+const TABLE_REFRESH_MATCHDAY_MS = 2 * 60 * 1000;
 const TABLE_REFRESH_IDLE_MS = 15 * 60 * 1000;
 
 function tableDataCacheKey(origin, leagueId) {
@@ -730,6 +867,53 @@ async function hasLiveGamesNow(key) {
   return false;
 }
 
+function parseTableStatusText(event) {
+  return String(event?.strStatus || event?.strProgress || "")
+    .toLowerCase()
+    .trim();
+}
+
+function isTableLiveStatus(event) {
+  const s = parseTableStatusText(event);
+  if (!s) return false;
+  if (/\b(ht|1h|2h|live|in play|playing|et|pen)\b/.test(s)) return true;
+  return /\d{1,3}\s*'/.test(s);
+}
+
+function parseEventKickoffMs(event) {
+  const date = String(event?.dateEvent || "").trim();
+  if (!date) return Number.NaN;
+  const time = String(event?.strTime || "12:00:00")
+    .trim()
+    .slice(0, 8);
+  return Date.parse(`${date}T${time}Z`);
+}
+
+async function hasMatchdayActivityNow(key) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const now = Date.now();
+  for (const leagueId of TABLE_LEAGUE_IDS) {
+    const feeds = await Promise.all([
+      fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(todayIso)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
+      fetchSportsDb("v1", key, `eventspastleague.php?id=${encodeURIComponent(leagueId)}`).catch(() => null),
+      fetchSportsDb("v1", key, `eventsnextleague.php?id=${encodeURIComponent(leagueId)}`).catch(() => null),
+    ]);
+    const pool = feeds
+      .flatMap((payload) => firstArray(payload))
+      .filter((event) => String(event?.dateEvent || "") === todayIso);
+    if (!pool.length) continue;
+    if (pool.some((event) => isTableLiveStatus(event))) return true;
+    const inWindow = pool.some((event) => {
+      const kickoffMs = parseEventKickoffMs(event);
+      if (!Number.isFinite(kickoffMs)) return false;
+      const minutes = (now - kickoffMs) / 60000;
+      return minutes >= -45 && minutes <= 180;
+    });
+    if (inWindow) return true;
+  }
+  return false;
+}
+
 async function readTableMeta(cache, origin) {
   const cached = await cache.match(tableMetaCacheKey(origin));
   if (!cached) return null;
@@ -742,7 +926,12 @@ async function readTableMeta(cache, origin) {
 
 async function refreshTablesServerSide(cache, origin, key) {
   const liveNow = await hasLiveGamesNow(key);
-  const refreshEveryMs = liveNow ? TABLE_REFRESH_LIVE_MS : TABLE_REFRESH_IDLE_MS;
+  const matchdayNow = liveNow ? true : await hasMatchdayActivityNow(key);
+  const refreshEveryMs = liveNow
+    ? TABLE_REFRESH_LIVE_MS
+    : matchdayNow
+      ? TABLE_REFRESH_MATCHDAY_MS
+      : TABLE_REFRESH_IDLE_MS;
   const now = Date.now();
 
   const results = await Promise.all(
@@ -755,6 +944,7 @@ async function refreshTablesServerSide(cache, origin, key) {
           "X-EZRA-Cache": "MISS",
           "X-EZRA-Tables-Source": "SERVER",
           "X-EZRA-Tables-Live": liveNow ? "1" : "0",
+          "X-EZRA-Tables-Matchday": matchdayNow ? "1" : "0",
           "X-EZRA-Tables-Refresh-Ms": String(refreshEveryMs),
           "X-EZRA-Tables-Updated-At": new Date(now).toISOString(),
         },
@@ -770,6 +960,7 @@ async function refreshTablesServerSide(cache, origin, key) {
     nextRefreshAt: now + refreshEveryMs,
     refreshEveryMs,
     liveNow,
+    matchdayNow,
   };
   await cache.put(
     tableMetaCacheKey(origin),
@@ -802,6 +993,7 @@ async function handleEzraTablesRoute(context, key) {
     headers.set("X-EZRA-Cache", "HIT");
     headers.set("X-EZRA-Tables-Source", "SERVER");
     headers.set("X-EZRA-Tables-Live", meta.liveNow ? "1" : "0");
+    headers.set("X-EZRA-Tables-Matchday", meta.matchdayNow ? "1" : "0");
     headers.set("X-EZRA-Tables-Refresh-Ms", String(meta.refreshEveryMs || TABLE_REFRESH_IDLE_MS));
     headers.set("X-EZRA-Tables-Updated-At", new Date(meta.updatedAt || now).toISOString());
     return new Response(cachedData.body, { status: cachedData.status, headers });
@@ -842,16 +1034,15 @@ export async function onRequest(context) {
   }
 
   const lowerPath = upstreamPath.toLowerCase();
+  const key = env.SPORTSDB_KEY || "074910";
   if (version === "v1" && lowerPath.startsWith("ezra/account")) {
     const accountPath = upstreamPath.slice("ezra/account".length).replace(/^\/+/, "");
-    return handleEzraAccountRoute(context, accountPath);
+    return handleEzraAccountRoute(context, accountPath, key);
   }
 
   if (request.method !== "GET") {
     return new Response("Method Not Allowed", { status: 405 });
   }
-
-  const key = env.SPORTSDB_KEY || "074910";
 
   if (version === "v1" && lowerPath === "ezra/tables") {
     return handleEzraTablesRoute(context, key);
