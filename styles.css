@@ -1467,6 +1467,48 @@ body.dream-team-overlay-open::before {
   padding: 0.05rem 0.42rem;
 }
 
+.family-row.active {
+  background: rgba(255, 153, 32, 0.09);
+  border-radius: 0.62rem;
+  padding-inline: 0.35rem;
+}
+
+.fixture-predict {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.7rem;
+  padding: 0.45rem;
+  margin-top: 0.4rem;
+  background: rgba(255, 153, 32, 0.03);
+}
+
+.predict-head {
+  color: var(--text);
+  margin-bottom: 0.25rem;
+}
+
+.predict-form {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.predict-input {
+  width: 3.2rem;
+  min-height: 1.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #090503;
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+}
+
+.predict-status {
+  margin-top: 0.28rem;
+  color: var(--text-soft);
+}
+
 @media (max-width: 980px) {
   .fun-grid {
     grid-template-columns: 1fr;

@@ -198,11 +198,12 @@
         <section class="panel" id="fun-zone-panel">
           <div class="panel-head">
             <h3>Fun Zone</h3>
+            <button id="fun-zone-toggle-btn" class="btn" type="button" aria-expanded="true">Hide</button>
           </div>
-          <div class="fun-grid">
-            <article class="fun-card" id="missions-panel">
+          <div id="fun-zone-body" class="fun-grid">
+            <article class="fun-card" id="quests-panel">
               <div class="panel-head compact-head">
-                <h4>Matchday Missions</h4>
+                <h4>Daily Quests</h4>
               </div>
               <div id="missions-meta" class="muted"></div>
               <div id="missions-list" class="list"></div>
@@ -224,6 +225,7 @@
                   <button id="family-create-code-btn" class="btn" type="button">Create Code</button>
                 </div>
                 <p id="family-code-label" class="muted">League code: --</p>
+                <p id="family-active-label" class="muted">Active player: --</p>
               </div>
               <div id="family-members" class="list"></div>
             </article>

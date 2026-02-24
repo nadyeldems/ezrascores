@@ -54,7 +54,7 @@ function parseStoredJson(key, fallback) {
 }
 
 function defaultMissionState() {
-  return { xp: 0, streak: 0, completedByDate: {}, lastPlayed: null };
+  return { dailyByDate: {} };
 }
 
 function defaultStoryCardState() {
@@ -62,7 +62,7 @@ function defaultStoryCardState() {
 }
 
 function defaultFamilyLeagueState() {
-  return { leagueCode: "", members: [] };
+  return { leagueCode: "", members: [], activeMemberId: "", predictions: {}, questBonusByDate: {} };
 }
 
 function loadDreamTeamState() {
@@ -152,6 +152,7 @@ const state = {
   missions: parseStoredJson("ezra_missions", defaultMissionState()),
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
+  funZoneOpen: localStorage.getItem("ezra_funzone_open") !== "0",
   account: {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
@@ -249,7 +250,10 @@ const el = {
   familyAddMemberBtn: document.getElementById("family-add-member-btn"),
   familyCreateCodeBtn: document.getElementById("family-create-code-btn"),
   familyCodeLabel: document.getElementById("family-code-label"),
+  familyActiveLabel: document.getElementById("family-active-label"),
   familyMembers: document.getElementById("family-members"),
+  funZoneToggleBtn: document.getElementById("fun-zone-toggle-btn"),
+  funZoneBody: document.getElementById("fun-zone-body"),
   motionButtons: [...document.querySelectorAll(".motion-btn")],
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
@@ -382,12 +386,26 @@ function ensureMissionState() {
   if (!state.missions || typeof state.missions !== "object") {
     state.missions = defaultMissionState();
   }
-  if (!state.missions.completedByDate || typeof state.missions.completedByDate !== "object") {
-    state.missions.completedByDate = {};
+  if (!state.missions.dailyByDate || typeof state.missions.dailyByDate !== "object") {
+    // Migrate legacy mission schema to daily quest schema.
+    const legacy = state.missions.completedByDate && typeof state.missions.completedByDate === "object" ? state.missions.completedByDate : {};
+    const migrated = {};
+    Object.keys(legacy).forEach((dateKey) => {
+      const list = Array.isArray(legacy[dateKey]) ? legacy[dateKey] : [];
+      migrated[dateKey] = {
+        popCorrect: 0,
+        randomTarget: null,
+        randomExplored: false,
+        completed: [
+          list.includes("missions-watch-live") ? "quest-pop-5" : null,
+          list.includes("missions-favourite") ? "quest-random-player" : null,
+        ].filter(Boolean),
+      };
+    });
+    state.missions = {
+      dailyByDate: migrated,
+    };
   }
-  if (!Number.isFinite(Number(state.missions.xp))) state.missions.xp = 0;
-  if (!Number.isFinite(Number(state.missions.streak))) state.missions.streak = 0;
-  if (!state.missions.lastPlayed) state.missions.lastPlayed = null;
 }
 
 function ensureFamilyLeagueState() {
@@ -400,91 +418,228 @@ function ensureFamilyLeagueState() {
   if (typeof state.familyLeague.leagueCode !== "string") {
     state.familyLeague.leagueCode = "";
   }
+  if (typeof state.familyLeague.activeMemberId !== "string") {
+    state.familyLeague.activeMemberId = "";
+  }
+  if (!state.familyLeague.predictions || typeof state.familyLeague.predictions !== "object") {
+    state.familyLeague.predictions = {};
+  }
+  if (!state.familyLeague.questBonusByDate || typeof state.familyLeague.questBonusByDate !== "object") {
+    state.familyLeague.questBonusByDate = {};
+  }
+  state.familyLeague.members = state.familyLeague.members
+    .filter((m) => m && typeof m === "object")
+    .map((m) => ({
+      id: String(m.id || randomHexId()),
+      name: normalizeName(m.name || "").slice(0, 24),
+      points: Math.max(0, Number(m.points || 0)),
+    }))
+    .filter((m) => m.name);
+  if (state.familyLeague.activeMemberId && !state.familyLeague.members.some((m) => m.id === state.familyLeague.activeMemberId)) {
+    state.familyLeague.activeMemberId = "";
+  }
+  if (!state.familyLeague.activeMemberId && state.familyLeague.members[0]) {
+    state.familyLeague.activeMemberId = state.familyLeague.members[0].id;
+  }
 }
 
 function missionDateKey() {
   return toISODate(new Date());
 }
 
-function dailyMissionList() {
-  const hasFavorite = Boolean(state.favoriteTeamId && state.favoriteTeam);
-  const hasLive = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP].some((e) => eventState(e).key === "live");
-  const selectedLeagueLabel =
-    state.selectedLeague === "ALL" ? "both leagues" : state.selectedLeague === "EPL" ? "Premier League" : "Championship";
+function todayQuestState() {
+  ensureMissionState();
+  const today = missionDateKey();
+  if (!state.missions.dailyByDate[today] || typeof state.missions.dailyByDate[today] !== "object") {
+    state.missions.dailyByDate[today] = {
+      popCorrect: 0,
+      randomTarget: null,
+      randomExplored: false,
+      completed: [],
+    };
+  }
+  const entry = state.missions.dailyByDate[today];
+  if (!Number.isFinite(Number(entry.popCorrect))) entry.popCorrect = 0;
+  if (!Array.isArray(entry.completed)) entry.completed = [];
+  if (typeof entry.randomExplored !== "boolean") entry.randomExplored = false;
+  if (!entry.randomTarget || typeof entry.randomTarget !== "object") entry.randomTarget = null;
+  return entry;
+}
+
+function isQuestDone(questId) {
+  const daily = todayQuestState();
+  return daily.completed.includes(questId);
+}
+
+function addFamilyPoints(memberId, delta) {
+  ensureFamilyLeagueState();
+  const member = state.familyLeague.members.find((m) => m.id === memberId);
+  if (!member) return false;
+  member.points = Math.max(0, Number(member.points || 0) + Number(delta || 0));
+  return true;
+}
+
+function awardQuestBonus(questId) {
+  ensureFamilyLeagueState();
+  const memberId = state.familyLeague.activeMemberId;
+  if (!memberId) return false;
+  const today = missionDateKey();
+  if (!state.familyLeague.questBonusByDate[today] || typeof state.familyLeague.questBonusByDate[today] !== "object") {
+    state.familyLeague.questBonusByDate[today] = {};
+  }
+  const key = `${memberId}:${questId}`;
+  if (state.familyLeague.questBonusByDate[today][key]) return false;
+  if (!addFamilyPoints(memberId, 5)) return false;
+  state.familyLeague.questBonusByDate[today][key] = true;
+  return true;
+}
+
+function completeQuest(questId) {
+  const daily = todayQuestState();
+  if (daily.completed.includes(questId)) return false;
+  daily.completed.push(questId);
+  awardQuestBonus(questId);
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  renderMissionsPanel();
+  renderFamilyLeaguePanel();
+  return true;
+}
+
+function allLeagueTeams() {
+  return [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].filter((team) => team?.idTeam && team?.strTeam);
+}
+
+function shuffleList(list) {
+  const next = [...list];
+  for (let i = next.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [next[i], next[j]] = [next[j], next[i]];
+  }
+  return next;
+}
+
+async function pickDailyRandomQuestPlayer(forceNew = false) {
+  const daily = todayQuestState();
+  if (daily.randomTarget && !forceNew) return daily.randomTarget;
+  const teams = shuffleList(allLeagueTeams());
+  let chosen = null;
+  for (const team of teams.slice(0, 12)) {
+    const rawPlayers = await fetchPlayersForTeam(team);
+    const withCutout = rawPlayers
+      .map((raw) => normalizeSquadPlayer(raw, team))
+      .filter((player) => player && player.image);
+    if (!withCutout.length) continue;
+    const picked = randomFrom(withCutout);
+    if (!picked) continue;
+    chosen = {
+      key: picked.key,
+      idPlayer: picked.idPlayer || "",
+      teamId: picked.teamId || "",
+      teamName: picked.teamName || "",
+      name: picked.name,
+      image: picked.image,
+    };
+    break;
+  }
+  daily.randomTarget = chosen;
+  daily.randomExplored = false;
+  daily.completed = (daily.completed || []).filter((id) => id !== "quest-random-player");
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  return chosen;
+}
+
+async function goToQuestRandomPlayer() {
+  const target = await pickDailyRandomQuestPlayer(false);
+  if (!target) return;
+  if (target.teamId && state.favoriteTeamId !== target.teamId) {
+    state.favoriteTeamId = target.teamId;
+    localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
+    await safeLoad(() => renderFavorite(), null);
+  }
+  state.squadOpen = true;
+  state.selectedSquadPlayerKey = target.key || "";
+  renderSquadPanel();
+}
+
+function registerPopQuizCorrectAnswer() {
+  const daily = todayQuestState();
+  daily.popCorrect = Number(daily.popCorrect || 0) + 1;
+  if (daily.popCorrect >= 5) {
+    completeQuest("quest-pop-5");
+  } else {
+    persistLocalMetaState();
+    scheduleCloudStateSync();
+  }
+  renderMissionsPanel();
+  renderFamilyLeaguePanel();
+}
+
+function onSquadPlayerExplored(player) {
+  if (!player) return;
+  const daily = todayQuestState();
+  if (!daily.randomTarget) return;
+  const matchById = daily.randomTarget.idPlayer && player.idPlayer && daily.randomTarget.idPlayer === player.idPlayer;
+  const matchByKey = daily.randomTarget.key && player.key && daily.randomTarget.key === player.key;
+  if (!matchById && !matchByKey) return;
+  daily.randomExplored = true;
+  completeQuest("quest-random-player");
+}
+
+function dailyQuestList() {
+  const daily = todayQuestState();
+  const target = daily.randomTarget;
   return [
     {
-      id: "missions-check-fixtures",
-      title: "Fixture Scout",
-      points: 5,
-      description: `Browse today's ${selectedLeagueLabel} fixtures.`,
+      id: "quest-pop-5",
+      title: "Get 5 Pop Quizzes Correct",
+      description: `${Math.min(Number(daily.popCorrect || 0), 5)}/5 correct today`,
+      done: isQuestDone("quest-pop-5"),
+      buttonLabel: null,
+      onClick: null,
     },
     {
-      id: "missions-watch-live",
-      title: hasLive ? "Live Lens" : "Kickoff Radar",
-      points: 8,
-      description: hasLive ? "Watch a live match and check the score changes." : "Check upcoming kickoff times for today.",
-    },
-    {
-      id: "missions-favourite",
-      title: hasFavorite ? "Club Captain" : "Pin a Club",
-      points: 10,
-      description: hasFavorite
-        ? `Open ${state.favoriteTeam?.strTeam || "your club"} match centre and review form.`
-        : "Choose a favourite team to unlock tailored stories.",
+      id: "quest-random-player",
+      title: "Explore A Random Player",
+      description: target
+        ? `Find ${target.name} (${target.teamName}) in squad and tap for details`
+        : "Pick a random player from Premier League or Championship",
+      done: isQuestDone("quest-random-player"),
+      buttonLabel: target ? "Open Squad" : "Pick Random",
+      onClick: async () => {
+        await goToQuestRandomPlayer();
+        renderMissionsPanel();
+      },
     },
   ];
 }
 
-function markMissionComplete(missionId) {
-  ensureMissionState();
-  const today = missionDateKey();
-  if (!state.missions.completedByDate[today]) {
-    state.missions.completedByDate[today] = [];
-  }
-  const done = state.missions.completedByDate[today];
-  if (done.includes(missionId)) return;
-  done.push(missionId);
-
-  const mission = dailyMissionList().find((m) => m.id === missionId);
-  const points = Number(mission?.points || 5);
-  state.missions.xp = Number(state.missions.xp || 0) + points;
-
-  if (state.missions.lastPlayed !== today) {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const y = toISODate(yesterday);
-    state.missions.streak = state.missions.lastPlayed === y ? Number(state.missions.streak || 0) + 1 : 1;
-    state.missions.lastPlayed = today;
-  }
-  persistLocalMetaState();
-  scheduleCloudStateSync();
-}
-
 function renderMissionsPanel() {
   if (!el.missionsList || !el.missionsMeta) return;
-  ensureMissionState();
-  const missions = dailyMissionList();
-  const today = missionDateKey();
-  const completed = Array.isArray(state.missions.completedByDate[today]) ? state.missions.completedByDate[today] : [];
-  el.missionsMeta.textContent = `XP ${state.missions.xp || 0} • Streak ${state.missions.streak || 0}`;
+  ensureFamilyLeagueState();
+  const quests = dailyQuestList();
+  const completedCount = quests.filter((q) => q.done).length;
+  const activeMember = state.familyLeague.members.find((m) => m.id === state.familyLeague.activeMemberId);
+  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts each${activeMember ? ` (${activeMember.name})` : ""}`;
   el.missionsList.innerHTML = "";
-  missions.forEach((mission) => {
+  quests.forEach((quest) => {
     const row = document.createElement("div");
     row.className = "mission-row";
-    const done = completed.includes(mission.id);
     row.innerHTML = `
       <div class="mission-text">
-        <div class="mission-title">${escapeHtml(mission.title)}</div>
-        <div class="mission-sub">${escapeHtml(mission.description)} (+${mission.points} XP)</div>
+        <div class="mission-title">${escapeHtml(quest.title)}</div>
+        <div class="mission-sub">${escapeHtml(quest.description)}</div>
       </div>
-      <button class="btn" type="button">${done ? "Done" : "Complete"}</button>
+      ${quest.buttonLabel ? `<button class="btn" type="button">${escapeHtml(quest.done ? "Done" : quest.buttonLabel)}</button>` : `<span class="family-points">${quest.done ? "Done" : "In Progress"}</span>`}
     `;
     const btn = row.querySelector("button");
-    btn.disabled = done;
-    btn.addEventListener("click", () => {
-      markMissionComplete(mission.id);
-      renderMissionsPanel();
-    });
+    if (btn) {
+      btn.disabled = quest.done;
+      btn.addEventListener("click", async () => {
+        if (quest.onClick) await quest.onClick();
+      });
+    }
     el.missionsList.appendChild(row);
   });
 }
@@ -504,7 +659,6 @@ function storyCardData() {
   const teamMatch = (event) => event && (event.strHomeTeam === team.strTeam || event.strAwayTeam === team.strTeam);
   const todayEvent = todayPool.find((e) => teamMatch(e) && e.dateEvent === todayIso) || null;
   const nextEvent = nextPool.find((e) => teamMatch(e)) || state.fixtures.today[leagueCode]?.find((e) => teamMatch(e) && e.dateEvent !== todayIso) || null;
-  const form = Array.from(el.favoriteForm?.querySelectorAll(".form-pill") || []).map((node) => node.textContent || "").join(" ");
   const above = row ? table.find((r) => Number(r.intRank) === Number(row.intRank) - 1) : null;
   const below = row ? table.find((r) => Number(r.intRank) === Number(row.intRank) + 1) : null;
   return [
@@ -527,10 +681,6 @@ function storyCardData() {
       text: row
         ? `${above ? `${above.strTeam} ahead on ${above.intPoints} pts.` : "Top of the table."} ${below ? `${below.strTeam} behind on ${below.intPoints} pts.` : "No team below."}`
         : "Set a favourite team to unlock rival insights.",
-    },
-    {
-      title: "Form Radar",
-      text: form ? `Last five: ${form}` : "Form data will appear after recent results load.",
     },
   ];
 }
@@ -564,6 +714,9 @@ function addFamilyMember(name) {
   if (!clean) return;
   if (state.familyLeague.members.some((m) => (m.name || "").toLowerCase() === clean.toLowerCase())) return;
   state.familyLeague.members.push({ id: randomHexId(), name: clean, points: 0 });
+  if (!state.familyLeague.activeMemberId) {
+    state.familyLeague.activeMemberId = state.familyLeague.members[0].id;
+  }
   persistLocalMetaState();
   scheduleCloudStateSync();
 }
@@ -572,11 +725,10 @@ function randomHexId() {
   return Math.random().toString(16).slice(2, 10);
 }
 
-function updateFamilyPoints(id, delta) {
+function setActiveFamilyMember(memberId) {
   ensureFamilyLeagueState();
-  const member = state.familyLeague.members.find((m) => m.id === id);
-  if (!member) return;
-  member.points = Math.max(0, Number(member.points || 0) + Number(delta || 0));
+  if (!state.familyLeague.members.some((m) => m.id === memberId)) return;
+  state.familyLeague.activeMemberId = memberId;
   persistLocalMetaState();
   scheduleCloudStateSync();
 }
@@ -584,17 +736,22 @@ function updateFamilyPoints(id, delta) {
 function removeFamilyMember(id) {
   ensureFamilyLeagueState();
   state.familyLeague.members = state.familyLeague.members.filter((m) => m.id !== id);
+  if (state.familyLeague.activeMemberId === id) {
+    state.familyLeague.activeMemberId = state.familyLeague.members[0]?.id || "";
+  }
   persistLocalMetaState();
   scheduleCloudStateSync();
 }
 
 function renderFamilyLeaguePanel() {
-  if (!el.familyMembers || !el.familyCodeLabel) return;
+  if (!el.familyMembers || !el.familyCodeLabel || !el.familyActiveLabel) return;
   ensureFamilyLeagueState();
   if (!state.familyLeague.leagueCode) {
     state.familyLeague.leagueCode = randomLeagueCode();
   }
   el.familyCodeLabel.textContent = `League code: ${state.familyLeague.leagueCode}`;
+  const activeMember = state.familyLeague.members.find((m) => m.id === state.familyLeague.activeMemberId) || null;
+  el.familyActiveLabel.textContent = `Active player: ${activeMember ? activeMember.name : "--"}`;
   el.familyMembers.innerHTML = "";
   const sorted = [...state.familyLeague.members].sort((a, b) => Number(b.points || 0) - Number(a.points || 0));
   if (!sorted.length) {
@@ -603,7 +760,7 @@ function renderFamilyLeaguePanel() {
   }
   sorted.forEach((member, index) => {
     const row = document.createElement("div");
-    row.className = "family-row";
+    row.className = `family-row ${member.id === state.familyLeague.activeMemberId ? "active" : ""}`;
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title">#${index + 1} ${escapeHtml(member.name)}</div>
@@ -611,26 +768,32 @@ function renderFamilyLeaguePanel() {
       </div>
       <div class="account-actions">
         <span class="family-points">${Number(member.points || 0)}</span>
-        <button class="btn" type="button" data-delta="1">+1</button>
-        <button class="btn" type="button" data-delta="3">+3</button>
+        <button class="btn" type="button" data-active="1">${member.id === state.familyLeague.activeMemberId ? "Active" : "Set Active"}</button>
         <button class="btn" type="button" data-remove="1">x</button>
       </div>
     `;
-    row.querySelectorAll("button[data-delta]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        updateFamilyPoints(member.id, Number(btn.dataset.delta || 0));
-        renderFamilyLeaguePanel();
-      });
+    row.querySelector("button[data-active]")?.addEventListener("click", () => {
+      setActiveFamilyMember(member.id);
+      renderFamilyLeaguePanel();
+      renderMissionsPanel();
     });
     row.querySelector("button[data-remove]")?.addEventListener("click", () => {
       removeFamilyMember(member.id);
       renderFamilyLeaguePanel();
+      renderMissionsPanel();
     });
     el.familyMembers.appendChild(row);
   });
 }
 
 function renderFunZone() {
+  if (el.funZoneBody) {
+    el.funZoneBody.classList.toggle("hidden", !state.funZoneOpen);
+  }
+  if (el.funZoneToggleBtn) {
+    el.funZoneToggleBtn.textContent = state.funZoneOpen ? "Hide" : "Show";
+    el.funZoneToggleBtn.setAttribute("aria-expanded", String(state.funZoneOpen));
+  }
   renderMissionsPanel();
   renderStoryCardsPanel();
   renderFamilyLeaguePanel();
@@ -1103,6 +1266,7 @@ function renderPlayerQuiz(player) {
 
       state.playerQuiz.solved.add(player.key);
       state.playerQuiz.correctCount += 1;
+      registerPopQuizCorrectAnswer();
       refreshPlayerPopScoreBadge();
       setQuizFeedback("IT'S A GOAL!", "correct");
       if (el.playerQuizFocus) {
@@ -1523,6 +1687,11 @@ function renderSquadPanel() {
       const opening = state.selectedSquadPlayerKey !== player.key;
       state.selectedSquadPlayerKey = opening ? player.key : "";
       renderSquadPanel();
+      if (opening) {
+        onSquadPlayerExplored(player);
+        renderMissionsPanel();
+        renderFamilyLeaguePanel();
+      }
       if (!opening || !player.idPlayer) return;
       const cached = state.playerProfileCache[player.idPlayer];
       if (cached?.loading || cached?.loaded) return;
@@ -3229,6 +3398,182 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function predictionResultCode(home, away) {
+  if (home > away) return "H";
+  if (away > home) return "A";
+  return "D";
+}
+
+function allKnownEventsById() {
+  const all = [
+    ...state.fixtures.today.EPL,
+    ...state.fixtures.today.CHAMP,
+    ...state.fixtures.previous.EPL,
+    ...state.fixtures.previous.CHAMP,
+    ...state.fixtures.next.EPL,
+    ...state.fixtures.next.CHAMP,
+    ...state.selectedDateFixtures.EPL,
+    ...state.selectedDateFixtures.CHAMP,
+  ];
+  const map = new Map();
+  all.forEach((event) => {
+    if (!event?.idEvent) return;
+    map.set(event.idEvent, event);
+  });
+  return map;
+}
+
+function ensurePredictionRecord(event) {
+  ensureFamilyLeagueState();
+  if (!event?.idEvent) return null;
+  const eventId = event.idEvent;
+  if (!state.familyLeague.predictions[eventId] || typeof state.familyLeague.predictions[eventId] !== "object") {
+    state.familyLeague.predictions[eventId] = {
+      eventId,
+      homeTeam: event.strHomeTeam || "",
+      awayTeam: event.strAwayTeam || "",
+      kickoff: fixtureKickoffDate(event)?.toISOString() || "",
+      settled: false,
+      entries: {},
+    };
+  }
+  const record = state.familyLeague.predictions[eventId];
+  if (!record.entries || typeof record.entries !== "object") record.entries = {};
+  if (typeof record.homeTeam !== "string") record.homeTeam = event.strHomeTeam || "";
+  if (typeof record.awayTeam !== "string") record.awayTeam = event.strAwayTeam || "";
+  if (typeof record.kickoff !== "string") record.kickoff = fixtureKickoffDate(event)?.toISOString() || "";
+  if (typeof record.settled !== "boolean") record.settled = false;
+  return record;
+}
+
+function canPredictFixture(event, stateInfo) {
+  if (!event?.idEvent) return false;
+  if (stateInfo?.key !== "upcoming") return false;
+  const kickoff = fixtureKickoffDate(event);
+  if (!kickoff) return true;
+  return kickoff.getTime() > Date.now();
+}
+
+function settleFamilyPredictions() {
+  ensureFamilyLeagueState();
+  const eventsById = allKnownEventsById();
+  let changed = false;
+  Object.values(state.familyLeague.predictions || {}).forEach((record) => {
+    if (!record || record.settled || !record.eventId) return;
+    const event = eventsById.get(record.eventId);
+    if (!event) return;
+    const stateInfo = eventState(event);
+    const home = numericScore(event.intHomeScore);
+    const away = numericScore(event.intAwayScore);
+    if (stateInfo.key !== "final" || home === null || away === null) return;
+    const finalResult = predictionResultCode(home, away);
+    Object.entries(record.entries || {}).forEach(([memberId, pick]) => {
+      const member = state.familyLeague.members.find((m) => m.id === memberId);
+      if (!member || !pick || pick.scored) return;
+      const predHome = Number(pick.home);
+      const predAway = Number(pick.away);
+      if (!Number.isFinite(predHome) || !Number.isFinite(predAway)) return;
+      let points = 0;
+      if (predHome === home && predAway === away) {
+        points = 2;
+      } else if (predictionResultCode(predHome, predAway) === finalResult) {
+        points = 1;
+      }
+      if (points > 0) {
+        addFamilyPoints(memberId, points);
+      }
+      pick.scored = true;
+      pick.awarded = points;
+      changed = true;
+    });
+    record.settled = true;
+    record.finalHome = home;
+    record.finalAway = away;
+    changed = true;
+  });
+  if (changed) {
+    persistLocalMetaState();
+    scheduleCloudStateSync();
+  }
+  return changed;
+}
+
+function buildPredictionModule(event, stateInfo) {
+  const wrapper = document.createElement("section");
+  wrapper.className = "fixture-predict";
+  ensureFamilyLeagueState();
+  const activeMember = state.familyLeague.members.find((m) => m.id === state.familyLeague.activeMemberId) || null;
+  const record = ensurePredictionRecord(event);
+  const memberPick = activeMember && record ? record.entries?.[activeMember.id] : null;
+  const canPredict = canPredictFixture(event, stateInfo) && Boolean(activeMember) && Boolean(record && !record.settled);
+  const kickoff = fixtureKickoffDate(event);
+  const lockReason = !event?.idEvent
+    ? "Prediction unavailable for this fixture."
+    : !activeMember
+    ? "Set an active player in Family Mini-League to submit predictions."
+    : stateInfo.key !== "upcoming"
+      ? "Predictions close when the match starts."
+      : kickoff && kickoff.getTime() <= Date.now()
+        ? "Predictions are now locked for this fixture."
+        : "";
+  wrapper.innerHTML = `
+    <div class="predict-head">Predict the score?</div>
+    <div class="predict-form">
+      <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="H" />
+      <span>-</span>
+      <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="A" />
+      <button class="btn" type="button">${memberPick ? "Update Pick" : "Save Pick"}</button>
+    </div>
+    <div class="predict-status"></div>
+  `;
+  const inputs = wrapper.querySelectorAll(".predict-input");
+  const saveBtn = wrapper.querySelector("button");
+  const status = wrapper.querySelector(".predict-status");
+  const homeInput = inputs[0];
+  const awayInput = inputs[1];
+  if (memberPick) {
+    homeInput.value = String(memberPick.home);
+    awayInput.value = String(memberPick.away);
+  }
+  if (record?.settled && memberPick) {
+    const extra = Number.isFinite(Number(memberPick.awarded)) ? ` • +${Number(memberPick.awarded)} pts` : "";
+    status.textContent = `Final: ${record.finalHome}-${record.finalAway}. Your pick: ${memberPick.home}-${memberPick.away}${extra}`;
+  } else if (memberPick) {
+    status.textContent = `Your pick: ${memberPick.home}-${memberPick.away}${activeMember ? ` (${activeMember.name})` : ""}`;
+  } else if (lockReason) {
+    status.textContent = lockReason;
+  } else if (activeMember) {
+    status.textContent = `Saving for ${activeMember.name}`;
+  }
+  if (!canPredict) {
+    saveBtn.disabled = true;
+    homeInput.disabled = true;
+    awayInput.disabled = true;
+    return wrapper;
+  }
+  saveBtn.addEventListener("click", () => {
+    const home = Number(homeInput.value);
+    const away = Number(awayInput.value);
+    if (!Number.isInteger(home) || !Number.isInteger(away) || home < 0 || away < 0) {
+      status.textContent = "Enter valid whole-number scores.";
+      return;
+    }
+    const freshRecord = ensurePredictionRecord(event);
+    freshRecord.entries[activeMember.id] = {
+      home,
+      away,
+      submittedAt: new Date().toISOString(),
+      scored: false,
+      awarded: 0,
+    };
+    persistLocalMetaState();
+    scheduleCloudStateSync();
+    status.textContent = `Saved: ${home}-${away} for ${activeMember.name}`;
+    renderFamilyLeaguePanel();
+  });
+  return wrapper;
+}
+
 function detailRowsFromEvent(event, stateInfo) {
   return [
     { label: "League", value: event.strLeague || "" },
@@ -3305,6 +3650,7 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   const statsHtml = renderStatsTable(rich?.stats);
   const hasExtra = Boolean(statsHtml);
   detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
+  detailsEl.appendChild(buildPredictionModule(event, stateInfo));
   detailsEl.classList.remove("loading");
 }
 
@@ -4493,6 +4839,7 @@ async function fullRefresh() {
     await loadCoreData({ includeLive, includeStatic, includeTables, includeSurroundingDays });
     detectGoalFlashes();
     await refreshSelectedDateFixtures();
+    settleFamilyPredictions();
     buildFavoriteOptions();
     await safeLoad(() => renderFavorite(), null);
     const currentEvents = selectedEventsForCurrentView();
@@ -4580,6 +4927,14 @@ function attachEvents() {
       persistLocalMetaState();
       scheduleCloudStateSync();
       renderFamilyLeaguePanel();
+    });
+  }
+
+  if (el.funZoneToggleBtn) {
+    el.funZoneToggleBtn.addEventListener("click", () => {
+      state.funZoneOpen = !state.funZoneOpen;
+      localStorage.setItem("ezra_funzone_open", state.funZoneOpen ? "1" : "0");
+      renderFunZone();
     });
   }
 
