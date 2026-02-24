@@ -2565,7 +2565,8 @@ async function apiRequest(method, path, body = null, token = "") {
     const clean = isHtml
       ? `Cloudflare error ${res.status}. Check Pages Functions logs for the latest exception.`
       : raw.slice(0, 220);
-    throw new Error(clean || `Request failed (${res.status})`);
+    const detail = payload?.detail ? ` (${String(payload.detail).slice(0, 220)})` : "";
+    throw new Error((clean || `Request failed (${res.status})`) + detail);
   }
   return payload;
 }
