@@ -1098,14 +1098,15 @@ function predictionOutcomeLabel(entry) {
   return { text: "Miss", cls: "miss" };
 }
 
-function memberPredictionsMapFromRecord(record) {
-  const map = new Map();
-  const list = Array.isArray(record?.predictions) ? record.predictions : [];
-  list.forEach((item) => {
-    if (!item?.eventId) return;
-    map.set(String(item.eventId), item);
-  });
-  return map;
+function predictionJoinKey(item) {
+  if (!item || typeof item !== "object") return "";
+  const id = String(item.eventId || item.idEvent || "").trim();
+  if (id) return `id:${id}`;
+  const home = String(item.homeTeam || "").trim().toLowerCase();
+  const away = String(item.awayTeam || "").trim().toLowerCase();
+  const kickoff = String(item.kickoff || "").trim();
+  if (!home || !away || !kickoff) return "";
+  return `fx:${home}|${away}|${kickoff}`;
 }
 
 function currentUserPredictionsSnapshot() {
@@ -1135,31 +1136,47 @@ function currentUserPredictionsSnapshot() {
 }
 
 function renderPredictionCardsHtml(memberData, compareEnabled) {
-  const themMap = memberPredictionsMapFromRecord(memberData);
   const yourList = currentUserPredictionsSnapshot();
-  const yourMap = new Map(yourList.map((item) => [String(item.eventId || ""), item]));
+  const yourMap = new Map(
+    yourList
+      .map((item) => [predictionJoinKey(item), item])
+      .filter(([key]) => Boolean(key))
+  );
 
   let merged = [];
   if (compareEnabled) {
-    const keys = new Set([...themMap.keys(), ...yourMap.keys()]);
-    merged = [...keys]
-      .map((key) => {
-        const them = themMap.get(key) || null;
-        const you = yourMap.get(key) || null;
-        const sample = them || you || {};
-        return {
-          eventId: key,
-          kickoff: sample.kickoff || "",
-          homeTeam: sample.homeTeam || "",
-          awayTeam: sample.awayTeam || "",
-          them,
-          you,
-        };
+    const themRows = (Array.isArray(memberData?.predictions) ? memberData.predictions : []).map((item) => {
+      const key = predictionJoinKey(item);
+      return {
+        eventId: String(item.eventId || ""),
+        joinKey: key,
+        kickoff: item.kickoff || "",
+        homeTeam: item.homeTeam || "",
+        awayTeam: item.awayTeam || "",
+        them: item,
+        you: key ? yourMap.get(key) || null : null,
+      };
+    });
+    const themKeys = new Set(themRows.map((row) => row.joinKey).filter(Boolean));
+    const yourExtraRows = yourList
+      .filter((item) => {
+        const key = predictionJoinKey(item);
+        return key && !themKeys.has(key);
       })
-      .sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
+      .map((item) => ({
+        eventId: String(item.eventId || ""),
+        joinKey: predictionJoinKey(item),
+        kickoff: item.kickoff || "",
+        homeTeam: item.homeTeam || "",
+        awayTeam: item.awayTeam || "",
+        them: null,
+        you: item,
+      }));
+    merged = [...themRows, ...yourExtraRows].sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
   } else {
     merged = (Array.isArray(memberData?.predictions) ? memberData.predictions : []).map((item) => ({
       eventId: String(item.eventId || ""),
+      joinKey: predictionJoinKey(item),
       kickoff: item.kickoff || "",
       homeTeam: item.homeTeam || "",
       awayTeam: item.awayTeam || "",
@@ -1173,7 +1190,7 @@ function renderPredictionCardsHtml(memberData, compareEnabled) {
   }
 
   return merged
-    .slice(0, 24)
+    .slice(0, 36)
     .map((row) => {
       const kickoffText = row.kickoff ? new Date(row.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "TBA";
       const finalText =
@@ -1185,11 +1202,15 @@ function renderPredictionCardsHtml(memberData, compareEnabled) {
       const themPick =
         Number.isFinite(Number(row.them?.pick?.home)) && Number.isFinite(Number(row.them?.pick?.away))
           ? `${Number(row.them.pick.home)}-${Number(row.them.pick.away)}`
-          : "--";
+          : compareEnabled
+            ? "No pick"
+            : "--";
       const youPick =
         Number.isFinite(Number(row.you?.pick?.home)) && Number.isFinite(Number(row.you?.pick?.away))
           ? `${Number(row.you.pick.home)}-${Number(row.you.pick.away)}`
-          : "--";
+          : compareEnabled
+            ? "No pick"
+            : "--";
       return `
         <article class="member-pred-card">
           <header>
@@ -3595,6 +3616,11 @@ function isFinalEvent(event) {
   return false;
 }
 
+function isDeferredEvent(event) {
+  const s = parseStatusText(event);
+  return /\b(postponed|suspended|abandoned|cancelled|canceled|delay)\b/.test(s);
+}
+
 function eventState(event) {
   const today = toISODate(new Date());
   const date = event?.dateEvent;
@@ -3606,18 +3632,33 @@ function eventState(event) {
   if (isFinalEvent(event)) {
     return { key: "final", label: "final score" };
   }
+  if (isDeferredEvent(event)) {
+    return { key: "upcoming", label: "upcoming" };
+  }
   if (hasScore(event) && date && date < today) {
     return { key: "final", label: "final score" };
   }
   if (hasScore(event) && date === today) {
-    const kickoffUtc = new Date(`${date}T${event.strTime || "12:00:00"}Z`);
-    if (!Number.isNaN(kickoffUtc.getTime())) {
-      const elapsedMs = Date.now() - kickoffUtc.getTime();
+    const kickoff = fixtureKickoffDate(event);
+    if (kickoff && !Number.isNaN(kickoff.getTime())) {
+      const elapsedMs = Date.now() - kickoff.getTime();
       if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
-      if (elapsedMs <= 3 * 60 * 60 * 1000) return { key: "live", label: "live" };
+      if (elapsedMs <= 150 * 60 * 1000) return { key: "live", label: "live" };
       return { key: "final", label: "final score" };
     }
     return { key: "live", label: "live" };
+  }
+  if (date === today) {
+    const kickoff = fixtureKickoffDate(event);
+    if (kickoff && !Number.isNaN(kickoff.getTime())) {
+      const elapsedMs = Date.now() - kickoff.getTime();
+      if (elapsedMs >= 0 && elapsedMs <= 150 * 60 * 1000) {
+        return { key: "live", label: "live" };
+      }
+      if (elapsedMs > 150 * 60 * 1000) {
+        return { key: "final", label: "final score" };
+      }
+    }
   }
   return { key: "upcoming", label: "upcoming" };
 }
@@ -3931,33 +3972,46 @@ async function logoutAccount() {
 async function fetchLeagueDayFixtures(leagueId, dateIso) {
   const league = Object.values(LEAGUES).find((l) => l.id === leagueId);
   const leagueName = league?.name || leagueId;
-
-  const tryPaths = [
+  const today = toISODate(new Date());
+  const dateQueryPaths = [
     `eventsday.php?d=${encodeURIComponent(dateIso)}&l=${encodeURIComponent(leagueId)}`,
     `eventsday.php?d=${encodeURIComponent(dateIso)}&l=${encodeURIComponent(leagueName)}`,
   ];
+  const dateFeeds = await Promise.all(
+    dateQueryPaths.map((path) => safeLoad(async () => safeArray(await apiGetV1(path)), []))
+  );
 
-  for (const path of tryPaths) {
-    try {
-      const data = await apiGetV1(path);
-      const events = safeArray(data);
-      if (events.length) return events;
-    } catch (err) {
-      console.error(err);
-    }
+  const feedKeys = new Set();
+  const base = [];
+  dateFeeds.flat().forEach((event) => {
+    const key = fixtureKey(event);
+    if (!key || feedKeys.has(key)) return;
+    feedKeys.add(key);
+    base.push(event);
+  });
+
+  const sideFeedPaths = [];
+  if (dateIso <= today) {
+    sideFeedPaths.push(`eventspastleague.php?id=${leagueId}`);
   }
-
-  const today = toISODate(new Date());
-  const fallbackPath =
-    dateIso < today ? `eventspastleague.php?id=${leagueId}` : `eventsnextleague.php?id=${leagueId}`;
-
-  try {
-    const data = await apiGetV1(fallbackPath);
-    return safeArray(data).filter((e) => e.dateEvent === dateIso);
-  } catch (err) {
-    console.error(err);
-    return [];
+  if (dateIso >= today) {
+    sideFeedPaths.push(`eventsnextleague.php?id=${leagueId}`);
   }
+  const sideFeeds = await Promise.all(
+    sideFeedPaths.map((path) => safeLoad(async () => safeArray(await apiGetV1(path)), []))
+  );
+  const extras = sideFeeds.flat().filter((event) => event?.dateEvent === dateIso);
+
+  const combined = [...base];
+  const byKey = new Map(combined.map((event) => [fixtureKey(event), event]));
+  extras.forEach((event) => {
+    const key = fixtureKey(event);
+    if (!key) return;
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? { ...existing, ...event } : event);
+  });
+
+  return [...byKey.values()];
 }
 
 async function fetchLiveByLeague(leagueId) {
@@ -4508,6 +4562,43 @@ function renderStatsTable(stats) {
   return `<div class="stats-block"><p class="stats-title">Match Stats</p>${body}</div>`;
 }
 
+function normalizeHttpUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^\/\//.test(raw)) return `https:${raw}`;
+  return "";
+}
+
+function eventHighlightsUrl(event) {
+  if (!event || typeof event !== "object") return "";
+  const candidates = [
+    event.strVideo,
+    event.strVideo1,
+    event.strVideo2,
+    event.strVideo3,
+    event.strHighlights,
+    event.strHighlight,
+  ];
+  for (const candidate of candidates) {
+    const url = normalizeHttpUrl(candidate);
+    if (url) return url;
+  }
+  return "";
+}
+
+function renderHighlightsBlock(event, stateInfo) {
+  if (!event || stateInfo?.key !== "final") return "";
+  const url = eventHighlightsUrl(event);
+  if (!url) return "";
+  return `
+    <div class="highlights-block">
+      <p class="stats-title">Highlights</p>
+      <a class="btn highlights-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Watch Highlights ↗</a>
+    </div>
+  `;
+}
+
 async function getRichEventData(eventId) {
   if (!eventId) return null;
   if (state.eventDetailCache[eventId]) return state.eventDetailCache[eventId];
@@ -4536,11 +4627,13 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   detailsEl.innerHTML = `${renderDetailRows(baseRows)}<p class="detail-empty">Loading match details...</p>`;
   const rich = await getRichEventData(eventId);
   const core = rich?.event || event;
-  const rows = detailRowsFromEvent(core, stateInfo);
+  const resolvedState = eventState(core);
+  const rows = detailRowsFromEvent(core, resolvedState);
   const statsHtml = renderStatsTable(rich?.stats);
-  const hasExtra = Boolean(statsHtml);
-  detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
-  const predictionModule = buildPredictionModule(event, stateInfo);
+  const highlightsHtml = renderHighlightsBlock(core, resolvedState);
+  const hasExtra = Boolean(statsHtml || highlightsHtml);
+  detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${highlightsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
+  const predictionModule = buildPredictionModule(event, resolvedState);
   if (predictionModule) {
     detailsEl.appendChild(predictionModule);
   }

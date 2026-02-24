@@ -3245,6 +3245,20 @@ body[data-theme="t90"] .team-score.leading {
   gap: 0.18rem;
 }
 
+.highlights-block {
+  margin-top: 0.45rem;
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 0.35rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.highlights-link {
+  justify-self: start;
+  min-height: 1.9rem;
+  padding: 0.2rem 0.55rem;
+}
+
 .stats-title {
   margin: 0 0 0.1rem;
   color: var(--text);
