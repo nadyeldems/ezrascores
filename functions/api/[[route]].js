@@ -119,6 +119,7 @@ async function ensureAccountSchema(db) {
       CREATE TABLE IF NOT EXISTS ezra_leagues (
         code TEXT PRIMARY KEY,
         owner_user_id TEXT NOT NULL,
+        name TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY (owner_user_id) REFERENCES ezra_users(id)
       )
@@ -138,6 +139,14 @@ async function ensureAccountSchema(db) {
   for (const sql of statements) {
     await db.prepare(sql).run();
   }
+  try {
+    await db.prepare("ALTER TABLE ezra_leagues ADD COLUMN name TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) {
+      throw err;
+    }
+  }
   accountSchemaReady = true;
 }
 
@@ -154,6 +163,14 @@ function normalizeLeagueCode(code) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 12);
+}
+
+function normalizeLeagueName(name, fallback = "") {
+  const clean = String(name || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 48);
+  return clean || fallback;
 }
 
 function extractPointsFromState(state, userId) {
@@ -200,7 +217,10 @@ async function ensureDefaultLeagueForUser(db, userId) {
   }
   if (!code) code = randomLeagueCode();
   const nowIso = new Date().toISOString();
-  await db.prepare("INSERT INTO ezra_leagues (code, owner_user_id, created_at) VALUES (?1, ?2, ?3)").bind(code, userId, nowIso).run();
+  await db
+    .prepare("INSERT INTO ezra_leagues (code, owner_user_id, name, created_at) VALUES (?1, ?2, ?3, ?4)")
+    .bind(code, userId, `League ${code}`, nowIso)
+    .run();
   await db
     .prepare("INSERT OR IGNORE INTO ezra_league_members (league_code, user_id, joined_at) VALUES (?1, ?2, ?3)")
     .bind(code, userId, nowIso)
@@ -211,7 +231,7 @@ async function ensureDefaultLeagueForUser(db, userId) {
 async function listLeaguesForUser(db, userId) {
   const rows = await db
     .prepare(`
-      SELECT l.code, l.owner_user_id, l.created_at,
+      SELECT l.code, l.owner_user_id, l.name, l.created_at,
              (SELECT COUNT(*) FROM ezra_league_members lm2 WHERE lm2.league_code = l.code) AS member_count
       FROM ezra_league_members lm
       JOIN ezra_leagues l ON l.code = lm.league_code
@@ -401,6 +421,7 @@ async function handleAccountPutState(db, request) {
 async function handleLeagueCreate(db, request) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
   let code = "";
   for (let i = 0; i < 12; i += 1) {
     const candidate = randomLeagueCode();
@@ -412,12 +433,16 @@ async function handleLeagueCreate(db, request) {
   }
   if (!code) code = randomLeagueCode();
   const nowIso = new Date().toISOString();
-  await db.prepare("INSERT INTO ezra_leagues (code, owner_user_id, created_at) VALUES (?1, ?2, ?3)").bind(code, session.user_id, nowIso).run();
+  const leagueName = normalizeLeagueName(body?.name, `League ${code}`);
+  await db
+    .prepare("INSERT INTO ezra_leagues (code, owner_user_id, name, created_at) VALUES (?1, ?2, ?3, ?4)")
+    .bind(code, session.user_id, leagueName, nowIso)
+    .run();
   await db
     .prepare("INSERT OR IGNORE INTO ezra_league_members (league_code, user_id, joined_at) VALUES (?1, ?2, ?3)")
     .bind(code, session.user_id, nowIso)
     .run();
-  return json({ ok: true, code }, 200);
+  return json({ ok: true, code, name: leagueName }, 200);
 }
 
 async function handleLeagueJoin(db, request) {
@@ -443,12 +468,112 @@ async function handleLeagueList(db, request) {
   const detailed = await Promise.all(
     leagues.map(async (league) => ({
       code: league.code,
+      name: normalizeLeagueName(league.name, `League ${league.code}`),
       ownerUserId: league.owner_user_id,
+      isOwner: String(league.owner_user_id || "") === String(session.user_id || ""),
       memberCount: Number(league.member_count || 0),
       standings: await leagueStandings(db, league.code),
     }))
   );
   return json({ leagues: detailed }, 200);
+}
+
+async function handleLeagueRename(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const code = normalizeLeagueCode(body?.code);
+  if (!code) return json({ error: "Invalid league code." }, 400);
+  const nextName = normalizeLeagueName(body?.name);
+  if (!nextName) return json({ error: "League name required." }, 400);
+  const league = await db
+    .prepare("SELECT code, owner_user_id FROM ezra_leagues WHERE code = ?1 LIMIT 1")
+    .bind(code)
+    .first();
+  if (!league) return json({ error: "League code not found." }, 404);
+  if (String(league.owner_user_id || "") !== String(session.user_id || "")) {
+    return json({ error: "Only league owner can rename this league." }, 403);
+  }
+  await db.prepare("UPDATE ezra_leagues SET name = ?1 WHERE code = ?2").bind(nextName, code).run();
+  return json({ ok: true, code, name: nextName }, 200);
+}
+
+async function isLeagueMember(db, leagueCode, userId) {
+  if (!leagueCode || !userId) return false;
+  const row = await db
+    .prepare("SELECT 1 AS ok FROM ezra_league_members WHERE league_code = ?1 AND user_id = ?2 LIMIT 1")
+    .bind(leagueCode, userId)
+    .first();
+  return Boolean(row?.ok);
+}
+
+function safeParseJsonText(text) {
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function handleLeagueMemberView(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const url = new URL(request.url);
+  const code = normalizeLeagueCode(url.searchParams.get("code"));
+  const userId = String(url.searchParams.get("userId") || "").trim();
+  if (!code || !userId) return json({ error: "Missing code or userId." }, 400);
+
+  const requesterInLeague = await isLeagueMember(db, code, session.user_id);
+  if (!requesterInLeague) return json({ error: "You are not in this league." }, 403);
+  const targetInLeague = await isLeagueMember(db, code, userId);
+  if (!targetInLeague) return json({ error: "Target user is not in this league." }, 404);
+
+  const userRow = await db.prepare("SELECT id, name FROM ezra_users WHERE id = ?1 LIMIT 1").bind(userId).first();
+  if (!userRow) return json({ error: "User not found." }, 404);
+
+  const stateRow = await db
+    .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+    .bind(userId)
+    .first();
+  const state = safeParseJsonText(stateRow?.state_json || "{}");
+  const memberId = `acct:${userId}`;
+  const allPredictions = state?.familyLeague?.predictions && typeof state.familyLeague.predictions === "object" ? state.familyLeague.predictions : {};
+  const predictions = Object.values(allPredictions)
+    .filter((record) => record && typeof record === "object" && record.entries && typeof record.entries === "object" && record.entries[memberId])
+    .map((record) => {
+      const pick = record.entries[memberId] || {};
+      return {
+        eventId: record.eventId || "",
+        homeTeam: record.homeTeam || "",
+        awayTeam: record.awayTeam || "",
+        kickoff: record.kickoff || "",
+        settled: Boolean(record.settled),
+        finalHome: Number.isFinite(Number(record.finalHome)) ? Number(record.finalHome) : null,
+        finalAway: Number.isFinite(Number(record.finalAway)) ? Number(record.finalAway) : null,
+        pick: {
+          home: Number.isFinite(Number(pick.home)) ? Number(pick.home) : null,
+          away: Number.isFinite(Number(pick.away)) ? Number(pick.away) : null,
+          awarded: Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0,
+          scored: Boolean(pick.scored),
+          submittedAt: pick.submittedAt || "",
+        },
+      };
+    })
+    .sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
+
+  const dreamTeam = state?.dreamTeam && typeof state.dreamTeam === "object" ? state.dreamTeam : null;
+  return json(
+    {
+      user: { id: userRow.id, name: userRow.name || "User" },
+      leagueCode: code,
+      updatedAt: stateRow?.updated_at || null,
+      predictions,
+      dreamTeam,
+    },
+    200
+  );
 }
 
 async function handleEzraAccountRoute(context, accountPath) {
@@ -484,6 +609,12 @@ async function handleEzraAccountRoute(context, accountPath) {
     }
     if (route === "league/join" && request.method === "POST") {
       return handleLeagueJoin(db, request);
+    }
+    if (route === "league/name" && (request.method === "PUT" || request.method === "PATCH")) {
+      return handleLeagueRename(db, request);
+    }
+    if (route === "league/member" && request.method === "GET") {
+      return handleLeagueMemberView(db, request);
     }
     if (route === "leagues" && request.method === "GET") {
       return handleLeagueList(db, request);

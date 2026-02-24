@@ -182,6 +182,16 @@
           <div id="dream-team-list" class="dream-team-list"></div>
         </section>
 
+        <section class="panel league-member-overlay hidden" id="league-member-panel" aria-modal="true" role="dialog" aria-label="League member details">
+          <div class="panel-head dream-team-head">
+            <h3 id="league-member-title">Member Profile</h3>
+            <div class="dream-team-actions">
+              <button id="league-member-close-btn" class="btn" type="button" aria-label="Close member profile">Close</button>
+            </div>
+          </div>
+          <div id="league-member-body" class="league-member-body"></div>
+        </section>
+
         <section class="panel controls-panel">
           <div class="filter-toolbar">
             <div class="filter-group">
@@ -235,6 +245,10 @@
                   <button id="family-prev-league-btn" class="btn" type="button" aria-label="Previous league">◀</button>
                   <button id="family-next-league-btn" class="btn" type="button" aria-label="Next league">▶</button>
                   <button id="family-create-code-btn" class="btn" type="button">Create League</button>
+                </div>
+                <div class="account-actions">
+                  <input id="family-league-name-input" class="account-input" type="text" maxlength="48" placeholder="League name (owner only)" />
+                  <button id="family-league-name-save-btn" class="btn" type="button">Save Name</button>
                 </div>
                 <div class="account-actions">
                   <input id="family-join-code-input" class="account-input" type="text" maxlength="12" placeholder="Enter league code" />

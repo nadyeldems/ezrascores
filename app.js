@@ -155,6 +155,8 @@ const state = {
   missions: parseStoredJson("ezra_missions", defaultMissionState()),
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
+  missionFx: { questId: "", until: 0, timer: null },
+  leagueMemberView: { open: false, loading: false, error: "", data: null },
   leagueDirectory: { items: [], loading: false },
   lastLeagueDirectoryAt: 0,
   mobileTab: "fixtures",
@@ -260,6 +262,8 @@ const el = {
   familyPrevLeagueBtn: document.getElementById("family-prev-league-btn"),
   familyNextLeagueBtn: document.getElementById("family-next-league-btn"),
   familyCreateCodeBtn: document.getElementById("family-create-code-btn"),
+  familyLeagueNameInput: document.getElementById("family-league-name-input"),
+  familyLeagueNameSaveBtn: document.getElementById("family-league-name-save-btn"),
   familyJoinCodeInput: document.getElementById("family-join-code-input"),
   familyJoinCodeBtn: document.getElementById("family-join-code-btn"),
   familyCodeLabel: document.getElementById("family-code-label"),
@@ -278,6 +282,10 @@ const el = {
   dreamTeamList: document.getElementById("dream-team-list"),
   dreamTeamDownloadBtn: document.getElementById("dream-team-download-btn"),
   dreamTeamCloseBtn: document.getElementById("dream-team-close-btn"),
+  leagueMemberPanel: document.getElementById("league-member-panel"),
+  leagueMemberTitle: document.getElementById("league-member-title"),
+  leagueMemberBody: document.getElementById("league-member-body"),
+  leagueMemberCloseBtn: document.getElementById("league-member-close-btn"),
   squadPanel: document.getElementById("squad-panel"),
   squadTitle: document.getElementById("squad-title"),
   squadToggleBtn: document.getElementById("squad-toggle-btn"),
@@ -402,6 +410,8 @@ function updateFamilyControlsState() {
   const prevBtn = el.familyPrevLeagueBtn;
   const nextBtn = el.familyNextLeagueBtn;
   const codeBtn = el.familyCreateCodeBtn;
+  const nameInput = el.familyLeagueNameInput;
+  const nameSaveBtn = el.familyLeagueNameSaveBtn;
   const joinInput = el.familyJoinCodeInput;
   const joinBtn = el.familyJoinCodeBtn;
   if (joinInput) {
@@ -411,6 +421,11 @@ function updateFamilyControlsState() {
   if (prevBtn) prevBtn.disabled = !signedIn;
   if (nextBtn) nextBtn.disabled = !signedIn;
   if (codeBtn) codeBtn.disabled = !signedIn;
+  if (nameInput) {
+    nameInput.disabled = !signedIn;
+    nameInput.placeholder = signedIn ? "League name (owner only)" : "Sign in to name your league";
+  }
+  if (nameSaveBtn) nameSaveBtn.disabled = !signedIn;
   if (joinBtn) joinBtn.disabled = !signedIn;
 }
 
@@ -697,7 +712,26 @@ function onSquadPlayerExplored(player) {
   const matchByKey = daily.randomTarget.key && player.key && daily.randomTarget.key === player.key;
   if (!matchById && !matchByKey) return;
   daily.randomExplored = true;
+  if (!isQuestDone("quest-random-player")) {
+    triggerMissionGoalFx("quest-random-player");
+  }
   completeQuest("quest-random-player");
+}
+
+function triggerMissionGoalFx(questId, durationMs = 4200) {
+  state.missionFx.questId = String(questId || "");
+  state.missionFx.until = Date.now() + durationMs;
+  if (state.missionFx.timer) {
+    clearTimeout(state.missionFx.timer);
+  }
+  state.missionFx.timer = setTimeout(() => {
+    state.missionFx.timer = null;
+    if (Date.now() >= Number(state.missionFx.until || 0)) {
+      state.missionFx.questId = "";
+      state.missionFx.until = 0;
+    }
+    renderMissionsPanel();
+  }, durationMs + 120);
 }
 
 function dailyQuestList() {
@@ -755,6 +789,7 @@ function renderMissionsPanel() {
   quests.forEach((quest) => {
     const row = document.createElement("div");
     row.className = "mission-row";
+    row.dataset.questId = quest.id;
     const statusText = quest.statusLabel || (quest.done ? "Complete" : "");
     row.innerHTML = `
       <div class="mission-text">
@@ -763,6 +798,19 @@ function renderMissionsPanel() {
       </div>
       ${quest.buttonLabel && !quest.done ? `<button class="btn" type="button">${escapeHtml(quest.buttonLabel)}</button>` : statusText ? `<span class="family-points">${escapeHtml(statusText)}</span>` : ""}
     `;
+    const fxActive = state.missionFx.questId === quest.id && Number(state.missionFx.until || 0) > Date.now();
+    if (fxActive) {
+      row.classList.add("mission-goal-active");
+      const fx = document.createElement("div");
+      fx.className = "mission-goal-flash active";
+      fx.setAttribute("aria-hidden", "true");
+      fx.innerHTML = `
+        <span class="goal-stage goal-word">GOAL!</span>
+        <span class="goal-stage goal-team-name">QUEST COMPLETE</span>
+        <span class="goal-stage goal-scoreline">+5 PTS</span>
+      `;
+      row.appendChild(fx);
+    }
     const btn = row.querySelector("button");
     if (btn) {
       btn.disabled = quest.done;
@@ -856,7 +904,9 @@ async function createFamilyLeagueCode() {
     setAccountStatus("Sign in to create a league.", true);
     return;
   }
-  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/create`, {}, state.account.token);
+  const requestedName = String(el.familyLeagueNameInput?.value || "").replace(/\s+/g, " ").trim().slice(0, 48);
+  const payload = requestedName ? { name: requestedName } : {};
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/create`, payload, state.account.token);
   const code = String(data?.code || "").trim().toUpperCase();
   if (!code) return;
   state.familyLeague.leagueCode = code;
@@ -867,7 +917,7 @@ async function createFamilyLeagueCode() {
   await refreshLeagueDirectory();
   persistLocalMetaState();
   scheduleCloudStateSync();
-  setAccountStatus(`League created: ${code}`);
+  setAccountStatus(`League created: ${code}${data?.name ? ` (${data.name})` : ""}`);
 }
 
 async function refreshLeagueDirectory() {
@@ -910,12 +960,208 @@ function cycleLeague(delta) {
   renderFamilyLeaguePanel();
 }
 
+function currentSelectedLeagueRecord() {
+  const code = String(state.familyLeague.leagueCode || "").toUpperCase();
+  if (!code) return null;
+  return (state.leagueDirectory.items || []).find((league) => String(league.code || "").toUpperCase() === code) || null;
+}
+
+function closeLeagueMemberView() {
+  state.leagueMemberView.open = false;
+  state.leagueMemberView.loading = false;
+  state.leagueMemberView.error = "";
+  state.leagueMemberView.data = null;
+  if (el.leagueMemberPanel) {
+    el.leagueMemberPanel.classList.add("hidden");
+  }
+  document.body.classList.remove("league-member-overlay-open");
+}
+
+function leagueMemberDreamTeamSummary(dreamTeam) {
+  if (!dreamTeam || typeof dreamTeam !== "object") {
+    return {
+      formation: "--",
+      xi: [],
+      bench: [],
+      manager: null,
+      coaches: [],
+    };
+  }
+  const pool = Array.isArray(dreamTeam.pool) ? dreamTeam.pool : [];
+  const poolMap = new Map(pool.map((player) => [player?.key, player]).filter(([key]) => Boolean(key)));
+  const xiKeys = Array.isArray(dreamTeam.startingXI) ? dreamTeam.startingXI.filter(Boolean) : [];
+  const benchKeys = Array.isArray(dreamTeam.bench) ? dreamTeam.bench.filter(Boolean) : [];
+  const xi = xiKeys.map((key) => poolMap.get(key)).filter(Boolean);
+  const bench = benchKeys.map((key) => poolMap.get(key)).filter(Boolean);
+  const manager = dreamTeam.staff?.manager || null;
+  const coaches = Array.isArray(dreamTeam.staff?.coaches) ? dreamTeam.staff.coaches : [];
+  return {
+    formation: dreamTeam.formation || "--",
+    xi,
+    bench,
+    manager,
+    coaches,
+  };
+}
+
+function renderLeagueMemberView() {
+  if (!el.leagueMemberPanel || !el.leagueMemberBody || !el.leagueMemberTitle) return;
+  const view = state.leagueMemberView;
+  if (!view.open) {
+    el.leagueMemberPanel.classList.add("hidden");
+    document.body.classList.remove("league-member-overlay-open");
+    return;
+  }
+  el.leagueMemberPanel.classList.remove("hidden");
+  document.body.classList.add("league-member-overlay-open");
+
+  if (view.loading) {
+    el.leagueMemberTitle.textContent = "Loading profile...";
+    el.leagueMemberBody.innerHTML = `<div class="empty">Loading member details...</div>`;
+    return;
+  }
+  if (view.error) {
+    el.leagueMemberTitle.textContent = "Member profile";
+    el.leagueMemberBody.innerHTML = `<div class="error">${escapeHtml(view.error)}</div>`;
+    return;
+  }
+  const data = view.data;
+  if (!data) {
+    el.leagueMemberTitle.textContent = "Member profile";
+    el.leagueMemberBody.innerHTML = `<div class="empty">No member data available.</div>`;
+    return;
+  }
+
+  const memberName = data?.user?.name || "User";
+  el.leagueMemberTitle.textContent = `${memberName} • Profile`;
+  const predictions = Array.isArray(data.predictions) ? data.predictions : [];
+  const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
+
+  const predictionsHtml = predictions.length
+    ? predictions
+        .slice(0, 20)
+        .map((item) => {
+          const pick = item?.pick || {};
+          const pickText =
+            Number.isFinite(pick.home) && Number.isFinite(pick.away)
+              ? `${pick.home}-${pick.away}`
+              : "--";
+          const scoreText =
+            Number.isFinite(item.finalHome) && Number.isFinite(item.finalAway)
+              ? `${item.finalHome}-${item.finalAway}`
+              : "Not finished";
+          const points = Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0;
+          const kickoffText = item.kickoff ? new Date(item.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "TBA";
+          return `
+            <div class="member-prediction-row">
+              <div class="member-prediction-main">
+                <div class="mission-title">${escapeHtml(item.homeTeam || "Home")} vs ${escapeHtml(item.awayTeam || "Away")}</div>
+                <div class="mission-sub">Kickoff: ${escapeHtml(kickoffText)} • Pick: ${escapeHtml(pickText)} • Final: ${escapeHtml(scoreText)}</div>
+              </div>
+              <span class="family-points">+${points}</span>
+            </div>
+          `;
+        })
+        .join("")
+    : `<div class="empty">No saved score predictions yet.</div>`;
+
+  const listNames = (players) =>
+    players.length
+      ? players
+          .map((player) => `<li>${escapeHtml(player.name || "Unknown")} <span class="muted">(${escapeHtml(player.teamName || "Club")})</span></li>`)
+          .join("")
+      : `<li class="muted">None selected.</li>`;
+
+  el.leagueMemberBody.innerHTML = `
+    <section class="member-view-group">
+      <h4>Score Predictions</h4>
+      <div class="list">${predictionsHtml}</div>
+    </section>
+    <section class="member-view-group">
+      <h4>Dream Team (${escapeHtml(dream.formation)})</h4>
+      <div class="member-dream-grid">
+        <article>
+          <h5>Starting XI (${dream.xi.length}/11)</h5>
+          <ul>${listNames(dream.xi)}</ul>
+        </article>
+        <article>
+          <h5>Bench (${dream.bench.length}/7)</h5>
+          <ul>${listNames(dream.bench)}</ul>
+        </article>
+      </div>
+      <div class="member-staff">
+        <h5>Staff</h5>
+        <p class="mission-sub">${dream.manager ? `Manager: ${escapeHtml(dream.manager.name || "Unknown")}` : "No manager selected."}</p>
+        <p class="mission-sub">${dream.coaches.length ? `Coaches: ${dream.coaches.map((coach) => escapeHtml(coach.name || "Unknown")).join(", ")}` : "No coaches selected."}</p>
+      </div>
+    </section>
+  `;
+}
+
+async function openLeagueMemberView(userId, displayName) {
+  const currentLeague = currentSelectedLeagueRecord();
+  const code = String(currentLeague?.code || state.familyLeague.leagueCode || "").toUpperCase();
+  if (!accountSignedIn() || !code || !userId) return;
+  if (state.dreamTeamOpen) {
+    state.dreamTeamOpen = false;
+    state.dreamSwapActiveKey = "";
+    renderDreamTeamNavState();
+    requestDreamTeamRender();
+  }
+  state.leagueMemberView.open = true;
+  state.leagueMemberView.loading = true;
+  state.leagueMemberView.error = "";
+  state.leagueMemberView.data = { user: { name: displayName || "User" }, predictions: [], dreamTeam: null };
+  renderLeagueMemberView();
+  try {
+    const query = `?code=${encodeURIComponent(code)}&userId=${encodeURIComponent(userId)}`;
+    const payload = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/member${query}`, null, state.account.token);
+    state.leagueMemberView.loading = false;
+    state.leagueMemberView.data = payload || null;
+    renderLeagueMemberView();
+  } catch (err) {
+    state.leagueMemberView.loading = false;
+    state.leagueMemberView.error = err.message || "Unable to load member profile.";
+    renderLeagueMemberView();
+  }
+}
+
+async function updateFamilyLeagueName(nextName) {
+  if (!accountSignedIn()) {
+    setAccountStatus("Sign in to update league name.", true);
+    return;
+  }
+  const currentLeague = currentSelectedLeagueRecord();
+  if (!currentLeague) return;
+  if (!currentLeague.isOwner) {
+    setAccountStatus("Only league owner can set the league name.", true);
+    return;
+  }
+  const clean = String(nextName || "").replace(/\s+/g, " ").trim().slice(0, 48);
+  if (!clean) {
+    setAccountStatus("League name cannot be empty.", true);
+    return;
+  }
+  await apiRequest(
+    "PUT",
+    `${API_PROXY_BASE}/v1/ezra/account/league/name`,
+    { code: currentLeague.code, name: clean },
+    state.account.token
+  );
+  await refreshLeagueDirectory();
+  renderFamilyLeaguePanel();
+  setAccountStatus(`League renamed to ${clean}.`);
+}
+
 function renderFamilyLeaguePanel() {
   if (!el.familyMembers || !el.familyCodeLabel) return;
   ensureFamilyLeagueState();
   updateFamilyControlsState();
   if (!accountSignedIn()) {
     el.familyCodeLabel.textContent = "League code: sign in required";
+    if (el.familyLeagueNameInput) {
+      el.familyLeagueNameInput.value = "";
+    }
     el.familyMembers.innerHTML = `<div class="empty">Sign in to create and manage your Family Mini-League.</div>`;
     return;
   }
@@ -923,11 +1169,22 @@ function renderFamilyLeaguePanel() {
   const code = String(state.familyLeague.leagueCode || "").toUpperCase();
   const joinedCount = Array.isArray(state.familyLeague.joinedLeagueCodes) ? state.familyLeague.joinedLeagueCodes.length : 0;
   const currentPos = joinedCount ? state.familyLeague.currentLeagueIndex + 1 : 0;
-  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${code || "--"} • Your points: ${Number(state.familyLeague.personalPoints || 0)}`;
+  const currentLeague = currentSelectedLeagueRecord();
+  const leagueName = String(currentLeague?.name || "").trim() || `League ${code || "--"}`;
+  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"}) • Your points: ${Number(state.familyLeague.personalPoints || 0)}`;
+  const isOwner = Boolean(currentLeague?.isOwner);
+  if (el.familyLeagueNameInput) {
+    el.familyLeagueNameInput.value = leagueName;
+    el.familyLeagueNameInput.disabled = !accountSignedIn() || !code || !isOwner;
+    el.familyLeagueNameInput.title = isOwner ? "Set league name" : "Only league owner can rename this league";
+  }
+  if (el.familyLeagueNameSaveBtn) {
+    el.familyLeagueNameSaveBtn.disabled = !accountSignedIn() || !code || !isOwner;
+    el.familyLeagueNameSaveBtn.title = isOwner ? "Save league name" : "Only league owner can rename this league";
+  }
   if (el.familyPrevLeagueBtn) el.familyPrevLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   if (el.familyNextLeagueBtn) el.familyNextLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   el.familyMembers.innerHTML = "";
-  const currentLeague = (state.leagueDirectory.items || []).find((league) => String(league.code || "").toUpperCase() === code);
   const standings = Array.isArray(currentLeague?.standings) ? currentLeague.standings : [];
   if (state.leagueDirectory.loading) {
     el.familyMembers.innerHTML = `<div class="empty">Loading league standings...</div>`;
@@ -945,15 +1202,25 @@ function renderFamilyLeaguePanel() {
     const isSignedInMember = String(member.user_id || "") === String(state.account.user?.id || "");
     const row = document.createElement("div");
     row.className = `family-row ${isSignedInMember ? "active" : ""}`;
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title">#${index + 1} ${escapeHtml(member.name || "User")}</div>
-        <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""}</div>
+        <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""} • Tap to view profile</div>
       </div>
       <div class="account-actions">
         <span class="family-points">${Number(member.points || 0)}</span>
       </div>
     `;
+    row.addEventListener("click", () => {
+      openLeagueMemberView(String(member.user_id || ""), member.name || "User");
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      openLeagueMemberView(String(member.user_id || ""), member.name || "User");
+    });
     el.familyMembers.appendChild(row);
   });
 }
@@ -3269,6 +3536,7 @@ function buildCloudStatePayload() {
 }
 
 function resetAccountScopedLocalState() {
+  closeLeagueMemberView();
   state.missions = defaultMissionState();
   state.familyLeague = defaultFamilyLeagueState();
   if (state.account?.leagueRefreshTimer) {
@@ -3328,6 +3596,7 @@ function applyCloudState(cloudState, options = {}) {
   ensureFamilyLeagueState();
   persistLocalMetaState();
   renderFunZone();
+  refreshVisibleFixturePredictionBadges();
 }
 
 async function loadCloudState() {
@@ -3379,6 +3648,7 @@ async function initAccountSession() {
     persistLocalMetaState();
     renderAccountUI();
     renderFamilyLeaguePanel();
+    refreshVisibleFixturePredictionBadges();
     setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
   } catch (err) {
     state.account.token = "";
@@ -3386,6 +3656,7 @@ async function initAccountSession() {
     localStorage.removeItem("ezra_account_token");
     renderAccountUI();
     renderFamilyLeaguePanel();
+    refreshVisibleFixturePredictionBadges();
     setAccountStatus(`Logged out. ${err.message}`, true);
   }
 }
@@ -3404,6 +3675,7 @@ async function registerAccount() {
   await syncCloudStateNow();
   renderAccountUI();
   renderFamilyLeaguePanel();
+  refreshVisibleFixturePredictionBadges();
   setAccountStatus(`Account created. Cloud save enabled for ${state.account.user?.name || "user"}.`);
 }
 
@@ -3422,6 +3694,7 @@ async function loginAccount() {
   scheduleCloudStateSync();
   renderAccountUI();
   renderFamilyLeaguePanel();
+  refreshVisibleFixturePredictionBadges();
   setAccountStatus(`Signed in as ${state.account.user?.name || "user"}.`);
 }
 
@@ -3444,6 +3717,7 @@ async function logoutAccount() {
   state.leagueDirectory.items = [];
   renderAccountUI();
   renderFamilyLeaguePanel();
+  refreshVisibleFixturePredictionBadges();
   setAccountStatus("Logged out. Existing features still work locally.");
 }
 
@@ -5409,6 +5683,28 @@ function attachEvents() {
     });
   }
 
+  if (el.familyLeagueNameSaveBtn) {
+    el.familyLeagueNameSaveBtn.addEventListener("click", async () => {
+      try {
+        await updateFamilyLeagueName(el.familyLeagueNameInput?.value || "");
+      } catch (err) {
+        setAccountStatus(`Save league name failed: ${err.message}`, true);
+      }
+    });
+  }
+
+  if (el.familyLeagueNameInput) {
+    el.familyLeagueNameInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      try {
+        await updateFamilyLeagueName(el.familyLeagueNameInput?.value || "");
+      } catch (err) {
+        setAccountStatus(`Save league name failed: ${err.message}`, true);
+      }
+    });
+  }
+
   if (el.familyPrevLeagueBtn) {
     el.familyPrevLeagueBtn.addEventListener("click", () => {
       cycleLeague(-1);
@@ -5520,6 +5816,19 @@ function attachEvents() {
     });
   }
 
+  if (el.leagueMemberCloseBtn) {
+    el.leagueMemberCloseBtn.addEventListener("click", () => {
+      closeLeagueMemberView();
+    });
+  }
+
+  if (el.leagueMemberPanel) {
+    el.leagueMemberPanel.addEventListener("click", (event) => {
+      if (event.target !== el.leagueMemberPanel) return;
+      closeLeagueMemberView();
+    });
+  }
+
   if (el.squadToggleBtn) {
     el.squadToggleBtn.addEventListener("click", () => {
       state.squadOpen = !state.squadOpen;
@@ -5568,11 +5877,17 @@ function attachEvents() {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !state.dreamTeamOpen) return;
-    state.dreamTeamOpen = false;
-    state.dreamSwapActiveKey = "";
-    renderDreamTeamNavState();
-    requestDreamTeamRender();
+    if (event.key !== "Escape") return;
+    if (state.dreamTeamOpen) {
+      state.dreamTeamOpen = false;
+      state.dreamSwapActiveKey = "";
+      renderDreamTeamNavState();
+      requestDreamTeamRender();
+      return;
+    }
+    if (state.leagueMemberView.open) {
+      closeLeagueMemberView();
+    }
   });
 
   el.leagueButtons.forEach((btn) => {
