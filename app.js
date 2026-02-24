@@ -124,6 +124,7 @@ const state = {
   selectedSquadPlayerKey: "",
   dreamTeam: loadDreamTeamState(),
   dreamSwapActiveKey: "",
+  dreamManualLayout: false,
   maxDreamTeamPlayers: 18,
   dreamTeamOpen: false,
   squadOpen: false,
@@ -852,18 +853,17 @@ function normalizeDreamSelections() {
   if (state.dreamSwapActiveKey && !poolMap.has(state.dreamSwapActiveKey)) {
     state.dreamSwapActiveKey = "";
   }
+  if (!state.dreamTeam.startingXI.length) {
+    state.dreamManualLayout = false;
+  }
 }
 
 function autoFillStartingXI() {
   normalizeDreamSelections();
-  const current = [...state.dreamTeam.startingXI];
-  const candidates = sortSquadByRole(state.dreamTeam.pool);
-  candidates.forEach((player) => {
-    if (current.length >= 11 || current.includes(player.key)) return;
-    current.push(player.key);
-  });
-  state.dreamTeam.startingXI = current.slice(0, 11);
+  const candidates = sortSquadByRole(state.dreamTeam.pool).map((player) => player.key);
+  state.dreamTeam.startingXI = autoArrangeXIKeys(candidates);
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => !state.dreamTeam.startingXI.includes(key)).slice(0, 7);
+  state.dreamManualLayout = false;
 }
 
 function setDreamFormation(formation) {
@@ -877,14 +877,15 @@ function setDreamFormation(formation) {
 function assignPlayerToXI(playerKeyValue) {
   const player = getDreamPlayerByKey(playerKeyValue);
   if (!player) return false;
-  const role = dreamRoleFromPosition(player.position);
   state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
   if (state.dreamTeam.startingXI.length >= 11) return false;
-  const preferredIndex = suggestedXIInsertIndex(role);
-  if (preferredIndex < 0) return false;
-  const insertIndex = Math.max(0, Math.min(state.dreamTeam.startingXI.length, preferredIndex));
-  state.dreamTeam.startingXI.splice(insertIndex, 0, playerKeyValue);
+  if (state.dreamManualLayout) {
+    state.dreamTeam.startingXI.push(playerKeyValue);
+    return true;
+  }
+  const arranged = autoArrangeXIKeys([...state.dreamTeam.startingXI, playerKeyValue]);
+  state.dreamTeam.startingXI = arranged;
   return true;
 }
 
@@ -921,14 +922,41 @@ function formationSlotRoles(formation = state.dreamTeam.formation) {
   return roles.slice(0, 11);
 }
 
-function suggestedXIInsertIndex(role) {
+function roleFromPlayerKey(key) {
+  const player = getDreamPlayerByKey(key);
+  return dreamRoleFromPosition(player?.position || "");
+}
+
+function autoArrangeXIKeys(keys) {
+  const unique = [];
+  const seen = new Set();
+  (keys || []).forEach((key) => {
+    if (!key || seen.has(key)) return;
+    const player = getDreamPlayerByKey(key);
+    if (!player) return;
+    const role = dreamRoleFromPosition(player.position);
+    if (role === "MGR" || role === "COACH") return;
+    seen.add(key);
+    unique.push(key);
+  });
+
   const slotRoles = formationSlotRoles(state.dreamTeam.formation);
-  const occupied = state.dreamTeam.startingXI.length;
-  if (occupied >= 11) return -1;
-  for (let i = occupied; i < slotRoles.length; i += 1) {
-    if (slotRoles[i] === role) return i;
-  }
-  return occupied;
+  const ordered = [];
+  const used = new Set();
+
+  slotRoles.forEach((slotRole) => {
+    const next = unique.find((key) => !used.has(key) && roleFromPlayerKey(key) === slotRole);
+    if (!next) return;
+    used.add(next);
+    ordered.push(next);
+  });
+
+  unique.forEach((key) => {
+    if (ordered.length >= 11 || used.has(key)) return;
+    ordered.push(key);
+  });
+
+  return ordered.slice(0, 11);
 }
 
 function dreamZoneForKey(key) {
@@ -1006,6 +1034,7 @@ function moveSwapActiveToXI(targetIndex = null) {
   const maxIndex = state.dreamTeam.startingXI.length;
   const insertIndex = Number.isInteger(targetIndex) ? Math.max(0, Math.min(maxIndex, targetIndex)) : maxIndex;
   state.dreamTeam.startingXI.splice(insertIndex, 0, key);
+  state.dreamManualLayout = true;
   return true;
 }
 
@@ -1018,6 +1047,7 @@ function moveSwapActiveToBench(targetIndex = null) {
   if (state.dreamTeam.bench.length >= 7) return false;
   if (activeZone.zone === "xi") {
     state.dreamTeam.startingXI.splice(activeZone.index, 1);
+    state.dreamManualLayout = true;
   }
   const maxIndex = state.dreamTeam.bench.length;
   const insertIndex = Number.isInteger(targetIndex) ? Math.max(0, Math.min(maxIndex, targetIndex)) : maxIndex;
@@ -1033,6 +1063,7 @@ function moveSwapActiveToPool() {
   if (activeZone.zone === "pool") return false;
   if (activeZone.zone === "xi") {
     state.dreamTeam.startingXI.splice(activeZone.index, 1);
+    state.dreamManualLayout = true;
     return true;
   }
   if (activeZone.zone === "bench") {
@@ -1054,11 +1085,16 @@ function handleDreamSwapClick(key) {
     requestDreamTeamRender("player");
     return;
   }
+  const activeZone = dreamZoneForKey(state.dreamSwapActiveKey);
+  const targetZone = dreamZoneForKey(key);
   const swapped = commitDreamSwap(state.dreamSwapActiveKey, key);
   state.dreamSwapActiveKey = "";
   if (!swapped) {
     requestDreamTeamRender("player");
     return;
+  }
+  if (activeZone?.zone === "xi" || targetZone?.zone === "xi") {
+    state.dreamManualLayout = true;
   }
   saveDreamTeam();
   renderDreamTeamNavState();
@@ -1571,6 +1607,7 @@ function renderDreamTeamPanel(reason = "default") {
   });
   controls.querySelector("#dream-clear-lineup-btn")?.addEventListener("click", () => {
     state.dreamSwapActiveKey = "";
+    state.dreamManualLayout = false;
     state.dreamTeam.startingXI = [];
     state.dreamTeam.bench = [];
     saveDreamTeam();
