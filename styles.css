@@ -990,27 +990,58 @@ body.league-member-overlay-open::before {
 
 .member-compare-sticky {
   position: sticky;
-  top: 0;
-  z-index: 2;
+  top: 0.12rem;
+  z-index: 6;
   display: flex;
   justify-content: flex-end;
-  padding: 0.15rem 0 0.25rem;
-  background: linear-gradient(180deg, rgba(10, 5, 3, 0.95), rgba(10, 5, 3, 0.2));
+  padding: 0.2rem 0 0.28rem;
+  background: linear-gradient(180deg, rgba(10, 5, 3, 0.98), rgba(10, 5, 3, 0.22));
 }
 
-.member-compare-toggle {
+.member-compare-toggle-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.38rem;
-  border: 1px solid var(--line-soft);
+  justify-content: center;
+  min-height: 2rem;
+  min-width: 8.8rem;
+  border: 1px solid #8a3939;
   border-radius: 999px;
-  padding: 0.16rem 0.55rem;
-  color: var(--text-soft);
-  font-size: 0.92rem;
+  padding: 0.16rem 0.74rem;
+  color: #ffd4d4;
+  background: linear-gradient(180deg, rgba(149, 38, 38, 0.34), rgba(76, 20, 20, 0.28));
+  font-size: 0.98rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform 140ms ease, filter 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
-.member-compare-toggle input {
-  accent-color: #c98220;
+.member-compare-toggle-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
+.member-compare-toggle-btn:active {
+  transform: translateY(1px);
+}
+
+.member-compare-toggle-btn.on {
+  border-color: #2f8f44;
+  color: #d9ffe0;
+  background: linear-gradient(180deg, rgba(57, 153, 78, 0.35), rgba(26, 95, 46, 0.28));
+}
+
+.member-compare-toggle-btn.off {
+  border-color: #973f3f;
+  color: #ffd4d4;
+  background: linear-gradient(180deg, rgba(149, 38, 38, 0.34), rgba(76, 20, 20, 0.28));
+}
+
+.member-compare-toggle-btn.disabled {
+  border-color: var(--line-soft);
+  color: var(--text-soft);
+  background: rgba(40, 26, 10, 0.5);
+  cursor: not-allowed;
+  opacity: 0.75;
 }
 
 .member-view-group {

@@ -1251,18 +1251,24 @@ function renderLeagueMemberView() {
 
   const memberName = data?.user?.name || "User";
   const isSelf = String(data?.user?.id || "") === String(state.account.user?.id || "");
-  const compareEnabled = Boolean(state.leagueMemberView.compare && !isSelf);
+  const compareAvailable = !isSelf;
+  const compareEnabled = Boolean(state.leagueMemberView.compare && compareAvailable);
   el.leagueMemberTitle.textContent = `${memberName} • Profile`;
   const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
   const myDream = leagueMemberDreamTeamSummary(state.dreamTeam);
   const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled);
 
   el.leagueMemberBody.innerHTML = `
-    <div class="member-compare-sticky ${isSelf ? "hidden" : ""}">
-      <label class="member-compare-toggle" title="Compare this user against your own picks and Dream Team">
-        <input id="member-compare-toggle" type="checkbox" ${compareEnabled ? "checked" : ""} />
-        <span>Compare With Mine</span>
-      </label>
+    <div class="member-compare-sticky">
+      <button
+        id="member-compare-toggle"
+        class="member-compare-toggle-btn ${compareEnabled ? "on" : "off"} ${compareAvailable ? "" : "disabled"}"
+        type="button"
+        ${compareAvailable ? "" : "disabled"}
+        title="${compareAvailable ? "Compare this user against your own picks and Dream Team" : "You are viewing your own profile"}"
+      >
+        ${compareEnabled ? "Compare: ON" : "Compare: OFF"}
+      </button>
     </div>
     <section class="member-view-group">
       <h4>Score Predictions</h4>
@@ -1277,9 +1283,10 @@ function renderLeagueMemberView() {
     </section>
   `;
   const compareToggle = el.leagueMemberBody.querySelector("#member-compare-toggle");
-  if (compareToggle && !isSelf) {
-    compareToggle.addEventListener("change", () => {
-      state.leagueMemberView.compare = Boolean(compareToggle.checked);
+  if (compareToggle) {
+    compareToggle.addEventListener("click", () => {
+      if (!compareAvailable) return;
+      state.leagueMemberView.compare = !state.leagueMemberView.compare;
       renderLeagueMemberView();
     });
   }
