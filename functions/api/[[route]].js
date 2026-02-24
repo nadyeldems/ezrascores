@@ -76,35 +76,41 @@ const ACCOUNT_SESSION_MS = 1000 * 60 * 60 * 24 * 30;
 let accountSchemaReady = false;
 async function ensureAccountSchema(db) {
   if (accountSchemaReady) return;
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS ezra_users (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      name_key TEXT NOT NULL UNIQUE,
-      pin_salt TEXT NOT NULL,
-      pin_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS ezra_sessions (
-      token TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES ezra_users(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_ezra_sessions_user_id ON ezra_sessions(user_id);
-    CREATE INDEX IF NOT EXISTS idx_ezra_sessions_expires_at ON ezra_sessions(expires_at);
-
-    CREATE TABLE IF NOT EXISTS ezra_profile_states (
-      user_id TEXT PRIMARY KEY,
-      state_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES ezra_users(id)
-    );
-  `);
+  const statements = [
+    `
+      CREATE TABLE IF NOT EXISTS ezra_users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL UNIQUE,
+        pin_salt TEXT NOT NULL,
+        pin_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_sessions (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_sessions_user_id ON ezra_sessions(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_sessions_expires_at ON ezra_sessions(expires_at)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_profile_states (
+        user_id TEXT PRIMARY KEY,
+        state_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+  ];
+  for (const sql of statements) {
+    await db.prepare(sql).run();
+  }
   accountSchemaReady = true;
 }
 
@@ -271,10 +277,9 @@ async function handleEzraAccountRoute(context, accountPath) {
     return json({ error: "Account storage not configured. Add D1 binding EZRA_DB." }, 503);
   }
 
-  await ensureAccountSchema(db);
-  const route = String(accountPath || "").toLowerCase();
-
   try {
+    await ensureAccountSchema(db);
+    const route = String(accountPath || "").toLowerCase();
     if (route === "register" && request.method === "POST") {
       return handleAccountRegister(db, request);
     }
