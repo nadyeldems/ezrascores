@@ -877,10 +877,14 @@ function setDreamFormation(formation) {
 function assignPlayerToXI(playerKeyValue) {
   const player = getDreamPlayerByKey(playerKeyValue);
   if (!player) return false;
+  const role = dreamRoleFromPosition(player.position);
   state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
   if (state.dreamTeam.startingXI.length >= 11) return false;
-  state.dreamTeam.startingXI.push(playerKeyValue);
+  const preferredIndex = suggestedXIInsertIndex(role);
+  if (preferredIndex < 0) return false;
+  const insertIndex = Math.max(0, Math.min(state.dreamTeam.startingXI.length, preferredIndex));
+  state.dreamTeam.startingXI.splice(insertIndex, 0, playerKeyValue);
   return true;
 }
 
@@ -904,6 +908,27 @@ function unassignDreamPlayer(playerKeyValue) {
 
 function startingXIPlayersOrdered() {
   return state.dreamTeam.startingXI.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
+}
+
+function formationSlotRoles(formation = state.dreamTeam.formation) {
+  const rows = visualFormationRows(formation);
+  const roles = [];
+  rows.forEach((row) => {
+    for (let i = 0; i < row.count; i += 1) {
+      roles.push(row.role);
+    }
+  });
+  return roles.slice(0, 11);
+}
+
+function suggestedXIInsertIndex(role) {
+  const slotRoles = formationSlotRoles(state.dreamTeam.formation);
+  const occupied = state.dreamTeam.startingXI.length;
+  if (occupied >= 11) return -1;
+  for (let i = occupied; i < slotRoles.length; i += 1) {
+    if (slotRoles[i] === role) return i;
+  }
+  return occupied;
 }
 
 function dreamZoneForKey(key) {
@@ -968,7 +993,7 @@ function commitDreamSwap(activeKey, targetKey) {
   return false;
 }
 
-function moveSwapActiveToXI() {
+function moveSwapActiveToXI(targetIndex = null) {
   const key = state.dreamSwapActiveKey;
   if (!key) return false;
   const activeZone = dreamZoneForKey(key);
@@ -978,8 +1003,43 @@ function moveSwapActiveToXI() {
   if (activeZone.zone === "bench") {
     state.dreamTeam.bench.splice(activeZone.index, 1);
   }
-  state.dreamTeam.startingXI.push(key);
+  const maxIndex = state.dreamTeam.startingXI.length;
+  const insertIndex = Number.isInteger(targetIndex) ? Math.max(0, Math.min(maxIndex, targetIndex)) : maxIndex;
+  state.dreamTeam.startingXI.splice(insertIndex, 0, key);
   return true;
+}
+
+function moveSwapActiveToBench(targetIndex = null) {
+  const key = state.dreamSwapActiveKey;
+  if (!key) return false;
+  const activeZone = dreamZoneForKey(key);
+  if (!activeZone) return false;
+  if (activeZone.zone === "bench") return false;
+  if (state.dreamTeam.bench.length >= 7) return false;
+  if (activeZone.zone === "xi") {
+    state.dreamTeam.startingXI.splice(activeZone.index, 1);
+  }
+  const maxIndex = state.dreamTeam.bench.length;
+  const insertIndex = Number.isInteger(targetIndex) ? Math.max(0, Math.min(maxIndex, targetIndex)) : maxIndex;
+  state.dreamTeam.bench.splice(insertIndex, 0, key);
+  return true;
+}
+
+function moveSwapActiveToPool() {
+  const key = state.dreamSwapActiveKey;
+  if (!key) return false;
+  const activeZone = dreamZoneForKey(key);
+  if (!activeZone) return false;
+  if (activeZone.zone === "pool") return false;
+  if (activeZone.zone === "xi") {
+    state.dreamTeam.startingXI.splice(activeZone.index, 1);
+    return true;
+  }
+  if (activeZone.zone === "bench") {
+    state.dreamTeam.bench.splice(activeZone.index, 1);
+    return true;
+  }
+  return false;
 }
 
 function handleDreamSwapClick(key) {
@@ -1275,6 +1335,7 @@ function renderDreamTeamPanel(reason = "default") {
     lane.style.setProperty("--lane-delay", `${rowIndex * 65}ms`);
     lane.style.gridTemplateColumns = `repeat(${Math.max(1, rowDef.count)}, minmax(0, 1fr))`;
     for (let i = 0; i < rowDef.count; i += 1) {
+      const slotIndex = xiCursor;
       const player = xiPlayers[xiCursor] || null;
       xiCursor += 1;
       const slot = document.createElement("button");
@@ -1308,7 +1369,7 @@ function renderDreamTeamPanel(reason = "default") {
         if (activeSwapKey && state.dreamTeam.startingXI.length < 11) {
           slot.classList.add("swap-target");
           slot.addEventListener("click", () => {
-            if (!moveSwapActiveToXI()) return;
+            if (!moveSwapActiveToXI(slotIndex)) return;
             state.dreamSwapActiveKey = "";
             saveDreamTeam();
             renderDreamTeamNavState();
@@ -1330,20 +1391,16 @@ function renderDreamTeamPanel(reason = "default") {
   const benchTitle = document.createElement("h4");
   benchTitle.textContent = "Substitutes";
   benchSection.appendChild(benchTitle);
-  if (!benchPlayers.length) {
-    const empty = document.createElement("p");
-    empty.className = "muted";
-    empty.textContent = "No substitutes selected.";
-    benchSection.appendChild(empty);
-  } else {
-    benchPlayers.forEach((player) => {
-      const row = document.createElement("div");
-      row.className = "dream-row";
-      if (activeSwapKey === player.key) {
-        row.classList.add("swap-active");
-      } else if (activeSwapKey) {
-        row.classList.add("swap-target");
-      }
+  for (let i = 0; i < 7; i += 1) {
+    const player = benchPlayers[i] || null;
+    const row = document.createElement("div");
+    row.className = "dream-row";
+    if (player && activeSwapKey === player.key) {
+      row.classList.add("swap-active");
+    } else if (activeSwapKey) {
+      row.classList.add("swap-target");
+    }
+    if (player) {
       row.innerHTML = `
         <div class="dream-main">
           <span class="player-no-circle ${player.number ? "" : "missing"}">${player.number || "—"}</span>
@@ -1351,7 +1408,7 @@ function renderDreamTeamPanel(reason = "default") {
           <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
           <div class="dream-text">
             <span class="dream-name">${player.name}</span>
-            <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.teamName}</span>
+            <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.position || "Unknown"} • ${player.teamName}</span>
           </div>
         </div>
         <button class="btn dream-remove" type="button">Remove</button>
@@ -1367,14 +1424,41 @@ function renderDreamTeamPanel(reason = "default") {
         renderSquadPanel();
         requestDreamTeamRender("player");
       });
-      benchSection.appendChild(row);
-    });
+    } else {
+      row.innerHTML = `<div class="dream-main"><div class="dream-text"><span class="muted">Empty bench slot ${i + 1}</span></div></div>`;
+      if (activeSwapKey) {
+        row.addEventListener("click", () => {
+          if (!moveSwapActiveToBench(i)) return;
+          state.dreamSwapActiveKey = "";
+          saveDreamTeam();
+          renderDreamTeamNavState();
+          renderSquadPanel();
+          requestDreamTeamRender("player");
+        });
+      }
+    }
+    benchSection.appendChild(row);
   }
   el.dreamTeamList.appendChild(benchSection);
 
   const poolSection = document.createElement("section");
   poolSection.className = "dream-group";
   poolSection.innerHTML = "<h4>Player Pool (Tap to Activate / Swap)</h4>";
+  if (activeSwapKey) {
+    const drop = document.createElement("button");
+    drop.type = "button";
+    drop.className = "btn";
+    drop.textContent = "Move selected player to Squad Pool";
+    drop.addEventListener("click", () => {
+      if (!moveSwapActiveToPool()) return;
+      state.dreamSwapActiveKey = "";
+      saveDreamTeam();
+      renderDreamTeamNavState();
+      renderSquadPanel();
+      requestDreamTeamRender("player");
+    });
+    poolSection.appendChild(drop);
+  }
   if (!state.dreamTeam.pool.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
@@ -1858,7 +1942,7 @@ async function downloadDreamTeamImage() {
     ctx.font = "24px VT323";
     const sub = isStaff
       ? escapeForCanvas(player?.teamName || "")
-      : `${escapeForCanvas(nationalityWithFlag(player?.nationality || ""))} | ${escapeForCanvas(player?.teamName || "")}`;
+      : `${escapeForCanvas(nationalityWithFlag(player?.nationality || ""))} | ${escapeForCanvas(player?.position || "Unknown")} | ${escapeForCanvas(player?.teamName || "")}`;
     const subStart = y + nameLines * 26 + 4;
     const subLines = drawWrappedText(ctx, sub, listX + 72, subStart, width - listX - 88, 20, 2);
     y = subStart + subLines * 20 + 22;

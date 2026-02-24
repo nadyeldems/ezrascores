@@ -1,0 +1,11 @@
+name = "ezrascores-table-cron"
+main = "worker.js"
+compatibility_date = "2026-02-24"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+PAGES_BASE_URL = "https://ezrascores.pages.dev"
+TABLE_LEAGUES = "4328,4329"
+TABLE_WARM_TIMEOUT_MS = "15000"
