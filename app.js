@@ -942,27 +942,37 @@ async function createFamilyLeagueCode() {
 async function refreshLeagueDirectory() {
   ensureFamilyLeagueState();
   state.leagueDirectory.loading = true;
+  const prevItems = Array.isArray(state.leagueDirectory.items) ? [...state.leagueDirectory.items] : [];
+  const prevCodes = Array.isArray(state.familyLeague.joinedLeagueCodes) ? [...state.familyLeague.joinedLeagueCodes] : [];
+  const prevCode = String(state.familyLeague.leagueCode || "").toUpperCase();
+  const prevIdx = Number.isInteger(state.familyLeague.currentLeagueIndex) ? state.familyLeague.currentLeagueIndex : 0;
   try {
+    let nextItems = prevItems;
+    let nextCodes = prevCodes;
+    let nextCode = prevCode;
+    let nextIdx = prevIdx;
+
     if (accountSignedIn()) {
       const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
       const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
-      state.leagueDirectory.items = leagues;
       const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+      nextItems = leagues;
       if (codes.length) {
-        state.familyLeague.joinedLeagueCodes = codes;
-        const current = String(state.familyLeague.leagueCode || "").toUpperCase();
+        nextCodes = codes;
+        const current = nextCode;
         if (!current || !codes.includes(current)) {
-          state.familyLeague.leagueCode = codes[0];
+          nextCode = codes[0];
         }
-        state.familyLeague.currentLeagueIndex = Math.max(0, codes.indexOf(state.familyLeague.leagueCode));
+        nextIdx = Math.max(0, codes.indexOf(nextCode));
       } else {
-        state.familyLeague.joinedLeagueCodes = [];
-        state.familyLeague.currentLeagueIndex = 0;
+        nextCodes = [];
+        nextCode = "";
+        nextIdx = 0;
       }
     } else {
       const codes = Array.from(
         new Set(
-          [state.familyLeague.leagueCode, ...(state.familyLeague.joinedLeagueCodes || [])]
+          [nextCode, ...nextCodes]
             .map((code) => String(code || "").trim().toUpperCase())
             .filter(Boolean)
         )
@@ -983,18 +993,29 @@ async function refreshLeagueDirectory() {
           standings: Array.isArray(data.standings) ? data.standings : [],
         });
       }
-      state.leagueDirectory.items = leagues;
+      nextItems = leagues;
       if (leagues.length) {
-        const nextCodes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
-        state.familyLeague.joinedLeagueCodes = nextCodes;
-        const current = String(state.familyLeague.leagueCode || "").toUpperCase();
-        if (!current || !nextCodes.includes(current)) {
-          state.familyLeague.leagueCode = nextCodes[0];
+        const discoveredCodes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+        nextCodes = discoveredCodes;
+        const current = nextCode;
+        if (!current || !discoveredCodes.includes(current)) {
+          nextCode = discoveredCodes[0];
         }
-        state.familyLeague.currentLeagueIndex = Math.max(0, nextCodes.indexOf(state.familyLeague.leagueCode));
+        nextIdx = Math.max(0, discoveredCodes.indexOf(nextCode));
       }
     }
+
+    state.leagueDirectory.items = nextItems;
+    state.familyLeague.joinedLeagueCodes = nextCodes;
+    state.familyLeague.leagueCode = nextCode;
+    state.familyLeague.currentLeagueIndex = nextIdx;
     state.lastLeagueDirectoryAt = Date.now();
+  } catch (err) {
+    state.leagueDirectory.items = prevItems;
+    state.familyLeague.joinedLeagueCodes = prevCodes;
+    state.familyLeague.leagueCode = prevCode;
+    state.familyLeague.currentLeagueIndex = prevIdx;
+    throw err;
   } finally {
     state.leagueDirectory.loading = false;
   }
@@ -5776,6 +5797,10 @@ async function loadCoreData(options = {}) {
     today: toISODate(now),
     next: toISODate(next),
   };
+  const prevTablesEpl = Array.isArray(state.tables.EPL) ? state.tables.EPL : [];
+  const prevTablesChamp = Array.isArray(state.tables.CHAMP) ? state.tables.CHAMP : [];
+  const prevTeamsEpl = Array.isArray(state.teamsByLeague.EPL) ? state.teamsByLeague.EPL : [];
+  const prevTeamsChamp = Array.isArray(state.teamsByLeague.CHAMP) ? state.teamsByLeague.CHAMP : [];
 
   const [
     todayEpl,
@@ -5817,12 +5842,12 @@ async function loadCoreData(options = {}) {
   state.fixtures.previous.CHAMP = prevChamp.sort(fixtureSort);
   state.fixtures.next.EPL = nextEpl.sort(fixtureSort);
   state.fixtures.next.CHAMP = nextChamp.sort(fixtureSort);
-  state.tables.EPL = tableEpl;
-  state.tables.CHAMP = tableChamp;
-  state.teamsByLeague.EPL = teamsEpl;
-  state.teamsByLeague.CHAMP = teamsChamp;
+  state.tables.EPL = includeTables ? (tableEpl.length ? tableEpl : prevTablesEpl) : prevTablesEpl;
+  state.tables.CHAMP = includeTables ? (tableChamp.length ? tableChamp : prevTablesChamp) : prevTablesChamp;
+  state.teamsByLeague.EPL = includeStatic ? (teamsEpl.length ? teamsEpl : prevTeamsEpl) : prevTeamsEpl;
+  state.teamsByLeague.CHAMP = includeStatic ? (teamsChamp.length ? teamsChamp : prevTeamsChamp) : prevTeamsChamp;
   state.teamBadgeMap = {};
-  [...teamsEpl, ...teamsChamp].forEach((team) => {
+  [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].forEach((team) => {
     if (team?.strTeam && team?.strBadge) {
       state.teamBadgeMap[team.strTeam] = team.strBadge;
     }

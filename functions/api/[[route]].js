@@ -1065,7 +1065,7 @@ async function refreshTablesServerSide(cache, origin, key) {
       : TABLE_REFRESH_IDLE_MS;
   const now = Date.now();
 
-  const results = await Promise.all(
+  const settled = await Promise.allSettled(
     TABLE_LEAGUE_IDS.map(async (leagueId) => {
       const payload = await fetchSportsDb("v1", key, `lookuptable.php?l=${leagueId}`);
       const response = new Response(JSON.stringify(payload), {
@@ -1085,7 +1085,18 @@ async function refreshTablesServerSide(cache, origin, key) {
     })
   );
 
-  const tables = new Map(results);
+  const tables = new Map();
+  settled.forEach((item) => {
+    if (item.status !== "fulfilled") return;
+    const value = item.value;
+    if (!Array.isArray(value) || value.length < 2) return;
+    tables.set(value[0], value[1]);
+  });
+
+  if (!tables.size) {
+    throw new Error("All league table refreshes failed");
+  }
+
   const meta = {
     updatedAt: now,
     nextRefreshAt: now + refreshEveryMs,
@@ -1134,7 +1145,24 @@ async function handleEzraTablesRoute(context, key) {
     const refreshed = await refreshTablesServerSide(cache, origin, key);
     const nextResponse = refreshed.tables.get(leagueId);
     if (!nextResponse) {
-      return Response.json({ error: "Unable to resolve table response" }, { status: 500 });
+      const stale = await cache.match(dataKey);
+      if (stale) {
+        const headers = new Headers(stale.headers);
+        headers.set("X-EZRA-Cache", "STALE");
+        headers.set("X-EZRA-Tables-Source", "SERVER");
+        return new Response(stale.body, { status: stale.status, headers });
+      }
+      const payload = await fetchSportsDb("v1", key, `lookuptable.php?l=${leagueId}`);
+      const direct = new Response(JSON.stringify(payload), {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "public, max-age=30, s-maxage=30",
+          "X-EZRA-Cache": "MISS",
+          "X-EZRA-Tables-Source": "DIRECT",
+        },
+      });
+      await cache.put(dataKey, direct.clone());
+      return direct;
     }
     return nextResponse;
   } catch (err) {
