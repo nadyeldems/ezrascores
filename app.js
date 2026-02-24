@@ -157,7 +157,7 @@ const state = {
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
-  leagueMemberView: { open: false, loading: false, error: "", data: null },
+  leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false },
   leagueDirectory: { items: [], loading: false },
   lastLeagueDirectoryAt: 0,
   mobileTab: "fixtures",
@@ -989,6 +989,7 @@ function closeLeagueMemberView() {
   state.leagueMemberView.loading = false;
   state.leagueMemberView.error = "";
   state.leagueMemberView.data = null;
+  state.leagueMemberView.compare = false;
   if (el.leagueMemberPanel) {
     el.leagueMemberPanel.classList.add("hidden");
   }
@@ -1015,11 +1016,209 @@ function leagueMemberDreamTeamSummary(dreamTeam) {
   const coaches = Array.isArray(dreamTeam.staff?.coaches) ? dreamTeam.staff.coaches : [];
   return {
     formation: dreamTeam.formation || "--",
+    poolMap,
+    xiKeys,
+    benchKeys,
     xi,
     bench,
     manager,
     coaches,
   };
+}
+
+function memberDreamSlots(summary, slotCount = 11) {
+  const slots = new Array(slotCount).fill(null);
+  if (!summary?.xiKeys?.length || !summary?.poolMap) return slots;
+  for (let i = 0; i < Math.min(slotCount, summary.xiKeys.length); i += 1) {
+    const key = summary.xiKeys[i];
+    slots[i] = key ? summary.poolMap.get(key) || null : null;
+  }
+  return slots;
+}
+
+function renderMiniPitchHtml(summary, heading) {
+  const rowDefs = visualFormationRows(summary?.formation || "4-3-3");
+  const slots = memberDreamSlots(summary, 11);
+  let cursor = 0;
+  const lanes = rowDefs
+    .map((rowDef) => {
+      const cells = [];
+      for (let i = 0; i < rowDef.count; i += 1) {
+        const player = slots[cursor] || null;
+        cursor += 1;
+        cells.push(
+          player
+            ? `
+              <div class="member-pitch-slot filled" title="${escapeHtml(player.name || "Player")}">
+                <span class="member-pitch-avatar-ring">
+                  <img class="member-pitch-avatar ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${escapeHtml(player.name || "Player")} cutout" />
+                  <span class="member-pitch-avatar-fallback ${player.image ? "hidden" : ""}">${escapeHtml((player.name || "?").slice(0, 1))}</span>
+                  <img class="member-pitch-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${escapeHtml(player.teamName || "Club")} badge" />
+                </span>
+                <span class="member-pitch-name">${escapeHtml(player.name || "Unknown")}</span>
+              </div>
+            `
+            : `<div class="member-pitch-slot"><span class="member-pitch-empty">Empty</span></div>`
+        );
+      }
+      return `<div class="member-pitch-lane" style="grid-template-columns: repeat(${Math.max(1, rowDef.count)}, minmax(0, 1fr));">${cells.join("")}</div>`;
+    })
+    .join("");
+
+  const benchHtml = (summary?.bench || [])
+    .slice(0, 7)
+    .map((player) => `<span class="member-bench-pill">${escapeHtml(player.name || "Unknown")}</span>`)
+    .join("");
+
+  return `
+    <article class="member-team-card">
+      <div class="member-team-head">
+        <h5>${escapeHtml(heading)}</h5>
+        <span class="member-formation-pill">${escapeHtml(summary?.formation || "--")}</span>
+      </div>
+      <div class="member-pitch-wrap">${lanes}</div>
+      <div class="member-bench-wrap">
+        <span class="muted">Bench</span>
+        <div class="member-bench-list">${benchHtml || '<span class="muted">No bench selected</span>'}</div>
+      </div>
+      <div class="member-staff-line">
+        <span class="muted">Manager:</span>
+        <span>${escapeHtml(summary?.manager?.name || "None")}</span>
+      </div>
+    </article>
+  `;
+}
+
+function predictionOutcomeLabel(entry) {
+  const awarded = Number(entry?.pick?.awarded || 0);
+  const settled = Boolean(entry?.settled);
+  if (!settled) return { text: "Pending", cls: "pending" };
+  if (awarded >= 2) return { text: "Perfect", cls: "perfect" };
+  if (awarded === 1) return { text: "Result", cls: "result" };
+  return { text: "Miss", cls: "miss" };
+}
+
+function memberPredictionsMapFromRecord(record) {
+  const map = new Map();
+  const list = Array.isArray(record?.predictions) ? record.predictions : [];
+  list.forEach((item) => {
+    if (!item?.eventId) return;
+    map.set(String(item.eventId), item);
+  });
+  return map;
+}
+
+function currentUserPredictionsSnapshot() {
+  const memberId = currentFamilyMemberId();
+  if (!memberId) return [];
+  const out = [];
+  Object.values(state.familyLeague?.predictions || {}).forEach((record) => {
+    if (!record || typeof record !== "object") return;
+    const entry = record.entries?.[memberId];
+    if (!entry) return;
+    out.push({
+      eventId: record.eventId || "",
+      homeTeam: record.homeTeam || "",
+      awayTeam: record.awayTeam || "",
+      kickoff: record.kickoff || "",
+      settled: Boolean(record.settled),
+      finalHome: Number.isFinite(Number(record.finalHome)) ? Number(record.finalHome) : null,
+      finalAway: Number.isFinite(Number(record.finalAway)) ? Number(record.finalAway) : null,
+      pick: {
+        home: Number.isFinite(Number(entry.home)) ? Number(entry.home) : null,
+        away: Number.isFinite(Number(entry.away)) ? Number(entry.away) : null,
+        awarded: Number.isFinite(Number(entry.awarded)) ? Number(entry.awarded) : 0,
+      },
+    });
+  });
+  return out.sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
+}
+
+function renderPredictionCardsHtml(memberData, compareEnabled) {
+  const themMap = memberPredictionsMapFromRecord(memberData);
+  const yourList = currentUserPredictionsSnapshot();
+  const yourMap = new Map(yourList.map((item) => [String(item.eventId || ""), item]));
+
+  let merged = [];
+  if (compareEnabled) {
+    const keys = new Set([...themMap.keys(), ...yourMap.keys()]);
+    merged = [...keys]
+      .map((key) => {
+        const them = themMap.get(key) || null;
+        const you = yourMap.get(key) || null;
+        const sample = them || you || {};
+        return {
+          eventId: key,
+          kickoff: sample.kickoff || "",
+          homeTeam: sample.homeTeam || "",
+          awayTeam: sample.awayTeam || "",
+          them,
+          you,
+        };
+      })
+      .sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
+  } else {
+    merged = (Array.isArray(memberData?.predictions) ? memberData.predictions : []).map((item) => ({
+      eventId: String(item.eventId || ""),
+      kickoff: item.kickoff || "",
+      homeTeam: item.homeTeam || "",
+      awayTeam: item.awayTeam || "",
+      them: item,
+      you: null,
+    }));
+  }
+
+  if (!merged.length) {
+    return `<div class="empty">No saved predictions yet.</div>`;
+  }
+
+  return merged
+    .slice(0, 24)
+    .map((row) => {
+      const kickoffText = row.kickoff ? new Date(row.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "TBA";
+      const finalText =
+        Number.isFinite(Number(row.them?.finalHome ?? row.you?.finalHome)) && Number.isFinite(Number(row.them?.finalAway ?? row.you?.finalAway))
+          ? `${Number(row.them?.finalHome ?? row.you?.finalHome)}-${Number(row.them?.finalAway ?? row.you?.finalAway)}`
+          : "Pending";
+      const themOutcome = predictionOutcomeLabel(row.them);
+      const youOutcome = predictionOutcomeLabel(row.you);
+      const themPick =
+        Number.isFinite(Number(row.them?.pick?.home)) && Number.isFinite(Number(row.them?.pick?.away))
+          ? `${Number(row.them.pick.home)}-${Number(row.them.pick.away)}`
+          : "--";
+      const youPick =
+        Number.isFinite(Number(row.you?.pick?.home)) && Number.isFinite(Number(row.you?.pick?.away))
+          ? `${Number(row.you.pick.home)}-${Number(row.you.pick.away)}`
+          : "--";
+      return `
+        <article class="member-pred-card">
+          <header>
+            <h5>${escapeHtml(row.homeTeam || "Home")} vs ${escapeHtml(row.awayTeam || "Away")}</h5>
+            <span class="muted">${escapeHtml(kickoffText)}</span>
+          </header>
+          <div class="member-pred-final">Final: <strong>${escapeHtml(finalText)}</strong></div>
+          <div class="member-pred-compare ${compareEnabled ? "two" : "one"}">
+            <div class="member-pred-side">
+              <span class="member-pred-label">Them</span>
+              <span class="member-pred-score">${escapeHtml(themPick)}</span>
+              <span class="member-pred-outcome ${themOutcome.cls}">${themOutcome.text}</span>
+            </div>
+            ${
+              compareEnabled
+                ? `
+              <div class="member-pred-side">
+                <span class="member-pred-label">You</span>
+                <span class="member-pred-score">${escapeHtml(youPick)}</span>
+                <span class="member-pred-outcome ${youOutcome.cls}">${youOutcome.text}</span>
+              </div>
+            `
+                : ""
+            }
+          </div>
+        </article>
+      `;
+    })
+    .join("");
 }
 
 function renderLeagueMemberView() {
@@ -1051,69 +1250,39 @@ function renderLeagueMemberView() {
   }
 
   const memberName = data?.user?.name || "User";
+  const isSelf = String(data?.user?.id || "") === String(state.account.user?.id || "");
+  const compareEnabled = Boolean(state.leagueMemberView.compare && !isSelf);
   el.leagueMemberTitle.textContent = `${memberName} • Profile`;
-  const predictions = Array.isArray(data.predictions) ? data.predictions : [];
   const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
-
-  const predictionsHtml = predictions.length
-    ? predictions
-        .slice(0, 20)
-        .map((item) => {
-          const pick = item?.pick || {};
-          const pickText =
-            Number.isFinite(pick.home) && Number.isFinite(pick.away)
-              ? `${pick.home}-${pick.away}`
-              : "--";
-          const scoreText =
-            Number.isFinite(item.finalHome) && Number.isFinite(item.finalAway)
-              ? `${item.finalHome}-${item.finalAway}`
-              : "Not finished";
-          const points = Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0;
-          const kickoffText = item.kickoff ? new Date(item.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "TBA";
-          return `
-            <div class="member-prediction-row">
-              <div class="member-prediction-main">
-                <div class="mission-title">${escapeHtml(item.homeTeam || "Home")} vs ${escapeHtml(item.awayTeam || "Away")}</div>
-                <div class="mission-sub">Kickoff: ${escapeHtml(kickoffText)} • Pick: ${escapeHtml(pickText)} • Final: ${escapeHtml(scoreText)}</div>
-              </div>
-              <span class="family-points">+${points}</span>
-            </div>
-          `;
-        })
-        .join("")
-    : `<div class="empty">No saved score predictions yet.</div>`;
-
-  const listNames = (players) =>
-    players.length
-      ? players
-          .map((player) => `<li>${escapeHtml(player.name || "Unknown")} <span class="muted">(${escapeHtml(player.teamName || "Club")})</span></li>`)
-          .join("")
-      : `<li class="muted">None selected.</li>`;
+  const myDream = leagueMemberDreamTeamSummary(state.dreamTeam);
+  const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled);
 
   el.leagueMemberBody.innerHTML = `
+    <div class="member-compare-sticky ${isSelf ? "hidden" : ""}">
+      <label class="member-compare-toggle" title="Compare this user against your own picks and Dream Team">
+        <input id="member-compare-toggle" type="checkbox" ${compareEnabled ? "checked" : ""} />
+        <span>Compare With Mine</span>
+      </label>
+    </div>
     <section class="member-view-group">
       <h4>Score Predictions</h4>
-      <div class="list">${predictionsHtml}</div>
+      <div class="member-pred-grid">${predictionsHtml}</div>
     </section>
     <section class="member-view-group">
-      <h4>Dream Team (${escapeHtml(dream.formation)})</h4>
-      <div class="member-dream-grid">
-        <article>
-          <h5>Starting XI (${dream.xi.length}/11)</h5>
-          <ul>${listNames(dream.xi)}</ul>
-        </article>
-        <article>
-          <h5>Bench (${dream.bench.length}/7)</h5>
-          <ul>${listNames(dream.bench)}</ul>
-        </article>
-      </div>
-      <div class="member-staff">
-        <h5>Staff</h5>
-        <p class="mission-sub">${dream.manager ? `Manager: ${escapeHtml(dream.manager.name || "Unknown")}` : "No manager selected."}</p>
-        <p class="mission-sub">${dream.coaches.length ? `Coaches: ${dream.coaches.map((coach) => escapeHtml(coach.name || "Unknown")).join(", ")}` : "No coaches selected."}</p>
+      <h4>Dream Team</h4>
+      <div class="member-team-compare ${compareEnabled ? "two" : "one"}">
+        ${renderMiniPitchHtml(dream, compareEnabled ? "Them" : `${memberName}`)}
+        ${compareEnabled ? renderMiniPitchHtml(myDream, "You") : ""}
       </div>
     </section>
   `;
+  const compareToggle = el.leagueMemberBody.querySelector("#member-compare-toggle");
+  if (compareToggle && !isSelf) {
+    compareToggle.addEventListener("change", () => {
+      state.leagueMemberView.compare = Boolean(compareToggle.checked);
+      renderLeagueMemberView();
+    });
+  }
 }
 
 async function openLeagueMemberView(userId, displayName) {
@@ -1129,6 +1298,7 @@ async function openLeagueMemberView(userId, displayName) {
   state.leagueMemberView.open = true;
   state.leagueMemberView.loading = true;
   state.leagueMemberView.error = "";
+  state.leagueMemberView.compare = false;
   state.leagueMemberView.data = { user: { name: displayName || "User" }, predictions: [], dreamTeam: null };
   renderLeagueMemberView();
   try {
