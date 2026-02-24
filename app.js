@@ -97,7 +97,9 @@ function loadDreamTeamState() {
     const formation = DREAM_TEAM_FORMATIONS[parsed.formation] ? parsed.formation : "4-3-3";
     const poolKeys = new Set(pool.map((p) => p.key));
     const startingXI = Array.isArray(parsed.startingXI)
-      ? parsed.startingXI.filter((key) => typeof key === "string" && poolKeys.has(key))
+      ? parsed.startingXI
+          .slice(0, 11)
+          .map((key) => (key === null ? null : typeof key === "string" && poolKeys.has(key) ? key : null))
       : [];
     const bench = Array.isArray(parsed.bench)
       ? parsed.bench.filter((key) => typeof key === "string" && poolKeys.has(key) && !startingXI.includes(key))
@@ -153,6 +155,7 @@ const state = {
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
   leagueDirectory: { items: [], loading: false },
+  lastLeagueDirectoryAt: 0,
   mobileTab: "fixtures",
   account: {
     token: STORED_ACCOUNT_TOKEN,
@@ -177,7 +180,9 @@ const state = {
   lastTableRefreshAt: 0,
   pollMode: "idle",
   settingsOpen: false,
+  accountMenuOpen: false,
   focusedFixtureKey: "",
+  openFixtureKey: "",
   eventDetailCache: {},
   fixtureScoreSnapshot: new Map(),
   playerPop: {
@@ -234,6 +239,9 @@ const el = {
   settingsMenu: document.getElementById("settings-menu"),
   settingsToggleBtn: document.getElementById("settings-toggle-btn"),
   settingsPanel: document.getElementById("settings-panel"),
+  accountMenu: document.getElementById("account-menu"),
+  accountToggleBtn: document.getElementById("account-toggle-btn"),
+  accountPanel: document.getElementById("account-panel"),
   accountAuthSignedOut: document.getElementById("account-auth-signedout"),
   accountAuthSignedIn: document.getElementById("account-auth-signedin"),
   accountNameInput: document.getElementById("account-name-input"),
@@ -357,6 +365,13 @@ function setSettingsMenuOpen(open) {
   if (!el.settingsPanel || !el.settingsToggleBtn) return;
   el.settingsPanel.classList.toggle("hidden", !state.settingsOpen);
   el.settingsToggleBtn.setAttribute("aria-expanded", String(state.settingsOpen));
+}
+
+function setAccountMenuOpen(open) {
+  state.accountMenuOpen = Boolean(open);
+  if (!el.accountPanel || !el.accountToggleBtn) return;
+  el.accountPanel.classList.toggle("hidden", !state.accountMenuOpen);
+  el.accountToggleBtn.setAttribute("aria-expanded", String(state.accountMenuOpen));
 }
 
 function accountSignedIn() {
@@ -665,9 +680,8 @@ function renderMissionsPanel() {
   ensureFamilyLeagueState();
   const quests = dailyQuestList();
   const completedCount = quests.filter((q) => q.done).length;
-  const memberId = currentFamilyMemberId();
-  const member = state.familyLeague.members.find((m) => m.id === memberId);
-  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${member ? ` (${member.name})` : ""}`;
+  const name = state.account.user?.name ? ` (${state.account.user.name})` : "";
+  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${name}`;
   el.missionsList.innerHTML = "";
   quests.forEach((quest) => {
     const row = document.createElement("div");
@@ -748,17 +762,6 @@ function renderStoryCardsPanel() {
   });
 }
 
-function randomLeagueCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  for (let i = 0; i < 6; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
-}
-
-function randomHexId() {
-  return Math.random().toString(16).slice(2, 10);
-}
-
 async function joinFamilyLeagueCode(code) {
   ensureFamilyLeagueState();
   if (!accountSignedIn()) {
@@ -820,6 +823,7 @@ async function refreshLeagueDirectory() {
       state.familyLeague.joinedLeagueCodes = [];
       state.familyLeague.currentLeagueIndex = 0;
     }
+    state.lastLeagueDirectoryAt = Date.now();
   } finally {
     state.leagueDirectory.loading = false;
   }
@@ -848,10 +852,18 @@ function renderFamilyLeaguePanel() {
   }
   ensureSignedInUserInFamilyLeague();
   const code = String(state.familyLeague.leagueCode || "").toUpperCase();
-  el.familyCodeLabel.textContent = `League code: ${code || "--"} • Your points: ${Number(state.familyLeague.personalPoints || 0)}`;
+  const joinedCount = Array.isArray(state.familyLeague.joinedLeagueCodes) ? state.familyLeague.joinedLeagueCodes.length : 0;
+  const currentPos = joinedCount ? state.familyLeague.currentLeagueIndex + 1 : 0;
+  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${code || "--"} • Your points: ${Number(state.familyLeague.personalPoints || 0)}`;
+  if (el.familyPrevLeagueBtn) el.familyPrevLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
+  if (el.familyNextLeagueBtn) el.familyNextLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   el.familyMembers.innerHTML = "";
   const currentLeague = (state.leagueDirectory.items || []).find((league) => String(league.code || "").toUpperCase() === code);
   const standings = Array.isArray(currentLeague?.standings) ? currentLeague.standings : [];
+  if (state.leagueDirectory.loading) {
+    el.familyMembers.innerHTML = `<div class="empty">Loading league standings...</div>`;
+    return;
+  }
   if (!code) {
     el.familyMembers.innerHTML = `<div class="empty">Create or join a league code to start.</div>`;
     return;
@@ -1422,34 +1434,21 @@ function normalizeDreamSelections() {
   }
 
   const poolMap = dreamPoolByKey();
-  const cleanXI = [];
+  const cleanXI = new Array(11).fill(null);
   const seenXI = new Set();
-  (state.dreamTeam.startingXI || []).forEach((key) => {
-    if (cleanXI.length >= 11) return;
-    if (!key) {
-      if (state.dreamManualLayout) cleanXI.push(null);
-      return;
-    }
-    if (seenXI.has(key)) return;
+  const sourceXI = Array.isArray(state.dreamTeam.startingXI) ? state.dreamTeam.startingXI : [];
+  for (let i = 0; i < Math.min(11, sourceXI.length); i += 1) {
+    const key = sourceXI[i];
+    if (!key || typeof key !== "string" || seenXI.has(key)) continue;
     const player = poolMap.get(key);
-    if (!player) {
-      if (state.dreamManualLayout) cleanXI.push(null);
-      return;
-    }
+    if (!player) continue;
     const role = dreamRoleFromPosition(player.position);
-    if (role === "MGR" || role === "COACH") {
-      if (state.dreamManualLayout) cleanXI.push(null);
-      return;
-    }
+    if (role === "MGR" || role === "COACH") continue;
     seenXI.add(key);
-    cleanXI.push(key);
-  });
-  if (!state.dreamManualLayout) {
-    while (cleanXI.includes(null)) {
-      cleanXI.splice(cleanXI.indexOf(null), 1);
-    }
+    cleanXI[i] = key;
   }
   state.dreamTeam.startingXI = cleanXI;
+  state.dreamManualLayout = true;
 
   const xiKeys = new Set(cleanXI.filter(Boolean));
   const cleanBench = [];
@@ -1463,17 +1462,18 @@ function normalizeDreamSelections() {
     state.dreamSwapActiveKey = "";
   }
   if (!state.dreamTeam.startingXI.some(Boolean)) {
-    state.dreamManualLayout = false;
+    state.dreamManualLayout = true;
   }
 }
 
 function autoFillStartingXI() {
   normalizeDreamSelections();
   const candidates = sortSquadByRole(state.dreamTeam.pool).map((player) => player.key);
-  state.dreamTeam.startingXI = autoArrangeXIKeys(candidates);
+  const arranged = autoArrangeXIKeys(candidates);
+  state.dreamTeam.startingXI = [...arranged, ...new Array(Math.max(0, 11 - arranged.length)).fill(null)];
   const xiSet = new Set(state.dreamTeam.startingXI.filter(Boolean));
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => !xiSet.has(key)).slice(0, 7);
-  state.dreamManualLayout = false;
+  state.dreamManualLayout = true;
 }
 
 function setDreamFormation(formation) {
@@ -1484,26 +1484,27 @@ function setDreamFormation(formation) {
   autoFillStartingXI();
 }
 
+function preferredEmptyXIIndexForKey(playerKeyValue) {
+  const player = getDreamPlayerByKey(playerKeyValue);
+  if (!player) return -1;
+  const slotRoles = formationSlotRoles(state.dreamTeam.formation);
+  const desiredRole = dreamRoleFromPosition(player.position);
+  for (let i = 0; i < Math.min(11, slotRoles.length); i += 1) {
+    if (slotRoles[i] === desiredRole && !state.dreamTeam.startingXI[i]) return i;
+  }
+  return state.dreamTeam.startingXI.findIndex((key) => !key);
+}
+
 function assignPlayerToXI(playerKeyValue) {
   const player = getDreamPlayerByKey(playerKeyValue);
   if (!player) return false;
   state.dreamTeam.startingXI = state.dreamTeam.startingXI.map((key) => (key === playerKeyValue ? null : key));
-  if (!state.dreamManualLayout) {
-    state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter(Boolean);
-  }
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
   if (xiFilledCount() >= 11) return false;
-  if (state.dreamManualLayout) {
-    const emptyIndex = state.dreamTeam.startingXI.findIndex((key) => !key);
-    if (emptyIndex >= 0) {
-      state.dreamTeam.startingXI[emptyIndex] = playerKeyValue;
-    } else {
-      state.dreamTeam.startingXI.push(playerKeyValue);
-    }
-    return true;
-  }
-  const arranged = autoArrangeXIKeys([...state.dreamTeam.startingXI.filter(Boolean), playerKeyValue]);
-  state.dreamTeam.startingXI = arranged;
+  const emptyIndex = preferredEmptyXIIndexForKey(playerKeyValue);
+  if (emptyIndex < 0) return false;
+  state.dreamTeam.startingXI[emptyIndex] = playerKeyValue;
+  state.dreamManualLayout = true;
   return true;
 }
 
@@ -1511,23 +1512,17 @@ function assignPlayerToBench(playerKeyValue) {
   const player = getDreamPlayerByKey(playerKeyValue);
   if (!player) return false;
   state.dreamTeam.startingXI = state.dreamTeam.startingXI.map((key) => (key === playerKeyValue ? null : key));
-  if (!state.dreamManualLayout) {
-    state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter(Boolean);
-  }
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
   if (state.dreamTeam.bench.length >= 7) return false;
   state.dreamTeam.bench.push(playerKeyValue);
+  state.dreamManualLayout = true;
   return true;
 }
 
 function unassignDreamPlayer(playerKeyValue) {
   if (state.dreamTeam.startingXI.includes(playerKeyValue)) {
     state.dreamManualLayout = true;
-    if (state.dreamManualLayout) {
-      state.dreamTeam.startingXI = state.dreamTeam.startingXI.map((key) => (key === playerKeyValue ? null : key));
-    } else {
-      state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
-    }
+    state.dreamTeam.startingXI = state.dreamTeam.startingXI.map((key) => (key === playerKeyValue ? null : key));
   }
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
   if (state.dreamSwapActiveKey === playerKeyValue) {
@@ -1546,16 +1541,9 @@ function xiFilledCount() {
 function startingXIPlayersBySlot(slotCount = 11) {
   const slots = new Array(slotCount).fill(null);
   const list = state.dreamTeam.startingXI || [];
-  if (state.dreamManualLayout) {
-    for (let i = 0; i < Math.min(slotCount, list.length); i += 1) {
-      const key = list[i];
-      slots[i] = key ? getDreamPlayerByKey(key) : null;
-    }
-    return slots;
-  }
-  const ordered = startingXIPlayersOrdered();
-  for (let i = 0; i < Math.min(slotCount, ordered.length); i += 1) {
-    slots[i] = ordered[i];
+  for (let i = 0; i < Math.min(slotCount, list.length); i += 1) {
+    const key = list[i];
+    slots[i] = key ? getDreamPlayerByKey(key) : null;
   }
   return slots;
 }
@@ -1680,18 +1668,16 @@ function moveSwapActiveToXI(targetIndex = null) {
   if (activeZone.zone === "bench") {
     state.dreamTeam.bench.splice(activeZone.index, 1);
   }
-  if (state.dreamManualLayout && Number.isInteger(targetIndex)) {
+  if (Number.isInteger(targetIndex)) {
     const insertIndex = Math.max(0, Math.min(10, targetIndex));
-    while (state.dreamTeam.startingXI.length <= insertIndex) {
+    while (state.dreamTeam.startingXI.length < 11) {
       state.dreamTeam.startingXI.push(null);
     }
     state.dreamTeam.startingXI[insertIndex] = key;
   } else {
-    const compact = state.dreamTeam.startingXI.filter(Boolean);
-    const maxIndex = compact.length;
-    const insertIndex = Number.isInteger(targetIndex) ? Math.max(0, Math.min(maxIndex, targetIndex)) : maxIndex;
-    compact.splice(insertIndex, 0, key);
-    state.dreamTeam.startingXI = compact.slice(0, 11);
+    const firstEmpty = state.dreamTeam.startingXI.findIndex((slot) => !slot);
+    if (firstEmpty < 0) return false;
+    state.dreamTeam.startingXI[firstEmpty] = key;
   }
   state.dreamManualLayout = true;
   return true;
@@ -1705,11 +1691,7 @@ function moveSwapActiveToBench(targetIndex = null) {
   if (activeZone.zone === "bench") return false;
   if (state.dreamTeam.bench.length >= 7) return false;
   if (activeZone.zone === "xi") {
-    if (state.dreamManualLayout) {
-      state.dreamTeam.startingXI[activeZone.index] = null;
-    } else {
-      state.dreamTeam.startingXI.splice(activeZone.index, 1);
-    }
+    state.dreamTeam.startingXI[activeZone.index] = null;
     state.dreamManualLayout = true;
   }
   const maxIndex = state.dreamTeam.bench.length;
@@ -1725,11 +1707,7 @@ function moveSwapActiveToPool() {
   if (!activeZone) return false;
   if (activeZone.zone === "pool") return false;
   if (activeZone.zone === "xi") {
-    if (state.dreamManualLayout) {
-      state.dreamTeam.startingXI[activeZone.index] = null;
-    } else {
-      state.dreamTeam.startingXI.splice(activeZone.index, 1);
-    }
+    state.dreamTeam.startingXI[activeZone.index] = null;
     state.dreamManualLayout = true;
     return true;
   }
@@ -2295,8 +2273,8 @@ function renderDreamTeamPanel(reason = "default") {
   });
   controls.querySelector("#dream-clear-lineup-btn")?.addEventListener("click", () => {
     state.dreamSwapActiveKey = "";
-    state.dreamManualLayout = false;
-    state.dreamTeam.startingXI = [];
+    state.dreamManualLayout = true;
+    state.dreamTeam.startingXI = new Array(11).fill(null);
     state.dreamTeam.bench = [];
     saveDreamTeam();
     requestDreamTeamRender("player");
@@ -2337,15 +2315,7 @@ function toggleDreamTeamPlayer(player) {
       return;
     }
     state.dreamTeam.pool.push(player);
-    const addingOutsideDreamUi = !state.dreamTeamOpen;
-    if (addingOutsideDreamUi) {
-      state.dreamManualLayout = false;
-      autoFillStartingXI();
-      const xiSet = new Set(state.dreamTeam.startingXI.filter(Boolean));
-      if (!xiSet.has(player.key) && state.dreamTeam.bench.length < 7) {
-        assignPlayerToBench(player.key);
-      }
-    } else if (!assignPlayerToXI(player.key) && state.dreamTeam.bench.length < 7) {
+    if (!assignPlayerToXI(player.key) && state.dreamTeam.bench.length < 7) {
       assignPlayerToBench(player.key);
     }
     state.dreamSwapActiveKey = "";
@@ -3213,7 +3183,14 @@ function buildCloudStatePayload() {
   };
 }
 
-function applyCloudState(cloudState) {
+function resetAccountScopedLocalState() {
+  state.missions = defaultMissionState();
+  state.familyLeague = defaultFamilyLeagueState();
+  persistLocalMetaState();
+}
+
+function applyCloudState(cloudState, options = {}) {
+  const strict = Boolean(options?.strict);
   if (!cloudState || typeof cloudState !== "object") return;
   if (typeof cloudState.favoriteTeamId === "string") {
     state.favoriteTeamId = cloudState.favoriteTeamId;
@@ -3250,9 +3227,14 @@ function applyCloudState(cloudState) {
     renderDreamTeamNavState();
     requestDreamTeamRender("player");
   }
-  state.missions = cloudState.missions && typeof cloudState.missions === "object" ? cloudState.missions : state.missions;
+  state.missions = cloudState.missions && typeof cloudState.missions === "object" ? cloudState.missions : strict ? defaultMissionState() : state.missions;
   state.storyCards = cloudState.storyCards && typeof cloudState.storyCards === "object" ? cloudState.storyCards : state.storyCards;
-  state.familyLeague = cloudState.familyLeague && typeof cloudState.familyLeague === "object" ? cloudState.familyLeague : state.familyLeague;
+  state.familyLeague =
+    cloudState.familyLeague && typeof cloudState.familyLeague === "object"
+      ? cloudState.familyLeague
+      : strict
+        ? defaultFamilyLeagueState()
+        : state.familyLeague;
   ensureMissionState();
   ensureFamilyLeagueState();
   persistLocalMetaState();
@@ -3262,7 +3244,7 @@ function applyCloudState(cloudState) {
 async function loadCloudState() {
   if (!state.account.token) return;
   const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/state`, null, state.account.token);
-  applyCloudState(data?.state || {});
+  applyCloudState(data?.state || {}, { strict: true });
 }
 
 async function syncCloudStateNow() {
@@ -3292,6 +3274,7 @@ function scheduleCloudStateSync(delayMs = 1200) {
 async function initAccountSession() {
   renderAccountUI();
   if (!state.account.token) {
+    resetAccountScopedLocalState();
     setAccountStatus("Logged out. Existing features still work locally.");
     renderFamilyLeaguePanel();
     return;
@@ -3300,8 +3283,10 @@ async function initAccountSession() {
     const me = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/me`, null, state.account.token);
     state.account.user = me.user || null;
     if (!state.account.user) throw new Error("Session expired");
+    resetAccountScopedLocalState();
     await loadCloudState();
     ensureSignedInUserInFamilyLeague();
+    await refreshLeagueDirectory();
     persistLocalMetaState();
     renderAccountUI();
     renderFamilyLeaguePanel();
@@ -3323,7 +3308,9 @@ async function registerAccount() {
   state.account.token = data.token || "";
   state.account.user = data.user || null;
   localStorage.setItem("ezra_account_token", state.account.token);
+  resetAccountScopedLocalState();
   ensureSignedInUserInFamilyLeague();
+  await refreshLeagueDirectory();
   persistLocalMetaState();
   await syncCloudStateNow();
   renderAccountUI();
@@ -3338,8 +3325,10 @@ async function loginAccount() {
   state.account.token = data.token || "";
   state.account.user = data.user || null;
   localStorage.setItem("ezra_account_token", state.account.token);
+  resetAccountScopedLocalState();
   await loadCloudState();
   ensureSignedInUserInFamilyLeague();
+  await refreshLeagueDirectory();
   persistLocalMetaState();
   scheduleCloudStateSync();
   renderAccountUI();
@@ -3358,6 +3347,8 @@ async function logoutAccount() {
     state.account.syncTimer = null;
   }
   localStorage.removeItem("ezra_account_token");
+  resetAccountScopedLocalState();
+  state.leagueDirectory.items = [];
   renderAccountUI();
   renderFamilyLeaguePanel();
   setAccountStatus("Logged out. Existing features still work locally.");
@@ -3653,6 +3644,8 @@ function canPredictFixture(event, stateInfo) {
 
 function settleFamilyPredictions() {
   ensureFamilyLeagueState();
+  if (!accountSignedIn()) return false;
+  const currentId = currentFamilyMemberId();
   const eventsById = allKnownEventsById();
   let changed = false;
   Object.values(state.familyLeague.predictions || {}).forEach((record) => {
@@ -3665,8 +3658,7 @@ function settleFamilyPredictions() {
     if (stateInfo.key !== "final" || home === null || away === null) return;
     const finalResult = predictionResultCode(home, away);
     Object.entries(record.entries || {}).forEach(([memberId, pick]) => {
-      const member = state.familyLeague.members.find((m) => m.id === memberId);
-      if (!member || !pick || pick.scored) return;
+      if (memberId !== currentId || !pick || pick.scored) return;
       const predHome = Number(pick.home);
       const predAway = Number(pick.away);
       if (!Number.isFinite(predHome) || !Number.isFinite(predAway)) return;
@@ -3677,7 +3669,7 @@ function settleFamilyPredictions() {
         points = 1;
       }
       if (points > 0) {
-        addFamilyPoints(memberId, points);
+        addFamilyPoints(points);
       }
       pick.scored = true;
       pick.awarded = points;
@@ -3696,14 +3688,20 @@ function settleFamilyPredictions() {
 }
 
 function buildPredictionModule(event, stateInfo) {
-  const wrapper = document.createElement("section");
-  wrapper.className = "fixture-predict";
   ensureFamilyLeagueState();
   const currentId = currentFamilyMemberId();
-  const activeMember = state.familyLeague.members.find((m) => m.id === currentId) || null;
+  const activeMember = accountSignedIn() ? { id: currentId, name: state.account.user?.name || "You" } : null;
   const record = ensurePredictionRecord(event);
   const memberPick = activeMember && record ? record.entries?.[currentId] : null;
   const canPredict = canPredictFixture(event, stateInfo) && Boolean(activeMember) && Boolean(record && !record.settled);
+  const isCompleted = stateInfo?.key === "final";
+  const showReadonly = Boolean(memberPick) && (isCompleted || !canPredict);
+  if (!canPredict && !showReadonly) {
+    return null;
+  }
+
+  const wrapper = document.createElement("section");
+  wrapper.className = "fixture-predict";
   const kickoff = fixtureKickoffDate(event);
   const lockReason = !event?.idEvent
     ? "Prediction unavailable for this fixture."
@@ -3714,6 +3712,24 @@ function buildPredictionModule(event, stateInfo) {
       : kickoff && kickoff.getTime() <= Date.now()
         ? "Predictions are now locked for this fixture."
         : "";
+
+  if (showReadonly) {
+    const awarded = Number(memberPick?.awarded || 0);
+    const pointsText = awarded > 0 ? ` • +${awarded} pts` : " • 0 pts";
+    wrapper.innerHTML = `
+      <div class="predict-head">Your prediction</div>
+      <div class="predict-status ${awarded > 0 ? "success" : ""}">
+        ${escapeHtml(`${memberPick.home}-${memberPick.away}`)}${escapeHtml(pointsText)}
+      </div>
+    `;
+    if (awarded === 2) {
+      wrapper.querySelector(".predict-status")?.insertAdjacentHTML("beforeend", ` <span class="predict-success-label">Perfect Scoreline</span>`);
+    } else if (awarded === 1) {
+      wrapper.querySelector(".predict-status")?.insertAdjacentHTML("beforeend", ` <span class="predict-success-label">Correct Result</span>`);
+    }
+    return wrapper;
+  }
+
   wrapper.innerHTML = `
     <div class="predict-head">Predict the score?</div>
     <div class="predict-form">
@@ -3728,12 +3744,12 @@ function buildPredictionModule(event, stateInfo) {
         <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="A" />
         <button class="btn predict-step-btn minus" type="button" data-step-target="away" aria-label="Decrease away score">－</button>
       </div>
-      <button class="btn" type="button">${memberPick ? "Update Pick" : "Save Pick"}</button>
+      <button class="btn predict-save-btn" type="button">${memberPick ? "Update Pick" : "Save Pick"}</button>
     </div>
     <div class="predict-status"></div>
   `;
   const inputs = wrapper.querySelectorAll(".predict-input");
-  const saveBtn = wrapper.querySelector("button");
+  const saveBtn = wrapper.querySelector(".predict-save-btn");
   const status = wrapper.querySelector(".predict-status");
   const homeInput = inputs[0];
   const awayInput = inputs[1];
@@ -3741,6 +3757,16 @@ function buildPredictionModule(event, stateInfo) {
     const current = Number(targetInput.value || 0);
     const next = Math.max(0, Math.min(20, Number.isFinite(current) ? current + delta : Math.max(0, delta)));
     targetInput.value = String(next);
+    updateDraftStatus();
+  };
+  const updateDraftStatus = () => {
+    if (!status || record?.settled || !activeMember) return;
+    const home = Number(homeInput.value);
+    const away = Number(awayInput.value);
+    if (Number.isInteger(home) && home >= 0 && Number.isInteger(away) && away >= 0) {
+      status.classList.remove("success");
+      status.textContent = `Ready: ${home}-${away} for ${activeMember.name}`;
+    }
   };
   wrapper.querySelectorAll("button[data-step-target='home'].plus").forEach((btn) => btn.addEventListener("click", () => step(homeInput, 1)));
   wrapper.querySelectorAll("button[data-step-target='home'].minus").forEach((btn) => btn.addEventListener("click", () => step(homeInput, -1)));
@@ -3791,9 +3817,12 @@ function buildPredictionModule(event, stateInfo) {
     };
     persistLocalMetaState();
     scheduleCloudStateSync();
-    status.textContent = `Saved: ${home}-${away} for ${activeMember.name}`;
+    status.textContent = `Saved ✓ ${home}-${away} for ${activeMember.name}`;
+    status.classList.add("success");
     renderFamilyLeaguePanel();
   });
+  homeInput.addEventListener("input", updateDraftStatus);
+  awayInput.addEventListener("input", updateDraftStatus);
   return wrapper;
 }
 
@@ -3873,7 +3902,10 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   const statsHtml = renderStatsTable(rich?.stats);
   const hasExtra = Boolean(statsHtml);
   detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
-  detailsEl.appendChild(buildPredictionModule(event, stateInfo));
+  const predictionModule = buildPredictionModule(event, stateInfo);
+  if (predictionModule) {
+    detailsEl.appendChild(predictionModule);
+  }
   detailsEl.classList.remove("loading");
 }
 
@@ -4024,9 +4056,22 @@ function renderFixtureList(target, events, mode) {
     });
 
     node.addEventListener("toggle", async () => {
-      if (!node.open) return;
-      await hydrateFixtureDetails(detailsEl, event, stateInfo);
+      if (node.open) {
+        state.openFixtureKey = key;
+        [...target.querySelectorAll(".fixture-item")].forEach((other) => {
+          if (other === node) return;
+          other.open = false;
+        });
+        await hydrateFixtureDetails(detailsEl, event, stateInfo);
+      } else if (state.openFixtureKey === key) {
+        state.openFixtureKey = "";
+      }
     });
+
+    if (state.openFixtureKey && state.openFixtureKey === key) {
+      node.open = true;
+      hydrateFixtureDetails(detailsEl, event, stateInfo);
+    }
 
     target.appendChild(node);
   });
@@ -5096,6 +5141,9 @@ async function fullRefresh() {
     await loadCoreData({ includeLive, includeStatic, includeTables, includeSurroundingDays });
     detectGoalFlashes();
     await refreshSelectedDateFixtures();
+    if (accountSignedIn() && Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
+      await safeLoad(() => refreshLeagueDirectory(), null);
+    }
     settleFamilyPredictions();
     buildFavoriteOptions();
     await safeLoad(() => renderFavorite(), null);
@@ -5169,41 +5217,46 @@ function attachEvents() {
     });
   }
 
-  if (el.familyAddMemberBtn) {
-    el.familyAddMemberBtn.addEventListener("click", () => {
-      if (!accountSignedIn()) {
-        setAccountStatus("Sign in to add family mini-league players.", true);
-        return;
-      }
-      addFamilyMember(el.familyMemberInput?.value || "");
-      if (el.familyMemberInput) el.familyMemberInput.value = "";
-      renderFamilyLeaguePanel();
-    });
-  }
-
   if (el.familyCreateCodeBtn) {
-    el.familyCreateCodeBtn.addEventListener("click", () => {
+    el.familyCreateCodeBtn.addEventListener("click", async () => {
       if (!accountSignedIn()) {
         setAccountStatus("Sign in to create a family league code.", true);
         return;
       }
-      ensureFamilyLeagueState();
-      state.familyLeague.leagueCode = randomLeagueCode();
-      persistLocalMetaState();
-      scheduleCloudStateSync();
-      renderFamilyLeaguePanel();
+      try {
+        await createFamilyLeagueCode();
+        renderFamilyLeaguePanel();
+      } catch (err) {
+        setAccountStatus(`Create league failed: ${err.message}`, true);
+      }
     });
   }
 
   if (el.familyJoinCodeBtn) {
-    el.familyJoinCodeBtn.addEventListener("click", () => {
+    el.familyJoinCodeBtn.addEventListener("click", async () => {
       if (!accountSignedIn()) {
         setAccountStatus("Sign in to join a family league code.", true);
         return;
       }
-      joinFamilyLeagueCode(el.familyJoinCodeInput?.value || "");
-      if (el.familyJoinCodeInput) el.familyJoinCodeInput.value = "";
-      renderFamilyLeaguePanel();
+      try {
+        await joinFamilyLeagueCode(el.familyJoinCodeInput?.value || "");
+        if (el.familyJoinCodeInput) el.familyJoinCodeInput.value = "";
+        renderFamilyLeaguePanel();
+      } catch (err) {
+        setAccountStatus(`Join league failed: ${err.message}`, true);
+      }
+    });
+  }
+
+  if (el.familyPrevLeagueBtn) {
+    el.familyPrevLeagueBtn.addEventListener("click", () => {
+      cycleLeague(-1);
+    });
+  }
+
+  if (el.familyNextLeagueBtn) {
+    el.familyNextLeagueBtn.addEventListener("click", () => {
+      cycleLeague(1);
     });
   }
 
@@ -5217,7 +5270,17 @@ function attachEvents() {
     el.settingsToggleBtn.addEventListener("click", (event) => {
       event.stopPropagation();
       closeFavoritePickerMenu();
+      setAccountMenuOpen(false);
       setSettingsMenuOpen(!state.settingsOpen);
+    });
+  }
+
+  if (el.accountToggleBtn) {
+    el.accountToggleBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeFavoritePickerMenu();
+      setSettingsMenuOpen(false);
+      setAccountMenuOpen(!state.accountMenuOpen);
     });
   }
 
@@ -5335,6 +5398,9 @@ function attachEvents() {
     if (el.settingsMenu && !el.settingsMenu.contains(e.target)) {
       setSettingsMenuOpen(false);
     }
+    if (el.accountMenu && !el.accountMenu.contains(e.target)) {
+      setAccountMenuOpen(false);
+    }
     if (!el.favoritePicker.contains(e.target)) {
       closeFavoritePickerMenu();
     }
@@ -5427,6 +5493,7 @@ normalizeDreamSelections();
 renderDreamTeamNavState();
 requestDreamTeamRender();
 setSettingsMenuOpen(false);
+setAccountMenuOpen(false);
 initRevealOnScroll();
 updateStickyDateBarVisibility();
 persistLocalMetaState();
