@@ -2560,7 +2560,12 @@ async function apiRequest(method, path, body = null, token = "") {
   const isJson = (res.headers.get("Content-Type") || "").includes("application/json");
   const payload = isJson ? await res.json() : { error: await res.text() };
   if (!res.ok) {
-    throw new Error(payload?.error || `Request failed (${res.status})`);
+    const raw = String(payload?.error || "");
+    const isHtml = /<!doctype html>|<html/i.test(raw);
+    const clean = isHtml
+      ? `Cloudflare error ${res.status}. Check Pages Functions logs for the latest exception.`
+      : raw.slice(0, 220);
+    throw new Error(clean || `Request failed (${res.status})`);
   }
   return payload;
 }

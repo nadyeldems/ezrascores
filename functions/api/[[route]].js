@@ -159,13 +159,21 @@ async function handleAccountRegister(db, request) {
   const pinHash = await sha256Hex(`${salt}:${valid.cleanPin}`);
   const nowIso = new Date().toISOString();
 
-  await db
-    .prepare(`
-      INSERT INTO ezra_users (id, name, name_key, pin_salt, pin_hash, created_at, updated_at)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-    `)
-    .bind(userId, valid.cleanName, nameKey, salt, pinHash, nowIso, nowIso)
-    .run();
+  try {
+    await db
+      .prepare(`
+        INSERT INTO ezra_users (id, name, name_key, pin_salt, pin_hash, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      `)
+      .bind(userId, valid.cleanName, nameKey, salt, pinHash, nowIso, nowIso)
+      .run();
+  } catch (err) {
+    const msg = String(err?.message || err);
+    if (msg.toLowerCase().includes("unique")) {
+      return json({ error: "Name already exists. Please choose another." }, 409);
+    }
+    throw err;
+  }
 
   await db
     .prepare("INSERT OR REPLACE INTO ezra_profile_states (user_id, state_json, updated_at) VALUES (?1, ?2, ?3)")
@@ -266,26 +274,36 @@ async function handleEzraAccountRoute(context, accountPath) {
   await ensureAccountSchema(db);
   const route = String(accountPath || "").toLowerCase();
 
-  if (route === "register" && request.method === "POST") {
-    return handleAccountRegister(db, request);
-  }
-  if (route === "login" && request.method === "POST") {
-    return handleAccountLogin(db, request);
-  }
-  if (route === "me" && request.method === "GET") {
-    return handleAccountMe(db, request);
-  }
-  if (route === "logout" && request.method === "POST") {
-    return handleAccountLogout(db, request);
-  }
-  if (route === "state" && (request.method === "PUT" || request.method === "PATCH")) {
-    return handleAccountPutState(db, request);
-  }
-  if (route === "state" && request.method === "GET") {
-    return handleAccountGetState(db, request);
-  }
+  try {
+    if (route === "register" && request.method === "POST") {
+      return handleAccountRegister(db, request);
+    }
+    if (route === "login" && request.method === "POST") {
+      return handleAccountLogin(db, request);
+    }
+    if (route === "me" && request.method === "GET") {
+      return handleAccountMe(db, request);
+    }
+    if (route === "logout" && request.method === "POST") {
+      return handleAccountLogout(db, request);
+    }
+    if (route === "state" && (request.method === "PUT" || request.method === "PATCH")) {
+      return handleAccountPutState(db, request);
+    }
+    if (route === "state" && request.method === "GET") {
+      return handleAccountGetState(db, request);
+    }
 
-  return json({ error: "Unsupported account route or method" }, 405);
+    return json({ error: "Unsupported account route or method" }, 405);
+  } catch (err) {
+    return json(
+      {
+        error: "Account route failed",
+        detail: String(err?.message || err),
+      },
+      500
+    );
+  }
 }
 
 const TABLE_LEAGUE_IDS = ["4328", "4329"];
