@@ -646,7 +646,7 @@ function safeParseJsonText(text) {
   }
 }
 
-async function handleLeagueMemberView(db, request) {
+async function handleLeagueMemberView(db, request, key) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
   const url = new URL(request.url);
@@ -669,28 +669,49 @@ async function handleLeagueMemberView(db, request) {
   const state = safeParseJsonText(stateRow?.state_json || "{}");
   const memberId = `acct:${userId}`;
   const allPredictions = state?.familyLeague?.predictions && typeof state.familyLeague.predictions === "object" ? state.familyLeague.predictions : {};
-  const predictions = Object.values(allPredictions)
-    .filter((record) => record && typeof record === "object" && record.entries && typeof record.entries === "object" && record.entries[memberId])
-    .map((record) => {
-      const pick = record.entries[memberId] || {};
-      return {
-        eventId: record.eventId || "",
-        homeTeam: record.homeTeam || "",
-        awayTeam: record.awayTeam || "",
-        kickoff: record.kickoff || "",
-        settled: Boolean(record.settled),
-        finalHome: Number.isFinite(Number(record.finalHome)) ? Number(record.finalHome) : null,
-        finalAway: Number.isFinite(Number(record.finalAway)) ? Number(record.finalAway) : null,
-        pick: {
-          home: Number.isFinite(Number(pick.home)) ? Number(pick.home) : null,
-          away: Number.isFinite(Number(pick.away)) ? Number(pick.away) : null,
-          awarded: Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0,
-          scored: Boolean(pick.scored),
-          submittedAt: pick.submittedAt || "",
-        },
-      };
-    })
-    .sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
+  const resultCache = new Map();
+  const predictions = (
+    await Promise.all(
+      Object.values(allPredictions)
+        .filter((record) => record && typeof record === "object" && record.entries && typeof record.entries === "object" && record.entries[memberId])
+        .map(async (record) => {
+          const pick = record.entries[memberId] || {};
+          const pickHome = Number.isFinite(Number(pick.home)) ? Number(pick.home) : null;
+          const pickAway = Number.isFinite(Number(pick.away)) ? Number(pick.away) : null;
+          const eventId = String(record.eventId || "");
+          const result = eventId ? await fetchEventResultById(String(key || "074910"), eventId, resultCache) : { final: false, home: null, away: null };
+          const finalHome = result.final && result.home !== null ? result.home : Number.isFinite(Number(record.finalHome)) ? Number(record.finalHome) : null;
+          const finalAway = result.final && result.away !== null ? result.away : Number.isFinite(Number(record.finalAway)) ? Number(record.finalAway) : null;
+          const settled = Boolean(record.settled) || Boolean(result.final);
+          let awarded = Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0;
+          if (settled && pickHome !== null && pickAway !== null && finalHome !== null && finalAway !== null) {
+            if (pickHome === finalHome && pickAway === finalAway) {
+              awarded = 2;
+            } else if (predictionResultCode(pickHome, pickAway) === predictionResultCode(finalHome, finalAway)) {
+              awarded = 1;
+            } else {
+              awarded = 0;
+            }
+          }
+          return {
+            eventId,
+            homeTeam: record.homeTeam || "",
+            awayTeam: record.awayTeam || "",
+            kickoff: record.kickoff || "",
+            settled,
+            finalHome,
+            finalAway,
+            pick: {
+              home: pickHome,
+              away: pickAway,
+              awarded,
+              scored: settled,
+              submittedAt: pick.submittedAt || "",
+            },
+          };
+        })
+    )
+  ).sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
 
   const dreamTeam = state?.dreamTeam && typeof state.dreamTeam === "object" ? state.dreamTeam : null;
   return json(
@@ -795,7 +816,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       return handleLeagueRename(db, request);
     }
     if (route === "league/member" && request.method === "GET") {
-      return handleLeagueMemberView(db, request);
+      return handleLeagueMemberView(db, request, key);
     }
     if (route === "league/standings" && request.method === "GET") {
       return handlePublicLeagueStandings(db, request, key);
