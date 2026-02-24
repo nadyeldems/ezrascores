@@ -1172,6 +1172,18 @@ body.dream-team-overlay-open::before {
   border-color: #d58a2e;
 }
 
+.pitch-slot.swap-active {
+  border-color: #ffbf74;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 196, 124, 0.55),
+    0 0 0 2px rgba(255, 196, 124, 0.24);
+}
+
+.pitch-slot.swap-target {
+  border-color: #d18a31;
+  background: rgba(255, 153, 32, 0.1);
+}
+
 .dream-pitch-player .pitch-slot.filled {
   animation: pitch-player-swap 520ms ease both;
   animation-delay: var(--slot-delay, 0ms);
@@ -1323,6 +1335,18 @@ body.dream-team-overlay-open::before {
   gap: 0.4rem;
   padding: 0.28rem 0;
   border-top: 1px dashed var(--line-soft);
+}
+
+.dream-row.swap-active {
+  background: rgba(255, 153, 32, 0.09);
+  border-radius: 0.62rem;
+  padding-inline: 0.32rem;
+}
+
+.dream-row.swap-target {
+  background: rgba(255, 153, 32, 0.04);
+  border-radius: 0.62rem;
+  padding-inline: 0.32rem;
 }
 
 .dream-row:first-of-type {
