@@ -4232,6 +4232,7 @@ function toggleFavoritePickerMenu() {
     return;
   }
   setSettingsMenuOpen(false);
+  setAccountMenuOpen(false);
   el.favoritePickerMenu.classList.remove("hidden");
   el.favoritePickerBtn.setAttribute("aria-expanded", "true");
   positionFavoritePickerMenu();
@@ -5183,8 +5184,10 @@ function initRevealOnScroll() {
 }
 
 function buildFavoriteOptions() {
+  if (!el.favoritePickerMenu) return;
   const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP];
-  const uniqueTeams = Array.from(new Map(allTeams.map((t) => [t.idTeam, t])).values());
+  const validTeams = allTeams.filter((t) => t && t.idTeam && t.strTeam);
+  const uniqueTeams = Array.from(new Map(validTeams.map((t) => [t.idTeam, t])).values());
   const byName = uniqueTeams.sort((a, b) => (a.strTeam || "").localeCompare(b.strTeam || ""));
   el.favoritePickerMenu.innerHTML = "";
 
@@ -5210,6 +5213,21 @@ function buildFavoriteOptions() {
     scheduleCloudStateSync();
   });
   el.favoritePickerMenu.appendChild(clearBtn);
+
+  if (!byName.length) {
+    const empty = document.createElement("div");
+    empty.className = "favorite-option";
+    empty.setAttribute("aria-live", "polite");
+    empty.innerHTML = `
+      <span class="option-text">
+        <span class="option-team">No teams available right now</span>
+        <span class="option-league">Please try again in a moment</span>
+      </span>
+    `;
+    el.favoritePickerMenu.appendChild(empty);
+    setFavoritePickerDisplay(null);
+    return;
+  }
 
   byName.forEach((team) => {
     const btn = document.createElement("button");
@@ -5247,6 +5265,27 @@ function buildFavoriteOptions() {
     return;
   }
   setFavoritePickerDisplay(selected);
+}
+
+function rebuildTeamBadgeMap() {
+  state.teamBadgeMap = {};
+  [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].forEach((team) => {
+    if (team?.strTeam && team?.strBadge) {
+      state.teamBadgeMap[team.strTeam] = team.strBadge;
+    }
+  });
+}
+
+async function ensureFavoritePickerDataLoaded() {
+  if (state.teamsByLeague.EPL.length || state.teamsByLeague.CHAMP.length) return;
+  const [teamsEpl, teamsChamp] = await Promise.all([
+    safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []),
+    safeLoad(() => fetchAllTeams(LEAGUES.CHAMP.id), []),
+  ]);
+  state.teamsByLeague.EPL = Array.isArray(teamsEpl) ? teamsEpl : [];
+  state.teamsByLeague.CHAMP = Array.isArray(teamsChamp) ? teamsChamp : [];
+  rebuildTeamBadgeMap();
+  ensureDefaultFavoriteTeam();
 }
 
 function findLiveForFavorite(teamName) {
@@ -5967,6 +6006,8 @@ async function fullRefresh() {
   } catch (err) {
     displayApiError(el.fixturesList, err);
     el.tablesWrap.innerHTML = `<div class="error">Unable to load league tables. ${err.message}</div>`;
+    await safeLoad(() => ensureFavoritePickerDataLoaded(), null);
+    buildFavoriteOptions();
     renderFunZone();
   } finally {
     state.refreshInFlight = false;
@@ -6210,7 +6251,7 @@ function attachEvents() {
     });
   }
 
-  el.favoritePickerBtn.addEventListener("click", (event) => {
+  el.favoritePickerBtn.addEventListener("click", async (event) => {
     event.stopPropagation();
     if (state.dreamTeamOpen) {
       state.dreamTeamOpen = false;
@@ -6218,6 +6259,8 @@ function attachEvents() {
       renderDreamTeamNavState();
       requestDreamTeamRender();
     }
+    await ensureFavoritePickerDataLoaded();
+    buildFavoriteOptions();
     toggleFavoritePickerMenu();
   });
 

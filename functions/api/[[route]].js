@@ -135,6 +135,19 @@ async function ensureAccountSchema(db) {
       )
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_league_members_user_id ON ezra_league_members(user_id)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_event_results_cache (
+        event_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        home_score INTEGER,
+        away_score INTEGER,
+        is_final INTEGER NOT NULL DEFAULT 0,
+        kickoff_at TEXT,
+        fetched_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_event_results_expires_at ON ezra_event_results_cache(expires_at)`,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -210,7 +223,18 @@ function isFinalEvent(event) {
   return /\b(ft|full time|match finished|finished|aet|after pen|final)\b/.test(s);
 }
 
-function eventLikelyFinal(event) {
+function eventKickoffMs(event, fallbackKickoffIso = "") {
+  const date = String(event?.dateEvent || "").trim();
+  const time = String(event?.strTime || "12:00:00")
+    .trim()
+    .slice(0, 8);
+  const fromEvent = date ? Date.parse(`${date}T${time}Z`) : Number.NaN;
+  if (Number.isFinite(fromEvent)) return fromEvent;
+  const fromFallback = fallbackKickoffIso ? Date.parse(String(fallbackKickoffIso)) : Number.NaN;
+  return Number.isFinite(fromFallback) ? fromFallback : Number.NaN;
+}
+
+function eventLikelyFinal(event, fallbackKickoffIso = "") {
   if (!event || typeof event !== "object") return false;
   if (isFinalEvent(event)) return true;
   const home = numericScore(event.intHomeScore);
@@ -219,7 +243,12 @@ function eventLikelyFinal(event) {
   const date = String(event.dateEvent || "");
   if (!date) return false;
   const today = new Date().toISOString().slice(0, 10);
-  return date < today;
+  if (date < today) return true;
+  if (date > today) return false;
+  const kickoffMs = eventKickoffMs(event, fallbackKickoffIso);
+  if (!Number.isFinite(kickoffMs)) return false;
+  const elapsedMs = Date.now() - kickoffMs;
+  return elapsedMs > 150 * 60 * 1000;
 }
 
 function questBonusPointsFromState(state, userId) {
@@ -251,26 +280,105 @@ function predictionEntriesForUser(state, userId) {
     const home = numericScore(pick.home);
     const away = numericScore(pick.away);
     if (home === null || away === null) continue;
-    rows.push({ eventId, home, away });
+    rows.push({ eventId, home, away, kickoffIso: String(record.kickoff || "") });
   }
   return rows;
 }
 
-async function fetchEventResultById(key, eventId, resultCache) {
+function ttlForEventResult(result) {
+  if (result?.final) return 30 * 24 * 60 * 60 * 1000;
+  if (result?.home !== null && result?.away !== null) return 2 * 60 * 1000;
+  return 15 * 60 * 1000;
+}
+
+function readResultFromCacheRow(row) {
+  if (!row) return null;
+  const value = {
+    final: Boolean(Number(row.is_final || 0)),
+    home: row.home_score === null || row.home_score === undefined ? null : Number(row.home_score),
+    away: row.away_score === null || row.away_score === undefined ? null : Number(row.away_score),
+    kickoffAt: row.kickoff_at || "",
+    fetchedAt: Number(row.fetched_at || 0),
+    expiresAt: Number(row.expires_at || 0),
+  };
+  if (row.payload_json) {
+    value.event = safeParseJsonText(row.payload_json);
+  }
+  return value;
+}
+
+async function readCachedEventResult(db, eventId) {
+  if (!db) return null;
+  const row = await db
+    .prepare(
+      "SELECT payload_json, home_score, away_score, is_final, kickoff_at, fetched_at, expires_at FROM ezra_event_results_cache WHERE event_id = ?1 LIMIT 1"
+    )
+    .bind(eventId)
+    .first();
+  return readResultFromCacheRow(row);
+}
+
+async function writeCachedEventResult(db, eventId, event, result) {
+  if (!db || !eventId) return;
+  const now = Date.now();
+  const ttl = ttlForEventResult(result);
+  await db
+    .prepare(
+      `
+      INSERT INTO ezra_event_results_cache (event_id, payload_json, home_score, away_score, is_final, kickoff_at, fetched_at, expires_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+      ON CONFLICT(event_id) DO UPDATE SET
+        payload_json = excluded.payload_json,
+        home_score = excluded.home_score,
+        away_score = excluded.away_score,
+        is_final = excluded.is_final,
+        kickoff_at = excluded.kickoff_at,
+        fetched_at = excluded.fetched_at,
+        expires_at = excluded.expires_at
+    `
+    )
+    .bind(
+      eventId,
+      JSON.stringify(event || {}),
+      result?.home,
+      result?.away,
+      result?.final ? 1 : 0,
+      result?.kickoffAt || "",
+      now,
+      now + ttl
+    )
+    .run();
+}
+
+async function fetchEventResultById(key, eventId, resultCache, db, options = {}) {
   const cacheKey = String(eventId || "").trim();
   if (!cacheKey) return { final: false, home: null, away: null };
   if (resultCache.has(cacheKey)) return resultCache.get(cacheKey);
-  const fallback = { final: false, home: null, away: null };
+  const fallback = { final: false, home: null, away: null, kickoffAt: options?.kickoffIso || "" };
+  const now = Date.now();
+  const cached = await readCachedEventResult(db, cacheKey);
+  if (cached?.expiresAt && cached.expiresAt > now) {
+    resultCache.set(cacheKey, cached);
+    return cached;
+  }
   try {
     const data = await fetchSportsDb("v1", key, `lookupevent.php?id=${encodeURIComponent(cacheKey)}`);
     const event = firstArray(data)?.[0] || null;
     const home = numericScore(event?.intHomeScore);
     const away = numericScore(event?.intAwayScore);
-    const final = eventLikelyFinal(event) && home !== null && away !== null;
-    const result = { final, home, away };
+    const kickoffAt = (event?.dateEvent && event?.strTime)
+      ? `${String(event.dateEvent).trim()}T${String(event.strTime || "12:00:00").trim().slice(0, 8)}Z`
+      : String(options?.kickoffIso || "");
+    const final = eventLikelyFinal(event, options?.kickoffIso || "") && home !== null && away !== null;
+    const result = { final, home, away, kickoffAt };
+    await writeCachedEventResult(db, cacheKey, event, result);
     resultCache.set(cacheKey, result);
     return result;
   } catch {
+    if (cached) {
+      resultCache.set(cacheKey, cached);
+      return cached;
+    }
     resultCache.set(cacheKey, fallback);
     return fallback;
   }
@@ -370,7 +478,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
       const predictionRows = predictionEntriesForUser(state, userId);
       let predictionPoints = 0;
       for (const pick of predictionRows) {
-        const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache);
+        const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, { kickoffIso: pick.kickoffIso || "" });
         if (!result.final || result.home === null || result.away === null) continue;
         if (pick.home === result.home && pick.away === result.away) {
           predictionPoints += 2;
@@ -679,7 +787,9 @@ async function handleLeagueMemberView(db, request, key) {
           const pickHome = Number.isFinite(Number(pick.home)) ? Number(pick.home) : null;
           const pickAway = Number.isFinite(Number(pick.away)) ? Number(pick.away) : null;
           const eventId = String(record.eventId || "");
-          const result = eventId ? await fetchEventResultById(String(key || "074910"), eventId, resultCache) : { final: false, home: null, away: null };
+          const result = eventId
+            ? await fetchEventResultById(String(key || "074910"), eventId, resultCache, db, { kickoffIso: String(record.kickoff || "") })
+            : { final: false, home: null, away: null };
           const finalHome = result.final && result.home !== null ? result.home : Number.isFinite(Number(record.finalHome)) ? Number(record.finalHome) : null;
           const finalAway = result.final && result.away !== null ? result.away : Number.isFinite(Number(record.finalAway)) ? Number(record.finalAway) : null;
           const settled = Boolean(record.settled) || Boolean(result.final);
