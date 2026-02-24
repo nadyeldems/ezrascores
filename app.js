@@ -4722,6 +4722,18 @@ function teamFormFromEvents(events, team) {
   return completed;
 }
 
+function mergeUniqueEvents(events) {
+  const map = new Map();
+  (events || []).forEach((event) => {
+    if (!event) return;
+    const key = fixtureKey(event) || `${event.dateEvent || ""}|${event.strHomeTeam || ""}|${event.strAwayTeam || ""}`;
+    if (!key) return;
+    const existing = map.get(key);
+    map.set(key, existing ? { ...existing, ...event } : event);
+  });
+  return [...map.values()];
+}
+
 function renderFixtureList(target, events, mode) {
   target.innerHTML = "";
   const sortedEvents = sortEventsForColumn(events, mode);
@@ -5672,12 +5684,14 @@ async function renderFavorite() {
     }
   }
   const chosenTodayState = chosenToday ? eventState(chosenToday).key : "";
+  const leagueCode = teamLeagueCode(team);
+  const leagueId = LEAGUES[leagueCode]?.id;
+  let pastLeague = [];
   let lastCompleted = findLastCompletedForTeam(lastEvents, team, todayIso, chosenToday);
-  if (!lastCompleted) {
-    const leagueCode = teamLeagueCode(team);
-    const leagueId = LEAGUES[leagueCode]?.id;
-    if (leagueId) {
-      const pastLeague = await safeLoad(() => fetchPastLeagueEvents(leagueId), []);
+  const needLeaguePastForSummaryOrForm = !lastCompleted || teamFormFromEvents(lastEvents, team).length < 5;
+  if (leagueId && needLeaguePastForSummaryOrForm) {
+    pastLeague = await safeLoad(() => fetchPastLeagueEvents(leagueId), []);
+    if (!lastCompleted) {
       lastCompleted = findLastCompletedForTeam(pastLeague, team, todayIso, chosenToday);
     }
   }
@@ -5692,7 +5706,12 @@ async function renderFavorite() {
   const teamPos = getTeamTablePosition(team);
   el.favoriteLeague.textContent = teamPos ? `${team.strLeague || ""}  •  ${teamPos}` : team.strLeague || "";
   if (el.favoriteForm) {
-    const form = teamFormFromEvents(lastEvents, team);
+    const formEvents = mergeUniqueEvents([
+      ...lastEvents,
+      ...pastLeague,
+      ...(chosenToday && eventState(chosenToday).key === "final" ? [chosenToday] : []),
+    ]);
+    const form = teamFormFromEvents(formEvents, team);
     const formHtml = renderFavoriteFormBadges(form);
     if (form.length) {
       el.favoriteForm.classList.remove("hidden");
