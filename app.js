@@ -156,6 +156,7 @@ const state = {
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
   missionFx: { questId: "", until: 0, timer: null },
+  squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null },
   leagueDirectory: { items: [], loading: false },
   lastLeagueDirectoryAt: 0,
@@ -714,8 +715,26 @@ function onSquadPlayerExplored(player) {
   daily.randomExplored = true;
   if (!isQuestDone("quest-random-player")) {
     triggerMissionGoalFx("quest-random-player");
+    triggerSquadGoalFx(player.key);
   }
   completeQuest("quest-random-player");
+  renderSquadPanel();
+}
+
+function triggerSquadGoalFx(playerKey, durationMs = 4200) {
+  state.squadGoalFx.playerKey = String(playerKey || "");
+  state.squadGoalFx.until = Date.now() + durationMs;
+  if (state.squadGoalFx.timer) {
+    clearTimeout(state.squadGoalFx.timer);
+  }
+  state.squadGoalFx.timer = setTimeout(() => {
+    state.squadGoalFx.timer = null;
+    if (Date.now() >= Number(state.squadGoalFx.until || 0)) {
+      state.squadGoalFx.playerKey = "";
+      state.squadGoalFx.until = 0;
+    }
+    renderSquadPanel();
+  }, durationMs + 120);
 }
 
 function triggerMissionGoalFx(questId, durationMs = 4200) {
@@ -2161,6 +2180,18 @@ function renderSquadPanel() {
       </div>
       <button class="btn squad-star ${starOn ? "active" : ""}" type="button" aria-label="Toggle Dream Team player">${starOn ? "★" : "☆"}</button>
     `;
+    const rowFxActive = state.squadGoalFx.playerKey === player.key && Number(state.squadGoalFx.until || 0) > Date.now();
+    if (rowFxActive) {
+      const fx = document.createElement("div");
+      fx.className = "squad-goal-flash active";
+      fx.setAttribute("aria-hidden", "true");
+      fx.innerHTML = `
+        <span class="goal-stage goal-word">GOAL!</span>
+        <span class="goal-stage goal-team-name">QUEST COMPLETE</span>
+        <span class="goal-stage goal-scoreline">+5 PTS</span>
+      `;
+      row.appendChild(fx);
+    }
     row.addEventListener("click", async () => {
       const opening = state.selectedSquadPlayerKey !== player.key;
       state.selectedSquadPlayerKey = opening ? player.key : "";

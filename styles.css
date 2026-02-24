@@ -1060,6 +1060,64 @@ body.league-member-overlay-open::before {
   justify-content: space-between;
   gap: 0.55rem;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.squad-goal-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  border-radius: 0.72rem;
+  background:
+    radial-gradient(circle at center, rgba(66, 219, 148, 0.12), rgba(0, 0, 0, 0.9) 55%),
+    repeating-linear-gradient(
+      0deg,
+      rgba(112, 255, 170, 0.07) 0,
+      rgba(112, 255, 170, 0.07) 1px,
+      transparent 1px,
+      transparent 5px
+    ),
+    rgba(2, 15, 8, 0.92);
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.squad-goal-flash.active {
+  display: flex;
+  animation: goal-overlay 4.6s ease-out both;
+}
+
+.squad-goal-flash .goal-stage {
+  position: absolute;
+  width: calc(100% - 0.7rem);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0;
+}
+
+.squad-goal-flash .goal-word {
+  font-size: clamp(1.2rem, 3.2vw, 1.8rem);
+  color: #baffd8;
+  text-shadow: 0 0 6px rgba(112, 255, 170, 0.9);
+  animation: goal-stage-a 1.8s steps(8, end) both;
+}
+
+.squad-goal-flash .goal-team-name {
+  font-size: clamp(0.95rem, 2.4vw, 1.2rem);
+  color: #9fffcf;
+  text-shadow: 0 0 10px rgba(86, 255, 164, 0.6);
+  animation: goal-stage-b 1.8s 1.55s steps(8, end) both;
+}
+
+.squad-goal-flash .goal-scoreline {
+  font-size: clamp(1rem, 2.6vw, 1.3rem);
+  color: #fff4e6;
+  text-shadow: 0 0 10px rgba(103, 255, 177, 0.62);
+  animation: goal-stage-c 1.8s 3s steps(8, end) both;
 }
 
 .squad-main {
