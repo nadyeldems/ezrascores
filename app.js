@@ -714,7 +714,6 @@ function onSquadPlayerExplored(player) {
   if (!matchById && !matchByKey) return;
   daily.randomExplored = true;
   if (!isQuestDone("quest-random-player")) {
-    triggerMissionGoalFx("quest-random-player");
     triggerSquadGoalFx(player.key);
   }
   completeQuest("quest-random-player");
