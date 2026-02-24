@@ -118,6 +118,7 @@ function loadDreamTeamState() {
 
 const state = {
   selectedLeague: "ALL",
+  serverTimeOffsetMs: 0,
   selectedDate: "",
   selectedDateFixtures: { EPL: [], CHAMP: [] },
   fixtures: {
@@ -161,6 +162,7 @@ const state = {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
     syncTimer: null,
+    leagueRefreshTimer: null,
     syncing: false,
   },
   maxDreamTeamPlayers: 18,
@@ -425,9 +427,13 @@ function ensureSignedInUserInFamilyLeague() {
     state.familyLeague.personalPoints = 0;
     changed = true;
   }
+  if (ensureDailyQuestBonusesForSignedInUser()) {
+    changed = true;
+  }
   if (changed) {
     persistLocalMetaState();
     scheduleCloudStateSync();
+    scheduleLeagueStandingsRefresh();
   }
   return true;
 }
@@ -507,7 +513,12 @@ function ensureFamilyLeagueState() {
 }
 
 function missionDateKey() {
-  return toISODate(new Date());
+  const now = serverNow();
+  // Quests roll over at 00:01 server time, not at midnight.
+  if (now.getUTCHours() === 0 && now.getUTCMinutes() < 1) {
+    now.setUTCDate(now.getUTCDate() - 1);
+  }
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
 }
 
 function todayQuestState() {
@@ -540,6 +551,32 @@ function addFamilyPoints(delta) {
   return true;
 }
 
+function questBonusClaimKeyForUserAndQuest(questId, memberId = currentFamilyMemberId()) {
+  return `${memberId}:${questId}`;
+}
+
+function ensureDailyQuestBonusesForSignedInUser() {
+  ensureMissionState();
+  ensureFamilyLeagueState();
+  if (!accountSignedIn()) return false;
+  const memberId = currentFamilyMemberId();
+  if (!memberId) return false;
+  const today = missionDateKey();
+  const daily = todayQuestState();
+  if (!state.familyLeague.questBonusByDate[today] || typeof state.familyLeague.questBonusByDate[today] !== "object") {
+    state.familyLeague.questBonusByDate[today] = {};
+  }
+  let changed = false;
+  (daily.completed || []).forEach((questId) => {
+    const claimKey = questBonusClaimKeyForUserAndQuest(questId, memberId);
+    if (state.familyLeague.questBonusByDate[today][claimKey]) return;
+    if (!addFamilyPoints(5)) return;
+    state.familyLeague.questBonusByDate[today][claimKey] = true;
+    changed = true;
+  });
+  return changed;
+}
+
 function awardQuestBonus(questId) {
   ensureFamilyLeagueState();
   if (!accountSignedIn()) return false;
@@ -551,6 +588,7 @@ function awardQuestBonus(questId) {
   if (state.familyLeague.questBonusByDate[today][key]) return false;
   if (!addFamilyPoints(5)) return false;
   state.familyLeague.questBonusByDate[today][key] = true;
+  scheduleLeagueStandingsRefresh();
   return true;
 }
 
@@ -561,9 +599,23 @@ function completeQuest(questId) {
   awardQuestBonus(questId);
   persistLocalMetaState();
   scheduleCloudStateSync();
+  // Ensure mini-league standings reflect quest points immediately.
+  scheduleLeagueStandingsRefresh(200);
   renderMissionsPanel();
   renderFamilyLeaguePanel();
   return true;
+}
+
+function scheduleLeagueStandingsRefresh(delayMs = 1800) {
+  if (!accountSignedIn()) return;
+  if (state.account.leagueRefreshTimer) {
+    clearTimeout(state.account.leagueRefreshTimer);
+  }
+  state.account.leagueRefreshTimer = setTimeout(async () => {
+    state.account.leagueRefreshTimer = null;
+    await refreshLeagueDirectory();
+    renderFamilyLeaguePanel();
+  }, delayMs);
 }
 
 function allLeagueTeams() {
@@ -610,17 +662,18 @@ async function pickDailyRandomQuestPlayer(forceNew = false) {
   return chosen;
 }
 
-async function goToQuestRandomPlayer() {
+async function startQuestRandomPlayer() {
   const target = await pickDailyRandomQuestPlayer(false);
   if (!target) return;
-  if (target.teamId && state.favoriteTeamId !== target.teamId) {
-    state.favoriteTeamId = target.teamId;
-    localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
-    await safeLoad(() => renderFavorite(), null);
+  renderMissionsPanel();
+}
+
+async function startPopQuizQuest() {
+  if (!state.playerPopEnabled) {
+    setPlayerPopEnabled(true);
   }
-  state.squadOpen = true;
-  state.selectedSquadPlayerKey = target.key || "";
-  renderSquadPanel();
+  await showRandomPlayerPop(true);
+  renderMissionsPanel();
 }
 
 function registerPopQuizCorrectAnswer() {
@@ -650,25 +703,36 @@ function onSquadPlayerExplored(player) {
 function dailyQuestList() {
   const daily = todayQuestState();
   const target = daily.randomTarget;
+  const popCorrect = Math.min(Number(daily.popCorrect || 0), 5);
+  const popDone = isQuestDone("quest-pop-5");
+  const popStarted = popCorrect > 0;
+  const randomDone = isQuestDone("quest-random-player");
+  const randomStarted = Boolean(target);
   return [
     {
       id: "quest-pop-5",
       title: "Get 5 Pop Quizzes Correct",
-      description: `${Math.min(Number(daily.popCorrect || 0), 5)}/5 correct today`,
-      done: isQuestDone("quest-pop-5"),
-      buttonLabel: null,
-      onClick: null,
+      description: popDone ? "Quest complete. Bonus points awarded." : popStarted ? `${popCorrect}/5 correct today` : "Start the pop quiz and get 5 correct.",
+      done: popDone,
+      buttonLabel: !popDone && !popStarted ? "Start" : null,
+      statusLabel: popDone ? "Complete" : popStarted ? `${popCorrect}/5` : null,
+      onClick: async () => {
+        await startPopQuizQuest();
+      },
     },
     {
       id: "quest-random-player",
       title: "Explore A Random Player",
-      description: target
+      description: randomDone
+        ? "Quest complete. Bonus points awarded."
+        : target
         ? `Find ${target.name} (${target.teamName}) in squad and tap for details`
-        : "Pick a random player from Premier League or Championship",
-      done: isQuestDone("quest-random-player"),
-      buttonLabel: target ? "Open Squad" : "Pick Random",
+        : "Start quest to get a random player from any league.",
+      done: randomDone,
+      buttonLabel: !randomDone && !randomStarted ? "Start Quest" : null,
+      statusLabel: randomDone ? "Complete" : randomStarted ? "Target Active" : null,
       onClick: async () => {
-        await goToQuestRandomPlayer();
+        await startQuestRandomPlayer();
         renderMissionsPanel();
       },
     },
@@ -678,6 +742,11 @@ function dailyQuestList() {
 function renderMissionsPanel() {
   if (!el.missionsList || !el.missionsMeta) return;
   ensureFamilyLeagueState();
+  if (ensureDailyQuestBonusesForSignedInUser()) {
+    persistLocalMetaState();
+    scheduleCloudStateSync();
+    scheduleLeagueStandingsRefresh();
+  }
   const quests = dailyQuestList();
   const completedCount = quests.filter((q) => q.done).length;
   const name = state.account.user?.name ? ` (${state.account.user.name})` : "";
@@ -686,13 +755,13 @@ function renderMissionsPanel() {
   quests.forEach((quest) => {
     const row = document.createElement("div");
     row.className = "mission-row";
-    const statusText = quest.done ? "Complete" : "In Progress";
+    const statusText = quest.statusLabel || (quest.done ? "Complete" : "");
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title">${escapeHtml(quest.title)}</div>
         <div class="mission-sub">${escapeHtml(quest.description)}</div>
       </div>
-      ${quest.buttonLabel && !quest.done ? `<button class="btn" type="button">${escapeHtml(quest.buttonLabel)}</button>` : `<span class="family-points">${statusText}</span>`}
+      ${quest.buttonLabel && !quest.done ? `<button class="btn" type="button">${escapeHtml(quest.buttonLabel)}</button>` : statusText ? `<span class="family-points">${escapeHtml(statusText)}</span>` : ""}
     `;
     const btn = row.querySelector("button");
     if (btn) {
@@ -3125,8 +3194,22 @@ function formatKickoffTime(event) {
   return time || "TBA";
 }
 
+function serverNow() {
+  return new Date(Date.now() + Number(state.serverTimeOffsetMs || 0));
+}
+
+function updateServerTimeOffsetFromResponse(res) {
+  if (!res?.headers) return;
+  const dateHeader = res.headers.get("Date");
+  if (!dateHeader) return;
+  const serverMs = Date.parse(dateHeader);
+  if (!Number.isFinite(serverMs)) return;
+  state.serverTimeOffsetMs = serverMs - Date.now();
+}
+
 async function apiGetV1(path) {
   const res = await fetch(`${API_PROXY_BASE}/v1/${path}`);
+  updateServerTimeOffsetFromResponse(res);
   if (!res.ok) {
     throw new Error(`API call failed (${res.status}) for ${path}`);
   }
@@ -3135,6 +3218,7 @@ async function apiGetV1(path) {
 
 async function apiGetV2(path) {
   const res = await fetch(`${API_PROXY_BASE}/v2/${path}`);
+  updateServerTimeOffsetFromResponse(res);
   if (!res.ok) {
     throw new Error(`API call failed (${res.status}) for ${path}`);
   }
@@ -3150,6 +3234,7 @@ async function apiRequest(method, path, body = null, token = "") {
     headers,
     body: body !== null ? JSON.stringify(body) : undefined,
   });
+  updateServerTimeOffsetFromResponse(res);
   const isJson = (res.headers.get("Content-Type") || "").includes("application/json");
   const payload = isJson ? await res.json() : { error: await res.text() };
   if (!res.ok) {
@@ -3186,6 +3271,10 @@ function buildCloudStatePayload() {
 function resetAccountScopedLocalState() {
   state.missions = defaultMissionState();
   state.familyLeague = defaultFamilyLeagueState();
+  if (state.account?.leagueRefreshTimer) {
+    clearTimeout(state.account.leagueRefreshTimer);
+    state.account.leagueRefreshTimer = null;
+  }
   persistLocalMetaState();
 }
 
@@ -3345,6 +3434,10 @@ async function logoutAccount() {
   if (state.account.syncTimer) {
     clearTimeout(state.account.syncTimer);
     state.account.syncTimer = null;
+  }
+  if (state.account.leagueRefreshTimer) {
+    clearTimeout(state.account.leagueRefreshTimer);
+    state.account.leagueRefreshTimer = null;
   }
   localStorage.removeItem("ezra_account_token");
   resetAccountScopedLocalState();
@@ -3683,8 +3776,67 @@ function settleFamilyPredictions() {
   if (changed) {
     persistLocalMetaState();
     scheduleCloudStateSync();
+    scheduleLeagueStandingsRefresh();
   }
   return changed;
+}
+
+function currentUserPredictionForEvent(event) {
+  if (!event?.idEvent) return null;
+  ensureFamilyLeagueState();
+  const memberId = currentFamilyMemberId();
+  if (!memberId) return null;
+  const record = state.familyLeague.predictions?.[event.idEvent];
+  const pick = record?.entries?.[memberId];
+  if (!pick) return null;
+  return { record, pick };
+}
+
+function ensureFixtureBadgeContainer(summaryEl) {
+  if (!summaryEl) return null;
+  let container = summaryEl.querySelector(".fixture-corner-badges");
+  if (container) return container;
+  container = document.createElement("div");
+  container.className = "fixture-corner-badges";
+  summaryEl.appendChild(container);
+  return container;
+}
+
+function renderFixtureBadges(summaryEl, event, { pinned = false } = {}) {
+  const container = ensureFixtureBadgeContainer(summaryEl);
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (pinned) {
+    const pinnedEl = document.createElement("span");
+    pinnedEl.className = "fixture-ribbon";
+    pinnedEl.textContent = "Pinned Team";
+    container.appendChild(pinnedEl);
+  }
+
+  if (currentUserPredictionForEvent(event)) {
+    const predictedEl = document.createElement("span");
+    predictedEl.className = "fixture-ribbon fixture-ribbon-predicted";
+    predictedEl.textContent = "✓ Predicted";
+    container.appendChild(predictedEl);
+  }
+}
+
+function refreshVisibleFixturePredictionBadges() {
+  const nodes = [...(el.fixturesList?.querySelectorAll(".fixture-item") || [])];
+  if (!nodes.length) return;
+  const eventsByKey = new Map(selectedEventsForCurrentView().map((event) => [fixtureKey(event), event]));
+  nodes.forEach((node) => {
+    const key = node.dataset.fixtureKey || "";
+    const event = eventsByKey.get(key);
+    if (!event) return;
+    const summaryEl = node.querySelector("summary");
+    const favName = state.favoriteTeam?.strTeam || "";
+    const homeName = event.strHomeTeam || "TBC";
+    const awayName = event.strAwayTeam || "TBC";
+    const hasFavorite = Boolean(favName && (homeName === favName || awayName === favName));
+    renderFixtureBadges(summaryEl, event, { pinned: hasFavorite });
+  });
 }
 
 function buildPredictionModule(event, stateInfo) {
@@ -3702,6 +3854,8 @@ function buildPredictionModule(event, stateInfo) {
 
   const wrapper = document.createElement("section");
   wrapper.className = "fixture-predict";
+  const homeTeam = event?.strHomeTeam || "Home";
+  const awayTeam = event?.strAwayTeam || "Away";
   const kickoff = fixtureKickoffDate(event);
   const lockReason = !event?.idEvent
     ? "Prediction unavailable for this fixture."
@@ -3719,7 +3873,7 @@ function buildPredictionModule(event, stateInfo) {
     wrapper.innerHTML = `
       <div class="predict-head">Your prediction</div>
       <div class="predict-status ${awarded > 0 ? "success" : ""}">
-        ${escapeHtml(`${memberPick.home}-${memberPick.away}`)}${escapeHtml(pointsText)}
+        ${escapeHtml(`${homeTeam} ${memberPick.home} - ${memberPick.away} ${awayTeam}`)}${escapeHtml(pointsText)}
       </div>
     `;
     if (awarded === 2) {
@@ -3734,15 +3888,17 @@ function buildPredictionModule(event, stateInfo) {
     <div class="predict-head">Predict the score?</div>
     <div class="predict-form">
       <div class="predict-score-stack">
-        <button class="btn predict-step-btn plus" type="button" data-step-target="home" aria-label="Increase home score">＋</button>
-        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="H" />
-        <button class="btn predict-step-btn minus" type="button" data-step-target="home" aria-label="Decrease home score">－</button>
+        <span class="predict-team-label" title="${escapeHtml(homeTeam)}">Home: ${escapeHtml(homeTeam)}</span>
+        <button class="btn predict-step-btn plus" type="button" data-step-target="home" aria-label="Increase home score">+</button>
+        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="0" aria-label="Home team score" />
+        <button class="btn predict-step-btn minus" type="button" data-step-target="home" aria-label="Decrease home score">-</button>
       </div>
-      <span>-</span>
+      <span class="predict-score-sep">-</span>
       <div class="predict-score-stack">
-        <button class="btn predict-step-btn plus" type="button" data-step-target="away" aria-label="Increase away score">＋</button>
-        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="A" />
-        <button class="btn predict-step-btn minus" type="button" data-step-target="away" aria-label="Decrease away score">－</button>
+        <span class="predict-team-label" title="${escapeHtml(awayTeam)}">Away: ${escapeHtml(awayTeam)}</span>
+        <button class="btn predict-step-btn plus" type="button" data-step-target="away" aria-label="Increase away score">+</button>
+        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="0" aria-label="Away team score" />
+        <button class="btn predict-step-btn minus" type="button" data-step-target="away" aria-label="Decrease away score">-</button>
       </div>
       <button class="btn predict-save-btn" type="button">${memberPick ? "Update Pick" : "Save Pick"}</button>
     </div>
@@ -3785,7 +3941,7 @@ function buildPredictionModule(event, stateInfo) {
       status.insertAdjacentHTML("beforeend", ` <span class="predict-success-label">Correct Result</span>`);
     }
   } else if (memberPick) {
-    status.textContent = `Your pick: ${memberPick.home}-${memberPick.away}${activeMember ? ` (${activeMember.name})` : ""}`;
+    status.textContent = `Your pick: ${homeTeam} ${memberPick.home}-${memberPick.away} ${awayTeam}${activeMember ? ` (${activeMember.name})` : ""}`;
   } else if (lockReason) {
     status.textContent = lockReason;
   } else if (activeMember) {
@@ -3819,6 +3975,7 @@ function buildPredictionModule(event, stateInfo) {
     scheduleCloudStateSync();
     status.textContent = `Saved ✓ ${home}-${away} for ${activeMember.name}`;
     status.classList.add("success");
+    refreshVisibleFixturePredictionBadges();
     renderFamilyLeaguePanel();
   });
   homeInput.addEventListener("input", updateDraftStatus);
@@ -4016,11 +4173,8 @@ function renderFixtureList(target, events, mode) {
     const hasFavorite = Boolean(favName && (homeName === favName || awayName === favName));
     if (hasFavorite) {
       node.classList.add("has-favorite");
-      const ribbon = document.createElement("span");
-      ribbon.className = "fixture-ribbon";
-      ribbon.textContent = "Pinned Team";
-      node.querySelector("summary")?.appendChild(ribbon);
     }
+    renderFixtureBadges(node.querySelector("summary"), event, { pinned: hasFavorite });
 
     if (state.focusedFixtureKey) {
       node.classList.toggle("fixture-focus", state.focusedFixtureKey === key);
@@ -4285,6 +4439,7 @@ function patchVisibleFixtureRows(events) {
     const event = byKey.get(key);
     if (!event) return;
     const stateInfo = eventState(event);
+    const summaryEl = node.querySelector("summary");
     const statusEl = node.querySelector(".match-state");
     const homeScoreEl = node.querySelector(".home-score");
     const awayScoreEl = node.querySelector(".away-score");
@@ -4297,6 +4452,12 @@ function patchVisibleFixtureRows(events) {
       statusEl.classList.add(stateInfo.key);
       statusEl.textContent = stateInfo.label;
     }
+    const favName = state.favoriteTeam?.strTeam || "";
+    const homeName = event.strHomeTeam || "TBC";
+    const awayName = event.strAwayTeam || "TBC";
+    const hasFavorite = Boolean(favName && (homeName === favName || awayName === favName));
+    node.classList.toggle("has-favorite", hasFavorite);
+    renderFixtureBadges(summaryEl, event, { pinned: hasFavorite });
 
     const home = event.intHomeScore;
     const away = event.intAwayScore;
