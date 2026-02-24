@@ -148,6 +148,14 @@
       </section>
 
       <main>
+        <section class="panel mobile-tabs-panel" id="mobile-tabs-panel" aria-label="Mobile sections">
+          <div class="mobile-tabs" role="tablist" aria-label="Section tabs">
+            <button class="btn mobile-tab-btn active" type="button" data-mobile-tab="fixtures" role="tab" aria-selected="true">Fixtures</button>
+            <button class="btn mobile-tab-btn" type="button" data-mobile-tab="table" role="tab" aria-selected="false">Table</button>
+            <button class="btn mobile-tab-btn" type="button" data-mobile-tab="fun" role="tab" aria-selected="false">Fun Zone</button>
+          </div>
+        </section>
+
         <section class="panel hidden" id="squad-panel">
           <div class="panel-head squad-head">
             <h3 id="squad-title">Squad</h3>
@@ -198,7 +206,6 @@
         <section class="panel" id="fun-zone-panel">
           <div class="panel-head">
             <h3>Fun Zone</h3>
-            <button id="fun-zone-toggle-btn" class="btn" type="button" aria-expanded="true">Hide</button>
           </div>
           <div id="fun-zone-body" class="fun-grid">
             <article class="fun-card" id="quests-panel">
@@ -224,8 +231,11 @@
                   <button id="family-add-member-btn" class="btn" type="button">Add Player</button>
                   <button id="family-create-code-btn" class="btn" type="button">Create Code</button>
                 </div>
+                <div class="account-actions">
+                  <input id="family-join-code-input" class="account-input" type="text" maxlength="12" placeholder="Enter league code" />
+                  <button id="family-join-code-btn" class="btn" type="button">Join Code</button>
+                </div>
                 <p id="family-code-label" class="muted">League code: --</p>
-                <p id="family-active-label" class="muted">Active player: --</p>
               </div>
               <div id="family-members" class="list"></div>
             </article>

@@ -152,7 +152,7 @@ const state = {
   missions: parseStoredJson("ezra_missions", defaultMissionState()),
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
-  funZoneOpen: localStorage.getItem("ezra_funzone_open") !== "0",
+  mobileTab: "fixtures",
   account: {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
@@ -249,11 +249,13 @@ const el = {
   familyMemberInput: document.getElementById("family-member-input"),
   familyAddMemberBtn: document.getElementById("family-add-member-btn"),
   familyCreateCodeBtn: document.getElementById("family-create-code-btn"),
+  familyJoinCodeInput: document.getElementById("family-join-code-input"),
+  familyJoinCodeBtn: document.getElementById("family-join-code-btn"),
   familyCodeLabel: document.getElementById("family-code-label"),
-  familyActiveLabel: document.getElementById("family-active-label"),
   familyMembers: document.getElementById("family-members"),
-  funZoneToggleBtn: document.getElementById("fun-zone-toggle-btn"),
   funZoneBody: document.getElementById("fun-zone-body"),
+  mobileTabsPanel: document.getElementById("mobile-tabs-panel"),
+  mobileTabButtons: [...document.querySelectorAll(".mobile-tab-btn")],
   motionButtons: [...document.querySelectorAll(".motion-btn")],
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
@@ -374,6 +376,66 @@ function renderAccountUI() {
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
   }
+  updateFamilyControlsState();
+}
+
+function updateFamilyControlsState() {
+  const signedIn = accountSignedIn();
+  const memberInput = el.familyMemberInput;
+  const addBtn = el.familyAddMemberBtn;
+  const codeBtn = el.familyCreateCodeBtn;
+  const joinInput = el.familyJoinCodeInput;
+  const joinBtn = el.familyJoinCodeBtn;
+  if (memberInput) {
+    memberInput.disabled = !signedIn;
+    memberInput.placeholder = signedIn ? "Add player name" : "Sign in to manage family league";
+  }
+  if (joinInput) {
+    joinInput.disabled = !signedIn;
+    joinInput.placeholder = signedIn ? "Enter league code" : "Sign in to join a league";
+  }
+  if (addBtn) addBtn.disabled = !signedIn;
+  if (codeBtn) codeBtn.disabled = !signedIn;
+  if (joinBtn) joinBtn.disabled = !signedIn;
+}
+
+function ensureSignedInUserInFamilyLeague() {
+  ensureFamilyLeagueState();
+  if (!accountSignedIn()) return false;
+  const userId = String(state.account.user.id || "").trim();
+  const userName = normalizeName(state.account.user.name || "").slice(0, 24);
+  if (!userId || !userName) return false;
+  const memberId = `acct:${userId}`;
+  let changed = false;
+  const existing = state.familyLeague.members.find((m) => m.id === memberId || m.name.toLowerCase() === userName.toLowerCase());
+  if (existing) {
+    if (existing.id !== memberId) {
+      existing.id = memberId;
+      changed = true;
+    }
+    if (existing.name !== userName) {
+      existing.name = userName;
+      changed = true;
+    }
+  } else {
+    state.familyLeague.members.push({ id: memberId, name: userName, points: 0 });
+    changed = true;
+  }
+  if (!state.familyLeague.activeMemberId) {
+    state.familyLeague.activeMemberId = memberId;
+    changed = true;
+  }
+  if (changed) {
+    persistLocalMetaState();
+    scheduleCloudStateSync();
+  }
+  return true;
+}
+
+function currentFamilyMemberId() {
+  if (!accountSignedIn()) return "";
+  const id = String(state.account.user?.id || "").trim();
+  return id ? `acct:${id}` : "";
 }
 
 function persistLocalMetaState() {
@@ -481,7 +543,7 @@ function addFamilyPoints(memberId, delta) {
 
 function awardQuestBonus(questId) {
   ensureFamilyLeagueState();
-  const memberId = state.familyLeague.activeMemberId;
+  const memberId = currentFamilyMemberId();
   if (!memberId) return false;
   const today = missionDateKey();
   if (!state.familyLeague.questBonusByDate[today] || typeof state.familyLeague.questBonusByDate[today] !== "object") {
@@ -620,18 +682,20 @@ function renderMissionsPanel() {
   ensureFamilyLeagueState();
   const quests = dailyQuestList();
   const completedCount = quests.filter((q) => q.done).length;
-  const activeMember = state.familyLeague.members.find((m) => m.id === state.familyLeague.activeMemberId);
-  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts each${activeMember ? ` (${activeMember.name})` : ""}`;
+  const memberId = currentFamilyMemberId();
+  const member = state.familyLeague.members.find((m) => m.id === memberId);
+  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${member ? ` (${member.name})` : ""}`;
   el.missionsList.innerHTML = "";
   quests.forEach((quest) => {
     const row = document.createElement("div");
     row.className = "mission-row";
+    const statusText = quest.done ? "Complete" : "In Progress";
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title">${escapeHtml(quest.title)}</div>
         <div class="mission-sub">${escapeHtml(quest.description)}</div>
       </div>
-      ${quest.buttonLabel ? `<button class="btn" type="button">${escapeHtml(quest.done ? "Done" : quest.buttonLabel)}</button>` : `<span class="family-points">${quest.done ? "Done" : "In Progress"}</span>`}
+      ${quest.buttonLabel && !quest.done ? `<button class="btn" type="button">${escapeHtml(quest.buttonLabel)}</button>` : `<span class="family-points">${statusText}</span>`}
     `;
     const btn = row.querySelector("button");
     if (btn) {
@@ -710,13 +774,15 @@ function randomLeagueCode() {
 
 function addFamilyMember(name) {
   ensureFamilyLeagueState();
+  if (!accountSignedIn()) {
+    setAccountStatus("Sign in to add family mini-league players.", true);
+    return;
+  }
+  ensureSignedInUserInFamilyLeague();
   const clean = normalizeName(name).slice(0, 24);
   if (!clean) return;
   if (state.familyLeague.members.some((m) => (m.name || "").toLowerCase() === clean.toLowerCase())) return;
   state.familyLeague.members.push({ id: randomHexId(), name: clean, points: 0 });
-  if (!state.familyLeague.activeMemberId) {
-    state.familyLeague.activeMemberId = state.familyLeague.members[0].id;
-  }
   persistLocalMetaState();
   scheduleCloudStateSync();
 }
@@ -725,33 +791,41 @@ function randomHexId() {
   return Math.random().toString(16).slice(2, 10);
 }
 
-function setActiveFamilyMember(memberId) {
-  ensureFamilyLeagueState();
-  if (!state.familyLeague.members.some((m) => m.id === memberId)) return;
-  state.familyLeague.activeMemberId = memberId;
-  persistLocalMetaState();
-  scheduleCloudStateSync();
-}
-
 function removeFamilyMember(id) {
   ensureFamilyLeagueState();
   state.familyLeague.members = state.familyLeague.members.filter((m) => m.id !== id);
-  if (state.familyLeague.activeMemberId === id) {
-    state.familyLeague.activeMemberId = state.familyLeague.members[0]?.id || "";
-  }
   persistLocalMetaState();
   scheduleCloudStateSync();
 }
 
-function renderFamilyLeaguePanel() {
-  if (!el.familyMembers || !el.familyCodeLabel || !el.familyActiveLabel) return;
+function joinFamilyLeagueCode(code) {
   ensureFamilyLeagueState();
+  if (!accountSignedIn()) {
+    setAccountStatus("Sign in to join a family league code.", true);
+    return;
+  }
+  const clean = String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  if (!clean) return;
+  state.familyLeague.leagueCode = clean;
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  setAccountStatus(`Joined league code ${clean}.`);
+}
+
+function renderFamilyLeaguePanel() {
+  if (!el.familyMembers || !el.familyCodeLabel) return;
+  ensureFamilyLeagueState();
+  updateFamilyControlsState();
+  if (!accountSignedIn()) {
+    el.familyCodeLabel.textContent = "League code: sign in required";
+    el.familyMembers.innerHTML = `<div class="empty">Sign in to create and manage your Family Mini-League.</div>`;
+    return;
+  }
+  ensureSignedInUserInFamilyLeague();
   if (!state.familyLeague.leagueCode) {
     state.familyLeague.leagueCode = randomLeagueCode();
   }
   el.familyCodeLabel.textContent = `League code: ${state.familyLeague.leagueCode}`;
-  const activeMember = state.familyLeague.members.find((m) => m.id === state.familyLeague.activeMemberId) || null;
-  el.familyActiveLabel.textContent = `Active player: ${activeMember ? activeMember.name : "--"}`;
   el.familyMembers.innerHTML = "";
   const sorted = [...state.familyLeague.members].sort((a, b) => Number(b.points || 0) - Number(a.points || 0));
   if (!sorted.length) {
@@ -759,8 +833,10 @@ function renderFamilyLeaguePanel() {
     return;
   }
   sorted.forEach((member, index) => {
+    const signedInMemberId = accountSignedIn() ? `acct:${String(state.account.user?.id || "")}` : "";
+    const isSignedInMember = Boolean(signedInMemberId && member.id === signedInMemberId);
     const row = document.createElement("div");
-    row.className = `family-row ${member.id === state.familyLeague.activeMemberId ? "active" : ""}`;
+    row.className = `family-row ${isSignedInMember ? "active" : ""}`;
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title">#${index + 1} ${escapeHtml(member.name)}</div>
@@ -768,15 +844,9 @@ function renderFamilyLeaguePanel() {
       </div>
       <div class="account-actions">
         <span class="family-points">${Number(member.points || 0)}</span>
-        <button class="btn" type="button" data-active="1">${member.id === state.familyLeague.activeMemberId ? "Active" : "Set Active"}</button>
-        <button class="btn" type="button" data-remove="1">x</button>
+        <button class="btn" type="button" data-remove="1" ${isSignedInMember ? "disabled" : ""}>x</button>
       </div>
     `;
-    row.querySelector("button[data-active]")?.addEventListener("click", () => {
-      setActiveFamilyMember(member.id);
-      renderFamilyLeaguePanel();
-      renderMissionsPanel();
-    });
     row.querySelector("button[data-remove]")?.addEventListener("click", () => {
       removeFamilyMember(member.id);
       renderFamilyLeaguePanel();
@@ -788,11 +858,7 @@ function renderFamilyLeaguePanel() {
 
 function renderFunZone() {
   if (el.funZoneBody) {
-    el.funZoneBody.classList.toggle("hidden", !state.funZoneOpen);
-  }
-  if (el.funZoneToggleBtn) {
-    el.funZoneToggleBtn.textContent = state.funZoneOpen ? "Hide" : "Show";
-    el.funZoneToggleBtn.setAttribute("aria-expanded", String(state.funZoneOpen));
+    el.funZoneBody.classList.remove("hidden");
   }
   renderMissionsPanel();
   renderStoryCardsPanel();
@@ -1336,19 +1402,38 @@ function normalizeDreamSelections() {
 
   const poolMap = dreamPoolByKey();
   const cleanXI = [];
+  const seenXI = new Set();
   (state.dreamTeam.startingXI || []).forEach((key) => {
-    if (cleanXI.length >= 11 || cleanXI.includes(key)) return;
+    if (cleanXI.length >= 11) return;
+    if (!key) {
+      if (state.dreamManualLayout) cleanXI.push(null);
+      return;
+    }
+    if (seenXI.has(key)) return;
     const player = poolMap.get(key);
-    if (!player) return;
+    if (!player) {
+      if (state.dreamManualLayout) cleanXI.push(null);
+      return;
+    }
     const role = dreamRoleFromPosition(player.position);
-    if (role === "MGR" || role === "COACH") return;
+    if (role === "MGR" || role === "COACH") {
+      if (state.dreamManualLayout) cleanXI.push(null);
+      return;
+    }
+    seenXI.add(key);
     cleanXI.push(key);
   });
+  if (!state.dreamManualLayout) {
+    while (cleanXI.includes(null)) {
+      cleanXI.splice(cleanXI.indexOf(null), 1);
+    }
+  }
   state.dreamTeam.startingXI = cleanXI;
 
+  const xiKeys = new Set(cleanXI.filter(Boolean));
   const cleanBench = [];
   (state.dreamTeam.bench || []).forEach((key) => {
-    if (cleanBench.length >= 7 || cleanBench.includes(key) || cleanXI.includes(key)) return;
+    if (cleanBench.length >= 7 || cleanBench.includes(key) || xiKeys.has(key)) return;
     if (!poolMap.has(key)) return;
     cleanBench.push(key);
   });
@@ -1356,7 +1441,7 @@ function normalizeDreamSelections() {
   if (state.dreamSwapActiveKey && !poolMap.has(state.dreamSwapActiveKey)) {
     state.dreamSwapActiveKey = "";
   }
-  if (!state.dreamTeam.startingXI.length) {
+  if (!state.dreamTeam.startingXI.some(Boolean)) {
     state.dreamManualLayout = false;
   }
 }
@@ -1365,7 +1450,8 @@ function autoFillStartingXI() {
   normalizeDreamSelections();
   const candidates = sortSquadByRole(state.dreamTeam.pool).map((player) => player.key);
   state.dreamTeam.startingXI = autoArrangeXIKeys(candidates);
-  state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => !state.dreamTeam.startingXI.includes(key)).slice(0, 7);
+  const xiSet = new Set(state.dreamTeam.startingXI.filter(Boolean));
+  state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => !xiSet.has(key)).slice(0, 7);
   state.dreamManualLayout = false;
 }
 
@@ -1380,14 +1466,22 @@ function setDreamFormation(formation) {
 function assignPlayerToXI(playerKeyValue) {
   const player = getDreamPlayerByKey(playerKeyValue);
   if (!player) return false;
-  state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
+  state.dreamTeam.startingXI = state.dreamTeam.startingXI.map((key) => (key === playerKeyValue ? null : key));
+  if (!state.dreamManualLayout) {
+    state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter(Boolean);
+  }
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
-  if (state.dreamTeam.startingXI.length >= 11) return false;
+  if (xiFilledCount() >= 11) return false;
   if (state.dreamManualLayout) {
-    state.dreamTeam.startingXI.push(playerKeyValue);
+    const emptyIndex = state.dreamTeam.startingXI.findIndex((key) => !key);
+    if (emptyIndex >= 0) {
+      state.dreamTeam.startingXI[emptyIndex] = playerKeyValue;
+    } else {
+      state.dreamTeam.startingXI.push(playerKeyValue);
+    }
     return true;
   }
-  const arranged = autoArrangeXIKeys([...state.dreamTeam.startingXI, playerKeyValue]);
+  const arranged = autoArrangeXIKeys([...state.dreamTeam.startingXI.filter(Boolean), playerKeyValue]);
   state.dreamTeam.startingXI = arranged;
   return true;
 }
@@ -1395,7 +1489,10 @@ function assignPlayerToXI(playerKeyValue) {
 function assignPlayerToBench(playerKeyValue) {
   const player = getDreamPlayerByKey(playerKeyValue);
   if (!player) return false;
-  state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
+  state.dreamTeam.startingXI = state.dreamTeam.startingXI.map((key) => (key === playerKeyValue ? null : key));
+  if (!state.dreamManualLayout) {
+    state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter(Boolean);
+  }
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
   if (state.dreamTeam.bench.length >= 7) return false;
   state.dreamTeam.bench.push(playerKeyValue);
@@ -1403,7 +1500,14 @@ function assignPlayerToBench(playerKeyValue) {
 }
 
 function unassignDreamPlayer(playerKeyValue) {
-  state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
+  if (state.dreamTeam.startingXI.includes(playerKeyValue)) {
+    state.dreamManualLayout = true;
+    if (state.dreamManualLayout) {
+      state.dreamTeam.startingXI = state.dreamTeam.startingXI.map((key) => (key === playerKeyValue ? null : key));
+    } else {
+      state.dreamTeam.startingXI = state.dreamTeam.startingXI.filter((key) => key !== playerKeyValue);
+    }
+  }
   state.dreamTeam.bench = state.dreamTeam.bench.filter((key) => key !== playerKeyValue);
   if (state.dreamSwapActiveKey === playerKeyValue) {
     state.dreamSwapActiveKey = "";
@@ -1412,6 +1516,27 @@ function unassignDreamPlayer(playerKeyValue) {
 
 function startingXIPlayersOrdered() {
   return state.dreamTeam.startingXI.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
+}
+
+function xiFilledCount() {
+  return state.dreamTeam.startingXI.filter(Boolean).length;
+}
+
+function startingXIPlayersBySlot(slotCount = 11) {
+  const slots = new Array(slotCount).fill(null);
+  const list = state.dreamTeam.startingXI || [];
+  if (state.dreamManualLayout) {
+    for (let i = 0; i < Math.min(slotCount, list.length); i += 1) {
+      const key = list[i];
+      slots[i] = key ? getDreamPlayerByKey(key) : null;
+    }
+    return slots;
+  }
+  const ordered = startingXIPlayersOrdered();
+  for (let i = 0; i < Math.min(slotCount, ordered.length); i += 1) {
+    slots[i] = ordered[i];
+  }
+  return slots;
 }
 
 function formationSlotRoles(formation = state.dreamTeam.formation) {
@@ -1530,13 +1655,23 @@ function moveSwapActiveToXI(targetIndex = null) {
   const activeZone = dreamZoneForKey(key);
   if (!activeZone) return false;
   if (activeZone.zone === "xi") return false;
-  if (state.dreamTeam.startingXI.length >= 11) return false;
+  if (xiFilledCount() >= 11) return false;
   if (activeZone.zone === "bench") {
     state.dreamTeam.bench.splice(activeZone.index, 1);
   }
-  const maxIndex = state.dreamTeam.startingXI.length;
-  const insertIndex = Number.isInteger(targetIndex) ? Math.max(0, Math.min(maxIndex, targetIndex)) : maxIndex;
-  state.dreamTeam.startingXI.splice(insertIndex, 0, key);
+  if (state.dreamManualLayout && Number.isInteger(targetIndex)) {
+    const insertIndex = Math.max(0, Math.min(10, targetIndex));
+    while (state.dreamTeam.startingXI.length <= insertIndex) {
+      state.dreamTeam.startingXI.push(null);
+    }
+    state.dreamTeam.startingXI[insertIndex] = key;
+  } else {
+    const compact = state.dreamTeam.startingXI.filter(Boolean);
+    const maxIndex = compact.length;
+    const insertIndex = Number.isInteger(targetIndex) ? Math.max(0, Math.min(maxIndex, targetIndex)) : maxIndex;
+    compact.splice(insertIndex, 0, key);
+    state.dreamTeam.startingXI = compact.slice(0, 11);
+  }
   state.dreamManualLayout = true;
   return true;
 }
@@ -1549,7 +1684,11 @@ function moveSwapActiveToBench(targetIndex = null) {
   if (activeZone.zone === "bench") return false;
   if (state.dreamTeam.bench.length >= 7) return false;
   if (activeZone.zone === "xi") {
-    state.dreamTeam.startingXI.splice(activeZone.index, 1);
+    if (state.dreamManualLayout) {
+      state.dreamTeam.startingXI[activeZone.index] = null;
+    } else {
+      state.dreamTeam.startingXI.splice(activeZone.index, 1);
+    }
     state.dreamManualLayout = true;
   }
   const maxIndex = state.dreamTeam.bench.length;
@@ -1565,7 +1704,11 @@ function moveSwapActiveToPool() {
   if (!activeZone) return false;
   if (activeZone.zone === "pool") return false;
   if (activeZone.zone === "xi") {
-    state.dreamTeam.startingXI.splice(activeZone.index, 1);
+    if (state.dreamManualLayout) {
+      state.dreamTeam.startingXI[activeZone.index] = null;
+    } else {
+      state.dreamTeam.startingXI.splice(activeZone.index, 1);
+    }
     state.dreamManualLayout = true;
     return true;
   }
@@ -1831,10 +1974,10 @@ function renderDreamTeamPanel(reason = "default") {
   }
 
   normalizeDreamSelections();
-  const xiPlayers = startingXIPlayersOrdered();
+  const xiPlayers = startingXIPlayersBySlot(11);
   const activeSwapKey = state.dreamSwapActiveKey;
   const benchPlayers = state.dreamTeam.bench.map((key) => getDreamPlayerByKey(key)).filter(Boolean);
-  const inLineup = new Set([...state.dreamTeam.startingXI, ...state.dreamTeam.bench]);
+  const inLineup = new Set([...state.dreamTeam.startingXI.filter(Boolean), ...state.dreamTeam.bench]);
   const poolRemaining = sortSquadByRole(state.dreamTeam.pool.filter((player) => !inLineup.has(player.key)));
 
   const controls = document.createElement("section");
@@ -1845,7 +1988,7 @@ function renderDreamTeamPanel(reason = "default") {
       <select id="dream-formation-select" class="dream-formation-select">
         ${Object.keys(DREAM_TEAM_FORMATIONS).map((key) => `<option value="${key}" ${key === state.dreamTeam.formation ? "selected" : ""}>${key}</option>`).join("")}
       </select>
-      <span class="dream-counter">XI ${state.dreamTeam.startingXI.length}/11</span>
+      <span class="dream-counter">XI ${xiFilledCount()}/11</span>
       <span class="dream-counter">Bench ${state.dreamTeam.bench.length}/7</span>
       <span class="dream-counter">Pool ${state.dreamTeam.pool.length}/${state.maxDreamTeamPlayers}</span>
     </div>
@@ -1910,7 +2053,7 @@ function renderDreamTeamPanel(reason = "default") {
         });
       } else {
         slot.title = `${rowDef.label} slot`;
-        if (activeSwapKey && state.dreamTeam.startingXI.length < 11) {
+        if (activeSwapKey && xiFilledCount() < 11) {
           slot.classList.add("swap-target");
           slot.addEventListener("click", () => {
             if (!moveSwapActiveToXI(slotIndex)) return;
@@ -2006,6 +2149,18 @@ function renderDreamTeamPanel(reason = "default") {
       requestDreamTeamRender("player");
     });
     poolSection.appendChild(drop);
+    const poolSlot = document.createElement("div");
+    poolSlot.className = "dream-row swap-target";
+    poolSlot.innerHTML = `<div class="dream-main"><div class="dream-text"><span class="muted">Empty squad space (tap to place selected player here)</span></div></div>`;
+    poolSlot.addEventListener("click", () => {
+      if (!moveSwapActiveToPool()) return;
+      state.dreamSwapActiveKey = "";
+      saveDreamTeam();
+      renderDreamTeamNavState();
+      renderSquadPanel();
+      requestDreamTeamRender("player");
+    });
+    poolSection.appendChild(poolSlot);
   }
   if (!state.dreamTeam.pool.length) {
     const empty = document.createElement("p");
@@ -2161,7 +2316,15 @@ function toggleDreamTeamPlayer(player) {
       return;
     }
     state.dreamTeam.pool.push(player);
-    if (!assignPlayerToXI(player.key) && state.dreamTeam.bench.length < 7) {
+    const addingOutsideDreamUi = !state.dreamTeamOpen;
+    if (addingOutsideDreamUi) {
+      state.dreamManualLayout = false;
+      autoFillStartingXI();
+      const xiSet = new Set(state.dreamTeam.startingXI.filter(Boolean));
+      if (!xiSet.has(player.key) && state.dreamTeam.bench.length < 7) {
+        assignPlayerToBench(player.key);
+      }
+    } else if (!assignPlayerToXI(player.key) && state.dreamTeam.bench.length < 7) {
       assignPlayerToBench(player.key);
     }
     state.dreamSwapActiveKey = "";
@@ -3109,6 +3272,7 @@ async function initAccountSession() {
   renderAccountUI();
   if (!state.account.token) {
     setAccountStatus("Logged out. Existing features still work locally.");
+    renderFamilyLeaguePanel();
     return;
   }
   try {
@@ -3116,13 +3280,17 @@ async function initAccountSession() {
     state.account.user = me.user || null;
     if (!state.account.user) throw new Error("Session expired");
     await loadCloudState();
+    ensureSignedInUserInFamilyLeague();
+    persistLocalMetaState();
     renderAccountUI();
+    renderFamilyLeaguePanel();
     setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
   } catch (err) {
     state.account.token = "";
     state.account.user = null;
     localStorage.removeItem("ezra_account_token");
     renderAccountUI();
+    renderFamilyLeaguePanel();
     setAccountStatus(`Logged out. ${err.message}`, true);
   }
 }
@@ -3134,8 +3302,11 @@ async function registerAccount() {
   state.account.token = data.token || "";
   state.account.user = data.user || null;
   localStorage.setItem("ezra_account_token", state.account.token);
+  ensureSignedInUserInFamilyLeague();
+  persistLocalMetaState();
   await syncCloudStateNow();
   renderAccountUI();
+  renderFamilyLeaguePanel();
   setAccountStatus(`Account created. Cloud save enabled for ${state.account.user?.name || "user"}.`);
 }
 
@@ -3147,7 +3318,11 @@ async function loginAccount() {
   state.account.user = data.user || null;
   localStorage.setItem("ezra_account_token", state.account.token);
   await loadCloudState();
+  ensureSignedInUserInFamilyLeague();
+  persistLocalMetaState();
+  scheduleCloudStateSync();
   renderAccountUI();
+  renderFamilyLeaguePanel();
   setAccountStatus(`Signed in as ${state.account.user?.name || "user"}.`);
 }
 
@@ -3163,6 +3338,7 @@ async function logoutAccount() {
   }
   localStorage.removeItem("ezra_account_token");
   renderAccountUI();
+  renderFamilyLeaguePanel();
   setAccountStatus("Logged out. Existing features still work locally.");
 }
 
@@ -3345,7 +3521,7 @@ function ensureDefaultFavoriteTeam() {
 }
 
 function isMobileViewport() {
-  return window.matchMedia("(max-width: 720px)").matches;
+  return window.matchMedia("(max-width: 980px)").matches;
 }
 
 function positionFavoritePickerMenu() {
@@ -3502,15 +3678,16 @@ function buildPredictionModule(event, stateInfo) {
   const wrapper = document.createElement("section");
   wrapper.className = "fixture-predict";
   ensureFamilyLeagueState();
-  const activeMember = state.familyLeague.members.find((m) => m.id === state.familyLeague.activeMemberId) || null;
+  const currentId = currentFamilyMemberId();
+  const activeMember = state.familyLeague.members.find((m) => m.id === currentId) || null;
   const record = ensurePredictionRecord(event);
-  const memberPick = activeMember && record ? record.entries?.[activeMember.id] : null;
+  const memberPick = activeMember && record ? record.entries?.[currentId] : null;
   const canPredict = canPredictFixture(event, stateInfo) && Boolean(activeMember) && Boolean(record && !record.settled);
   const kickoff = fixtureKickoffDate(event);
   const lockReason = !event?.idEvent
     ? "Prediction unavailable for this fixture."
     : !activeMember
-    ? "Set an active player in Family Mini-League to submit predictions."
+    ? "Sign in to submit your prediction."
     : stateInfo.key !== "upcoming"
       ? "Predictions close when the match starts."
       : kickoff && kickoff.getTime() <= Date.now()
@@ -3519,9 +3696,17 @@ function buildPredictionModule(event, stateInfo) {
   wrapper.innerHTML = `
     <div class="predict-head">Predict the score?</div>
     <div class="predict-form">
-      <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="H" />
+      <div class="predict-score-stack">
+        <button class="btn predict-step-btn plus" type="button" data-step-target="home" aria-label="Increase home score">＋</button>
+        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="H" />
+        <button class="btn predict-step-btn minus" type="button" data-step-target="home" aria-label="Decrease home score">－</button>
+      </div>
       <span>-</span>
-      <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="A" />
+      <div class="predict-score-stack">
+        <button class="btn predict-step-btn plus" type="button" data-step-target="away" aria-label="Increase away score">＋</button>
+        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="A" />
+        <button class="btn predict-step-btn minus" type="button" data-step-target="away" aria-label="Decrease away score">－</button>
+      </div>
       <button class="btn" type="button">${memberPick ? "Update Pick" : "Save Pick"}</button>
     </div>
     <div class="predict-status"></div>
@@ -3531,6 +3716,15 @@ function buildPredictionModule(event, stateInfo) {
   const status = wrapper.querySelector(".predict-status");
   const homeInput = inputs[0];
   const awayInput = inputs[1];
+  const step = (targetInput, delta) => {
+    const current = Number(targetInput.value || 0);
+    const next = Math.max(0, Math.min(20, Number.isFinite(current) ? current + delta : Math.max(0, delta)));
+    targetInput.value = String(next);
+  };
+  wrapper.querySelectorAll("button[data-step-target='home'].plus").forEach((btn) => btn.addEventListener("click", () => step(homeInput, 1)));
+  wrapper.querySelectorAll("button[data-step-target='home'].minus").forEach((btn) => btn.addEventListener("click", () => step(homeInput, -1)));
+  wrapper.querySelectorAll("button[data-step-target='away'].plus").forEach((btn) => btn.addEventListener("click", () => step(awayInput, 1)));
+  wrapper.querySelectorAll("button[data-step-target='away'].minus").forEach((btn) => btn.addEventListener("click", () => step(awayInput, -1)));
   if (memberPick) {
     homeInput.value = String(memberPick.home);
     awayInput.value = String(memberPick.away);
@@ -3538,6 +3732,11 @@ function buildPredictionModule(event, stateInfo) {
   if (record?.settled && memberPick) {
     const extra = Number.isFinite(Number(memberPick.awarded)) ? ` • +${Number(memberPick.awarded)} pts` : "";
     status.textContent = `Final: ${record.finalHome}-${record.finalAway}. Your pick: ${memberPick.home}-${memberPick.away}${extra}`;
+    if (Number(memberPick.awarded) === 2) {
+      status.insertAdjacentHTML("beforeend", ` <span class="predict-success-label">Perfect Scoreline</span>`);
+    } else if (Number(memberPick.awarded) === 1) {
+      status.insertAdjacentHTML("beforeend", ` <span class="predict-success-label">Correct Result</span>`);
+    }
   } else if (memberPick) {
     status.textContent = `Your pick: ${memberPick.home}-${memberPick.away}${activeMember ? ` (${activeMember.name})` : ""}`;
   } else if (lockReason) {
@@ -3549,6 +3748,9 @@ function buildPredictionModule(event, stateInfo) {
     saveBtn.disabled = true;
     homeInput.disabled = true;
     awayInput.disabled = true;
+    wrapper.querySelectorAll(".predict-step-btn").forEach((btn) => {
+      btn.disabled = true;
+    });
     return wrapper;
   }
   saveBtn.addEventListener("click", () => {
@@ -3559,7 +3761,7 @@ function buildPredictionModule(event, stateInfo) {
       return;
     }
     const freshRecord = ensurePredictionRecord(event);
-    freshRecord.entries[activeMember.id] = {
+    freshRecord.entries[currentId] = {
       home,
       away,
       submittedAt: new Date().toISOString(),
@@ -3953,12 +4155,49 @@ function renderFixtures() {
     el.stickyDateLabel.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   }
   setDateButtonState();
+  renderMobileSectionLayout();
 }
 
 function selectedEventsForCurrentView() {
   return state.selectedLeague === "ALL"
     ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
     : [...state.selectedDateFixtures[state.selectedLeague]];
+}
+
+function setMobileTab(tab) {
+  const safe = ["fixtures", "table", "fun"].includes(tab) ? tab : "fixtures";
+  state.mobileTab = safe;
+  renderMobileSectionLayout();
+}
+
+function renderMobileSectionLayout() {
+  const mobile = isMobileViewport();
+  const controls = el.controlsPanel;
+  const fixtures = document.getElementById("fixtures-panel");
+  const tables = document.getElementById("table-panel");
+  const fun = document.getElementById("fun-zone-panel");
+  if (!controls || !fixtures || !tables || !fun) return;
+
+  if (!mobile) {
+    el.mobileTabsPanel?.classList.add("hidden");
+    controls.classList.remove("hidden");
+    fixtures.classList.remove("hidden");
+    tables.classList.remove("hidden");
+    fun.classList.remove("hidden");
+    return;
+  }
+
+  el.mobileTabsPanel?.classList.remove("hidden");
+  el.mobileTabButtons.forEach((btn) => {
+    const active = btn.dataset.mobileTab === state.mobileTab;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  });
+
+  controls.classList.toggle("hidden", state.mobileTab === "fun");
+  fixtures.classList.toggle("hidden", state.mobileTab !== "fixtures");
+  tables.classList.toggle("hidden", state.mobileTab !== "table");
+  fun.classList.toggle("hidden", state.mobileTab !== "fun");
 }
 
 function canPatchFixtureRows(events) {
@@ -4587,9 +4826,6 @@ async function renderFavorite() {
 
   el.favoriteStatus.textContent = "Match Centre";
   clearFavoriteGoalCinematic();
-  if (todayPrimaryEvent && todayPrimaryEvent.dateEvent === todayIso) {
-    el.favoriteStatus.classList.add("gameday");
-  }
 
   if (todayPrimaryEvent && eventState(todayPrimaryEvent).key === "upcoming") {
     const todaySummary = nextFixtureSummary(team, todayPrimaryEvent);
@@ -4914,6 +5150,10 @@ function attachEvents() {
 
   if (el.familyAddMemberBtn) {
     el.familyAddMemberBtn.addEventListener("click", () => {
+      if (!accountSignedIn()) {
+        setAccountStatus("Sign in to add family mini-league players.", true);
+        return;
+      }
       addFamilyMember(el.familyMemberInput?.value || "");
       if (el.familyMemberInput) el.familyMemberInput.value = "";
       renderFamilyLeaguePanel();
@@ -4922,6 +5162,10 @@ function attachEvents() {
 
   if (el.familyCreateCodeBtn) {
     el.familyCreateCodeBtn.addEventListener("click", () => {
+      if (!accountSignedIn()) {
+        setAccountStatus("Sign in to create a family league code.", true);
+        return;
+      }
       ensureFamilyLeagueState();
       state.familyLeague.leagueCode = randomLeagueCode();
       persistLocalMetaState();
@@ -4930,13 +5174,23 @@ function attachEvents() {
     });
   }
 
-  if (el.funZoneToggleBtn) {
-    el.funZoneToggleBtn.addEventListener("click", () => {
-      state.funZoneOpen = !state.funZoneOpen;
-      localStorage.setItem("ezra_funzone_open", state.funZoneOpen ? "1" : "0");
-      renderFunZone();
+  if (el.familyJoinCodeBtn) {
+    el.familyJoinCodeBtn.addEventListener("click", () => {
+      if (!accountSignedIn()) {
+        setAccountStatus("Sign in to join a family league code.", true);
+        return;
+      }
+      joinFamilyLeagueCode(el.familyJoinCodeInput?.value || "");
+      if (el.familyJoinCodeInput) el.familyJoinCodeInput.value = "";
+      renderFamilyLeaguePanel();
     });
   }
+
+  el.mobileTabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setMobileTab(btn.dataset.mobileTab || "fixtures");
+    });
+  });
 
   if (el.settingsToggleBtn) {
     el.settingsToggleBtn.addEventListener("click", (event) => {
@@ -5031,6 +5285,7 @@ function attachEvents() {
   window.addEventListener("resize", () => {
     updateStickyDateBarVisibility();
     positionFavoritePickerMenu();
+    renderMobileSectionLayout();
     if (!state.playerPopEnabled || !el.playerDvdLayer || el.playerDvdLayer.classList.contains("hidden")) return;
     const pop = state.playerPop;
     pop.x = Math.max(0, Math.min(pop.x, window.innerWidth - pop.size));
@@ -5155,6 +5410,7 @@ initRevealOnScroll();
 updateStickyDateBarVisibility();
 persistLocalMetaState();
 renderFunZone();
+renderMobileSectionLayout();
 if (state.playerPopEnabled) {
   showRandomPlayerPop();
 }

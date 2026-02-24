@@ -289,7 +289,7 @@ body[data-theme="club"] {
 
 .app-shell {
   width: min(1180px, 100% - 1.4rem);
-  margin: 1rem auto;
+  margin: max(0.85rem, calc(env(safe-area-inset-top, 0px) + 0.55rem)) auto 1rem;
 }
 
 img {
@@ -342,6 +342,23 @@ body[data-theme="club"] .footer {
   gap: 0.8rem;
   margin-bottom: 0.9rem;
   overflow: visible;
+}
+
+.mobile-tabs-panel {
+  display: none;
+  padding: 0.45rem;
+  margin-bottom: 0.7rem;
+}
+
+.mobile-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.mobile-tab-btn {
+  min-width: 0;
+  text-align: center;
 }
 
 .hero-actions {
@@ -1493,6 +1510,36 @@ body.dream-team-overlay-open::before {
   flex-wrap: wrap;
 }
 
+.predict-score-stack {
+  display: inline-grid;
+  grid-template-rows: 1.4rem 2rem 1.4rem;
+  align-items: center;
+  justify-items: center;
+  gap: 0.12rem;
+}
+
+.predict-step-btn {
+  min-width: 1.8rem;
+  min-height: 1.2rem;
+  height: 1.2rem;
+  padding: 0;
+  border-radius: 0.55rem;
+  font-size: 0.92rem;
+  line-height: 1;
+}
+
+.predict-step-btn.plus {
+  border-color: #2f8f44;
+  color: #d7ffe0;
+  background: rgba(60, 140, 76, 0.2);
+}
+
+.predict-step-btn.minus {
+  border-color: #c8372b;
+  color: #ffd2d2;
+  background: rgba(200, 55, 43, 0.2);
+}
+
 .predict-input {
   width: 3.2rem;
   min-height: 1.9rem;
@@ -1507,6 +1554,16 @@ body.dream-team-overlay-open::before {
 .predict-status {
   margin-top: 0.28rem;
   color: var(--text-soft);
+}
+
+.predict-success-label {
+  display: inline-flex;
+  margin-top: 0.26rem;
+  border-radius: 999px;
+  border: 1px solid #2f8f44;
+  background: rgba(60, 140, 76, 0.22);
+  color: #d7ffe0;
+  padding: 0.08rem 0.5rem;
 }
 
 @media (max-width: 980px) {
@@ -1919,7 +1976,6 @@ body[data-theme="t90"] .status-pill.live {
 .status-pill.gameday {
   background: rgba(255, 160, 25, 0.22);
   border-color: #9a5e15;
-  animation: pulse 1.05s infinite steps(2, end);
 }
 
 .status-pill.final {
@@ -3055,7 +3111,17 @@ body[data-motion="arcade"] .fixture-focus {
 
   .app-shell {
     width: calc(100% - 1rem);
-    margin: 0.6rem auto;
+    margin: max(0.6rem, calc(env(safe-area-inset-top, 0px) + 0.5rem)) auto;
+  }
+
+  .mobile-tabs-panel {
+    display: block;
+  }
+
+  .mobile-tab-btn.active {
+    border-color: var(--amber-soft);
+    color: #ffcf8f;
+    background: rgba(255, 153, 32, 0.12);
   }
 
   .filter-group,
