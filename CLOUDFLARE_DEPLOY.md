@@ -16,6 +16,22 @@ Set this in your Cloudflare project:
 
 You can rotate the key later without changing client code.
 
+## Optional account storage (recommended)
+Accounts + cloud save require a Cloudflare D1 binding named:
+- `EZRA_DB`
+
+If `EZRA_DB` is not configured, the app still works fully in logged-out/local mode and account endpoints return a setup error.
+
+### Add D1 binding to Pages
+1. Create D1 database in Cloudflare dashboard.
+2. In your Pages project, add binding:
+   - Type: `D1 database`
+   - Variable name: `EZRA_DB`
+   - Value: your D1 database
+3. Redeploy.
+
+The account tables are auto-created on first account request by the function.
+
 ## Server-side table scheduler (Cron Worker)
 Tables are now served from `/api/v1/ezra/tables?l=...` and refreshed server-side:
 - every 1 minute when live games are detected

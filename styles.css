@@ -1372,6 +1372,10 @@ body.dream-team-overlay-open::before {
   line-height: 1.2;
 }
 
+.settings-note.error {
+  color: #ff8f8f;
+}
+
 .dream-row {
   display: flex;
   align-items: center;

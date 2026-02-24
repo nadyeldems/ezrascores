@@ -12,6 +12,7 @@ const LEAGUES = {
 };
 const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
 const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
+const STORED_ACCOUNT_TOKEN = localStorage.getItem("ezra_account_token") || "";
 const DREAM_TEAM_FORMATIONS = {
   "4-3-3": { DEF: 4, MID: 3, FWD: 3 },
   "4-4-2": { DEF: 4, MID: 4, FWD: 2 },
@@ -39,6 +40,29 @@ function defaultDreamTeamState() {
     startingXI: [],
     bench: [],
   };
+}
+
+function parseStoredJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function defaultMissionState() {
+  return { xp: 0, streak: 0, completed: [], lastPlayed: null };
+}
+
+function defaultStoryCardState() {
+  return { density: "standard", focusTeamIds: [] };
+}
+
+function defaultFamilyLeagueState() {
+  return { displayName: "", leagueCode: "", points: 0 };
 }
 
 function loadDreamTeamState() {
@@ -125,6 +149,15 @@ const state = {
   dreamTeam: loadDreamTeamState(),
   dreamSwapActiveKey: "",
   dreamManualLayout: false,
+  missions: parseStoredJson("ezra_missions", defaultMissionState()),
+  storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
+  familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
+  account: {
+    token: STORED_ACCOUNT_TOKEN,
+    user: null,
+    syncTimer: null,
+    syncing: false,
+  },
   maxDreamTeamPlayers: 18,
   dreamTeamOpen: false,
   squadOpen: false,
@@ -199,6 +232,16 @@ const el = {
   settingsMenu: document.getElementById("settings-menu"),
   settingsToggleBtn: document.getElementById("settings-toggle-btn"),
   settingsPanel: document.getElementById("settings-panel"),
+  accountAuthSignedOut: document.getElementById("account-auth-signedout"),
+  accountAuthSignedIn: document.getElementById("account-auth-signedin"),
+  accountNameInput: document.getElementById("account-name-input"),
+  accountPinInput: document.getElementById("account-pin-input"),
+  accountRegisterBtn: document.getElementById("account-register-btn"),
+  accountLoginBtn: document.getElementById("account-login-btn"),
+  accountSyncBtn: document.getElementById("account-sync-btn"),
+  accountLogoutBtn: document.getElementById("account-logout-btn"),
+  accountUserLabel: document.getElementById("account-user-label"),
+  accountStatus: document.getElementById("account-status"),
   motionButtons: [...document.querySelectorAll(".motion-btn")],
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
@@ -257,6 +300,7 @@ function applyMotionSetting(level) {
   document.body.setAttribute("data-motion", safeLevel);
   localStorage.setItem("ezra_motion_level", safeLevel);
   setMotionButtonState();
+  scheduleCloudStateSync();
 }
 
 function applyUiTheme(theme) {
@@ -270,6 +314,7 @@ function applyUiTheme(theme) {
   } else {
     applyClubThemeFromFavoriteTeam();
   }
+  scheduleCloudStateSync();
 }
 
 function setPlayerPopButtonState() {
@@ -289,6 +334,7 @@ function setPlayerPopScope(scope) {
   state.playerPopScope = safeScope;
   localStorage.setItem("ezra_player_pop_scope", safeScope);
   setPlayerSourceButtonState();
+  scheduleCloudStateSync();
 }
 
 function setSettingsMenuOpen(open) {
@@ -296,6 +342,32 @@ function setSettingsMenuOpen(open) {
   if (!el.settingsPanel || !el.settingsToggleBtn) return;
   el.settingsPanel.classList.toggle("hidden", !state.settingsOpen);
   el.settingsToggleBtn.setAttribute("aria-expanded", String(state.settingsOpen));
+}
+
+function accountSignedIn() {
+  return Boolean(state.account?.token && state.account?.user?.id);
+}
+
+function setAccountStatus(text, isError = false) {
+  if (!el.accountStatus) return;
+  el.accountStatus.textContent = text;
+  el.accountStatus.classList.toggle("error", Boolean(isError));
+}
+
+function renderAccountUI() {
+  if (!el.accountAuthSignedOut || !el.accountAuthSignedIn || !el.accountUserLabel) return;
+  const signedIn = accountSignedIn();
+  el.accountAuthSignedOut.classList.toggle("hidden", signedIn);
+  el.accountAuthSignedIn.classList.toggle("hidden", !signedIn);
+  if (signedIn) {
+    el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
+  }
+}
+
+function persistLocalMetaState() {
+  localStorage.setItem("ezra_missions", JSON.stringify(state.missions || defaultMissionState()));
+  localStorage.setItem("ezra_story_cards", JSON.stringify(state.storyCards || defaultStoryCardState()));
+  localStorage.setItem("ezra_family_league", JSON.stringify(state.familyLeague || defaultFamilyLeagueState()));
 }
 
 function normalizeHexColor(value) {
@@ -787,6 +859,7 @@ function renderPlayerQuiz(player) {
 function saveDreamTeam() {
   normalizeDreamSelections();
   localStorage.setItem("ezra_dream_team", JSON.stringify(state.dreamTeam));
+  scheduleCloudStateSync();
 }
 
 function isDreamPlayer(playerKeyValue) {
@@ -2178,9 +2251,11 @@ function setPlayerPopEnabled(enabled) {
   setPlayerPopButtonState();
   if (!state.playerPopEnabled) {
     hidePlayerPopLayer();
+    scheduleCloudStateSync();
     return;
   }
   showRandomPlayerPop();
+  scheduleCloudStateSync();
 }
 
 function revealAndDismissPlayerPop() {
@@ -2471,6 +2546,176 @@ async function apiGetV2(path) {
     throw new Error(`API call failed (${res.status}) for ${path}`);
   }
   return res.json();
+}
+
+async function apiRequest(method, path, body = null, token = "") {
+  const headers = {};
+  if (body !== null) headers["Content-Type"] = "application/json";
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body !== null ? JSON.stringify(body) : undefined,
+  });
+  const isJson = (res.headers.get("Content-Type") || "").includes("application/json");
+  const payload = isJson ? await res.json() : { error: await res.text() };
+  if (!res.ok) {
+    throw new Error(payload?.error || `Request failed (${res.status})`);
+  }
+  return payload;
+}
+
+function buildCloudStatePayload() {
+  return {
+    favoriteTeamId: state.favoriteTeamId || "",
+    uiTheme: state.uiTheme,
+    motionLevel: state.motionLevel,
+    playerPopEnabled: state.playerPopEnabled,
+    playerPopScope: state.playerPopScope,
+    dreamTeam: state.dreamTeam,
+    playerQuiz: {
+      correctCount: state.playerQuiz.correctCount || 0,
+      allCorrect: Boolean(state.playerQuiz.allCorrect),
+    },
+    missions: state.missions || defaultMissionState(),
+    storyCards: state.storyCards || defaultStoryCardState(),
+    familyLeague: state.familyLeague || defaultFamilyLeagueState(),
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function applyCloudState(cloudState) {
+  if (!cloudState || typeof cloudState !== "object") return;
+  if (typeof cloudState.favoriteTeamId === "string") {
+    state.favoriteTeamId = cloudState.favoriteTeamId;
+    if (state.favoriteTeamId) localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
+  }
+  if (typeof cloudState.uiTheme === "string") {
+    applyUiTheme(cloudState.uiTheme);
+  }
+  if (typeof cloudState.motionLevel === "string") {
+    applyMotionSetting(cloudState.motionLevel);
+  }
+  if (typeof cloudState.playerPopScope === "string") {
+    setPlayerPopScope(cloudState.playerPopScope);
+  }
+  if (typeof cloudState.playerPopEnabled === "boolean") {
+    state.playerPopEnabled = cloudState.playerPopEnabled;
+    localStorage.setItem("ezra_player_pop_enabled", state.playerPopEnabled ? "1" : "0");
+    setPlayerPopButtonState();
+  }
+  if (cloudState.dreamTeam && typeof cloudState.dreamTeam === "object") {
+    state.dreamTeam = {
+      ...defaultDreamTeamState(),
+      ...cloudState.dreamTeam,
+      staff: {
+        manager: cloudState.dreamTeam.staff?.manager || null,
+        coaches: Array.isArray(cloudState.dreamTeam.staff?.coaches) ? cloudState.dreamTeam.staff.coaches : [],
+      },
+      pool: Array.isArray(cloudState.dreamTeam.pool) ? cloudState.dreamTeam.pool : [],
+      startingXI: Array.isArray(cloudState.dreamTeam.startingXI) ? cloudState.dreamTeam.startingXI : [],
+      bench: Array.isArray(cloudState.dreamTeam.bench) ? cloudState.dreamTeam.bench : [],
+    };
+    localStorage.setItem("ezra_dream_team", JSON.stringify(state.dreamTeam));
+    normalizeDreamSelections();
+    renderDreamTeamNavState();
+    requestDreamTeamRender("player");
+  }
+  state.missions = cloudState.missions && typeof cloudState.missions === "object" ? cloudState.missions : state.missions;
+  state.storyCards = cloudState.storyCards && typeof cloudState.storyCards === "object" ? cloudState.storyCards : state.storyCards;
+  state.familyLeague = cloudState.familyLeague && typeof cloudState.familyLeague === "object" ? cloudState.familyLeague : state.familyLeague;
+  persistLocalMetaState();
+}
+
+async function loadCloudState() {
+  if (!state.account.token) return;
+  const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/state`, null, state.account.token);
+  applyCloudState(data?.state || {});
+}
+
+async function syncCloudStateNow() {
+  if (!accountSignedIn() || state.account.syncing) return;
+  state.account.syncing = true;
+  try {
+    await apiRequest("PUT", `${API_PROXY_BASE}/v1/ezra/account/state`, { state: buildCloudStatePayload() }, state.account.token);
+    setAccountStatus(`Cloud saved ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`);
+  } catch (err) {
+    setAccountStatus(`Sync failed: ${err.message}`, true);
+  } finally {
+    state.account.syncing = false;
+  }
+}
+
+function scheduleCloudStateSync(delayMs = 1200) {
+  if (!accountSignedIn()) return;
+  if (state.account.syncTimer) {
+    clearTimeout(state.account.syncTimer);
+  }
+  state.account.syncTimer = setTimeout(() => {
+    state.account.syncTimer = null;
+    syncCloudStateNow();
+  }, delayMs);
+}
+
+async function initAccountSession() {
+  renderAccountUI();
+  if (!state.account.token) {
+    setAccountStatus("Logged out. Existing features still work locally.");
+    return;
+  }
+  try {
+    const me = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/me`, null, state.account.token);
+    state.account.user = me.user || null;
+    if (!state.account.user) throw new Error("Session expired");
+    await loadCloudState();
+    renderAccountUI();
+    setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
+  } catch (err) {
+    state.account.token = "";
+    state.account.user = null;
+    localStorage.removeItem("ezra_account_token");
+    renderAccountUI();
+    setAccountStatus(`Logged out. ${err.message}`, true);
+  }
+}
+
+async function registerAccount() {
+  const name = el.accountNameInput?.value || "";
+  const pin = el.accountPinInput?.value || "";
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin });
+  state.account.token = data.token || "";
+  state.account.user = data.user || null;
+  localStorage.setItem("ezra_account_token", state.account.token);
+  await syncCloudStateNow();
+  renderAccountUI();
+  setAccountStatus(`Account created. Cloud save enabled for ${state.account.user?.name || "user"}.`);
+}
+
+async function loginAccount() {
+  const name = el.accountNameInput?.value || "";
+  const pin = el.accountPinInput?.value || "";
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/login`, { name, pin });
+  state.account.token = data.token || "";
+  state.account.user = data.user || null;
+  localStorage.setItem("ezra_account_token", state.account.token);
+  await loadCloudState();
+  renderAccountUI();
+  setAccountStatus(`Signed in as ${state.account.user?.name || "user"}.`);
+}
+
+async function logoutAccount() {
+  if (state.account.token) {
+    await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/logout`, {}, state.account.token).catch(() => null);
+  }
+  state.account.token = "";
+  state.account.user = null;
+  if (state.account.syncTimer) {
+    clearTimeout(state.account.syncTimer);
+    state.account.syncTimer = null;
+  }
+  localStorage.removeItem("ezra_account_token");
+  renderAccountUI();
+  setAccountStatus("Logged out. Existing features still work locally.");
 }
 
 async function fetchLeagueDayFixtures(leagueId, dateIso) {
@@ -3265,6 +3510,7 @@ function buildFavoriteOptions() {
     }
     closeFavoritePickerMenu();
     await renderFavorite();
+    scheduleCloudStateSync();
   });
   el.favoritePickerMenu.appendChild(clearBtn);
 
@@ -3290,6 +3536,7 @@ function buildFavoriteOptions() {
       setFavoritePickerDisplay(team);
       closeFavoritePickerMenu();
       await renderFavorite();
+      scheduleCloudStateSync();
     });
     el.favoritePickerMenu.appendChild(btn);
   });
@@ -3998,6 +4245,40 @@ async function fullRefresh() {
 }
 
 function attachEvents() {
+  if (el.accountRegisterBtn) {
+    el.accountRegisterBtn.addEventListener("click", async () => {
+      try {
+        setAccountStatus("Creating account...");
+        await registerAccount();
+      } catch (err) {
+        setAccountStatus(`Create account failed: ${err.message}`, true);
+      }
+    });
+  }
+
+  if (el.accountLoginBtn) {
+    el.accountLoginBtn.addEventListener("click", async () => {
+      try {
+        setAccountStatus("Signing in...");
+        await loginAccount();
+      } catch (err) {
+        setAccountStatus(`Sign in failed: ${err.message}`, true);
+      }
+    });
+  }
+
+  if (el.accountLogoutBtn) {
+    el.accountLogoutBtn.addEventListener("click", async () => {
+      await logoutAccount();
+    });
+  }
+
+  if (el.accountSyncBtn) {
+    el.accountSyncBtn.addEventListener("click", async () => {
+      await syncCloudStateNow();
+    });
+  }
+
   if (el.settingsToggleBtn) {
     el.settingsToggleBtn.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -4205,6 +4486,7 @@ applyUiTheme(state.uiTheme);
 applyMotionSetting(state.motionLevel);
 setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
+renderAccountUI();
 refreshPlayerPopScoreBadge();
 normalizeDreamSelections();
 renderDreamTeamNavState();
@@ -4212,7 +4494,10 @@ requestDreamTeamRender();
 setSettingsMenuOpen(false);
 initRevealOnScroll();
 updateStickyDateBarVisibility();
+persistLocalMetaState();
 if (state.playerPopEnabled) {
   showRandomPlayerPop();
 }
-fullRefresh();
+initAccountSession().finally(() => {
+  fullRefresh();
+});
