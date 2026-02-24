@@ -691,7 +691,7 @@ body[data-theme="t90"] .player-dvd-avatar {
 .player-quiz-card {
   position: absolute;
   left: 50%;
-  top: 50%;
+  top: calc(50% + 44px);
   transform: translate(-50%, -50%);
   width: min(420px, calc(100vw - 1.2rem));
   border: 1px solid var(--line);
@@ -706,7 +706,7 @@ body[data-theme="t90"] .player-dvd-avatar {
 .player-quiz-focus {
   position: absolute;
   left: 50%;
-  top: calc(50% - 140px);
+  top: calc(50% - 168px);
   transform: translateX(-50%);
   width: 122px;
   height: 122px;
@@ -724,7 +724,7 @@ body[data-theme="t90"] .player-dvd-avatar {
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
-  z-index: 1201;
+  z-index: 1204;
 }
 
 .player-quiz-focus.active {
@@ -1326,6 +1326,23 @@ body.dream-team-overlay-open::before {
 .dream-group h4 {
   margin: 0 0 0.35rem;
   color: var(--text);
+}
+
+.pool-group > .muted {
+  margin: 0 0 0.4rem;
+  line-height: 1.2;
+}
+
+.dream-pool-drop {
+  margin: 0 0 0.5rem;
+}
+
+.pool-group .dream-row {
+  padding-block: 0.38rem;
+}
+
+.pool-group .dream-actions-inline {
+  justify-content: flex-end;
 }
 
 .dream-row {

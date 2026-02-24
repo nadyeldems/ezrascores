@@ -774,7 +774,7 @@ function renderPlayerQuiz(player) {
       setTimeout(async () => {
         hidePlayerQuizCard();
         setQuizLocked(false);
-        await showRandomPlayerPop();
+        await showRandomPlayerPop(true);
       }, 1200);
     });
     el.playerQuizOptions.appendChild(btn);
@@ -1478,12 +1478,16 @@ function renderDreamTeamPanel(reason = "default") {
   el.dreamTeamList.appendChild(benchSection);
 
   const poolSection = document.createElement("section");
-  poolSection.className = "dream-group";
+  poolSection.className = "dream-group pool-group";
   poolSection.innerHTML = "<h4>Player Pool (Tap to Activate / Swap)</h4>";
+  const poolHint = document.createElement("p");
+  poolHint.className = "muted";
+  poolHint.textContent = "Select a player, then tap XI/Bench/Pool targets to move or swap.";
+  poolSection.appendChild(poolHint);
   if (activeSwapKey) {
     const drop = document.createElement("button");
     drop.type = "button";
-    drop.className = "btn";
+    drop.className = "btn dream-pool-drop";
     drop.textContent = "Move selected player to Squad Pool";
     drop.addEventListener("click", () => {
       if (!moveSwapActiveToPool()) return;
@@ -1521,7 +1525,7 @@ function renderDreamTeamPanel(reason = "default") {
           <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
           <div class="dream-text">
             <span class="dream-name">${player.name}</span>
-            <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.teamName}</span>
+            <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.position || "Unknown"} • ${player.teamName}</span>
           </div>
         </div>
         <div class="dream-actions-inline">
@@ -1556,7 +1560,7 @@ function renderDreamTeamPanel(reason = "default") {
 
   const staffSection = document.createElement("section");
   staffSection.className = "dream-group";
-  staffSection.innerHTML = "<h4>Staff (not counted in 18)</h4>";
+  staffSection.innerHTML = "<h4>Staff</h4>";
   const staffList = [];
   if (state.dreamTeam.staff.manager) {
     staffList.push({ label: "Manager", player: state.dreamTeam.staff.manager });
@@ -2111,9 +2115,28 @@ function startPlayerPopAnimation() {
   pop.rafId = requestAnimationFrame(tickPlayerPop);
 }
 
-async function showRandomPlayerPop() {
+function ensurePlayerPopContinuity() {
+  if (!state.playerPopEnabled || !el.playerDvdLayer || !el.playerDvdAvatar) return;
+  const pop = state.playerPop;
+  if (el.playerDvdLayer.classList.contains("hidden")) return;
+  if (!pop.player) return;
+  if (!pop.running) {
+    startPlayerPopAnimation();
+  }
+}
+
+async function showRandomPlayerPop(forceNew = false) {
   if (state.playerPop.loading || !state.playerPopEnabled) return;
   if (!el.playerDvdLayer || !el.playerDvdImage || !el.playerDvdAvatar || !el.playerDvdName) return;
+  if (
+    !forceNew &&
+    state.playerPop.player &&
+    !el.playerDvdLayer.classList.contains("hidden") &&
+    !el.playerDvdLayer.classList.contains("quiz-active")
+  ) {
+    ensurePlayerPopContinuity();
+    return;
+  }
   state.playerPop.loading = true;
   try {
     const player = await randomLeaguePlayerWithCutout();
@@ -3960,6 +3983,7 @@ async function fullRefresh() {
     if (state.playerPopEnabled && el.playerDvdLayer?.classList.contains("hidden")) {
       showRandomPlayerPop();
     }
+    ensurePlayerPopContinuity();
 
     state.lastRefresh = new Date();
     renderLastRefreshed();
@@ -4004,7 +4028,7 @@ function attachEvents() {
     btn.addEventListener("click", async () => {
       setPlayerPopScope(btn.dataset.playerSource);
       if (state.playerPopEnabled) {
-        await showRandomPlayerPop();
+        await showRandomPlayerPop(true);
       }
     });
   });
@@ -4168,6 +4192,11 @@ function attachEvents() {
   window.addEventListener("scroll", () => {
     updateStickyDateBarVisibility();
     positionFavoritePickerMenu();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    ensurePlayerPopContinuity();
   });
 }
 
