@@ -62,7 +62,7 @@ function defaultStoryCardState() {
 }
 
 function defaultFamilyLeagueState() {
-  return { leagueCode: "", members: [], activeMemberId: "", predictions: {}, questBonusByDate: {} };
+  return { leagueCode: "", joinedLeagueCodes: [], currentLeagueIndex: 0, personalPoints: 0, predictions: {}, questBonusByDate: {} };
 }
 
 function loadDreamTeamState() {
@@ -152,6 +152,7 @@ const state = {
   missions: parseStoredJson("ezra_missions", defaultMissionState()),
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
+  leagueDirectory: { items: [], loading: false },
   mobileTab: "fixtures",
   account: {
     token: STORED_ACCOUNT_TOKEN,
@@ -246,8 +247,8 @@ const el = {
   missionsMeta: document.getElementById("missions-meta"),
   missionsList: document.getElementById("missions-list"),
   storyList: document.getElementById("story-list"),
-  familyMemberInput: document.getElementById("family-member-input"),
-  familyAddMemberBtn: document.getElementById("family-add-member-btn"),
+  familyPrevLeagueBtn: document.getElementById("family-prev-league-btn"),
+  familyNextLeagueBtn: document.getElementById("family-next-league-btn"),
   familyCreateCodeBtn: document.getElementById("family-create-code-btn"),
   familyJoinCodeInput: document.getElementById("family-join-code-input"),
   familyJoinCodeBtn: document.getElementById("family-join-code-btn"),
@@ -381,20 +382,17 @@ function renderAccountUI() {
 
 function updateFamilyControlsState() {
   const signedIn = accountSignedIn();
-  const memberInput = el.familyMemberInput;
-  const addBtn = el.familyAddMemberBtn;
+  const prevBtn = el.familyPrevLeagueBtn;
+  const nextBtn = el.familyNextLeagueBtn;
   const codeBtn = el.familyCreateCodeBtn;
   const joinInput = el.familyJoinCodeInput;
   const joinBtn = el.familyJoinCodeBtn;
-  if (memberInput) {
-    memberInput.disabled = !signedIn;
-    memberInput.placeholder = signedIn ? "Add player name" : "Sign in to manage family league";
-  }
   if (joinInput) {
     joinInput.disabled = !signedIn;
     joinInput.placeholder = signedIn ? "Enter league code" : "Sign in to join a league";
   }
-  if (addBtn) addBtn.disabled = !signedIn;
+  if (prevBtn) prevBtn.disabled = !signedIn;
+  if (nextBtn) nextBtn.disabled = !signedIn;
   if (codeBtn) codeBtn.disabled = !signedIn;
   if (joinBtn) joinBtn.disabled = !signedIn;
 }
@@ -402,27 +400,14 @@ function updateFamilyControlsState() {
 function ensureSignedInUserInFamilyLeague() {
   ensureFamilyLeagueState();
   if (!accountSignedIn()) return false;
-  const userId = String(state.account.user.id || "").trim();
-  const userName = normalizeName(state.account.user.name || "").slice(0, 24);
-  if (!userId || !userName) return false;
-  const memberId = `acct:${userId}`;
   let changed = false;
-  const existing = state.familyLeague.members.find((m) => m.id === memberId || m.name.toLowerCase() === userName.toLowerCase());
-  if (existing) {
-    if (existing.id !== memberId) {
-      existing.id = memberId;
-      changed = true;
-    }
-    if (existing.name !== userName) {
-      existing.name = userName;
-      changed = true;
-    }
-  } else {
-    state.familyLeague.members.push({ id: memberId, name: userName, points: 0 });
+  const code = String(state.familyLeague.leagueCode || "").trim().toUpperCase();
+  if (code && !state.familyLeague.joinedLeagueCodes.includes(code)) {
+    state.familyLeague.joinedLeagueCodes.push(code);
     changed = true;
   }
-  if (!state.familyLeague.activeMemberId) {
-    state.familyLeague.activeMemberId = memberId;
+  if (!Number.isFinite(Number(state.familyLeague.personalPoints))) {
+    state.familyLeague.personalPoints = 0;
     changed = true;
   }
   if (changed) {
@@ -474,14 +459,22 @@ function ensureFamilyLeagueState() {
   if (!state.familyLeague || typeof state.familyLeague !== "object") {
     state.familyLeague = defaultFamilyLeagueState();
   }
-  if (!Array.isArray(state.familyLeague.members)) {
-    state.familyLeague.members = [];
-  }
   if (typeof state.familyLeague.leagueCode !== "string") {
     state.familyLeague.leagueCode = "";
   }
-  if (typeof state.familyLeague.activeMemberId !== "string") {
-    state.familyLeague.activeMemberId = "";
+  if (!Array.isArray(state.familyLeague.joinedLeagueCodes)) {
+    state.familyLeague.joinedLeagueCodes = state.familyLeague.leagueCode ? [state.familyLeague.leagueCode] : [];
+  }
+  if (!Number.isInteger(state.familyLeague.currentLeagueIndex)) {
+    state.familyLeague.currentLeagueIndex = 0;
+  }
+  if (!Number.isFinite(Number(state.familyLeague.personalPoints))) {
+    // Legacy fallback from previous members structure.
+    const legacyMemberId = currentFamilyMemberId();
+    const legacy = Array.isArray(state.familyLeague.members)
+      ? state.familyLeague.members.find((m) => String(m?.id || "") === legacyMemberId)
+      : null;
+    state.familyLeague.personalPoints = Math.max(0, Number(legacy?.points || 0));
   }
   if (!state.familyLeague.predictions || typeof state.familyLeague.predictions !== "object") {
     state.familyLeague.predictions = {};
@@ -489,19 +482,12 @@ function ensureFamilyLeagueState() {
   if (!state.familyLeague.questBonusByDate || typeof state.familyLeague.questBonusByDate !== "object") {
     state.familyLeague.questBonusByDate = {};
   }
-  state.familyLeague.members = state.familyLeague.members
-    .filter((m) => m && typeof m === "object")
-    .map((m) => ({
-      id: String(m.id || randomHexId()),
-      name: normalizeName(m.name || "").slice(0, 24),
-      points: Math.max(0, Number(m.points || 0)),
-    }))
-    .filter((m) => m.name);
-  if (state.familyLeague.activeMemberId && !state.familyLeague.members.some((m) => m.id === state.familyLeague.activeMemberId)) {
-    state.familyLeague.activeMemberId = "";
-  }
-  if (!state.familyLeague.activeMemberId && state.familyLeague.members[0]) {
-    state.familyLeague.activeMemberId = state.familyLeague.members[0].id;
+  state.familyLeague.personalPoints = Math.max(0, Number(state.familyLeague.personalPoints || 0));
+  state.familyLeague.joinedLeagueCodes = state.familyLeague.joinedLeagueCodes
+    .map((code) => String(code || "").trim().toUpperCase())
+    .filter(Boolean);
+  if (state.familyLeague.joinedLeagueCodes.length && state.familyLeague.currentLeagueIndex >= state.familyLeague.joinedLeagueCodes.length) {
+    state.familyLeague.currentLeagueIndex = 0;
   }
 }
 
@@ -533,25 +519,22 @@ function isQuestDone(questId) {
   return daily.completed.includes(questId);
 }
 
-function addFamilyPoints(memberId, delta) {
+function addFamilyPoints(delta) {
   ensureFamilyLeagueState();
-  const member = state.familyLeague.members.find((m) => m.id === memberId);
-  if (!member) return false;
-  member.points = Math.max(0, Number(member.points || 0) + Number(delta || 0));
+  state.familyLeague.personalPoints = Math.max(0, Number(state.familyLeague.personalPoints || 0) + Number(delta || 0));
   return true;
 }
 
 function awardQuestBonus(questId) {
   ensureFamilyLeagueState();
-  const memberId = currentFamilyMemberId();
-  if (!memberId) return false;
+  if (!accountSignedIn()) return false;
   const today = missionDateKey();
   if (!state.familyLeague.questBonusByDate[today] || typeof state.familyLeague.questBonusByDate[today] !== "object") {
     state.familyLeague.questBonusByDate[today] = {};
   }
-  const key = `${memberId}:${questId}`;
+  const key = `${currentFamilyMemberId()}:${questId}`;
   if (state.familyLeague.questBonusByDate[today][key]) return false;
-  if (!addFamilyPoints(memberId, 5)) return false;
+  if (!addFamilyPoints(5)) return false;
   state.familyLeague.questBonusByDate[today][key] = true;
   return true;
 }
@@ -772,33 +755,11 @@ function randomLeagueCode() {
   return out;
 }
 
-function addFamilyMember(name) {
-  ensureFamilyLeagueState();
-  if (!accountSignedIn()) {
-    setAccountStatus("Sign in to add family mini-league players.", true);
-    return;
-  }
-  ensureSignedInUserInFamilyLeague();
-  const clean = normalizeName(name).slice(0, 24);
-  if (!clean) return;
-  if (state.familyLeague.members.some((m) => (m.name || "").toLowerCase() === clean.toLowerCase())) return;
-  state.familyLeague.members.push({ id: randomHexId(), name: clean, points: 0 });
-  persistLocalMetaState();
-  scheduleCloudStateSync();
-}
-
 function randomHexId() {
   return Math.random().toString(16).slice(2, 10);
 }
 
-function removeFamilyMember(id) {
-  ensureFamilyLeagueState();
-  state.familyLeague.members = state.familyLeague.members.filter((m) => m.id !== id);
-  persistLocalMetaState();
-  scheduleCloudStateSync();
-}
-
-function joinFamilyLeagueCode(code) {
+async function joinFamilyLeagueCode(code) {
   ensureFamilyLeagueState();
   if (!accountSignedIn()) {
     setAccountStatus("Sign in to join a family league code.", true);
@@ -806,10 +767,74 @@ function joinFamilyLeagueCode(code) {
   }
   const clean = String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
   if (!clean) return;
+  await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/join`, { code: clean }, state.account.token);
   state.familyLeague.leagueCode = clean;
+  if (!state.familyLeague.joinedLeagueCodes.includes(clean)) {
+    state.familyLeague.joinedLeagueCodes.push(clean);
+  }
+  state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(clean));
+  await refreshLeagueDirectory();
   persistLocalMetaState();
   scheduleCloudStateSync();
   setAccountStatus(`Joined league code ${clean}.`);
+}
+
+async function createFamilyLeagueCode() {
+  if (!accountSignedIn()) {
+    setAccountStatus("Sign in to create a league.", true);
+    return;
+  }
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/create`, {}, state.account.token);
+  const code = String(data?.code || "").trim().toUpperCase();
+  if (!code) return;
+  state.familyLeague.leagueCode = code;
+  if (!state.familyLeague.joinedLeagueCodes.includes(code)) {
+    state.familyLeague.joinedLeagueCodes.push(code);
+  }
+  state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(code));
+  await refreshLeagueDirectory();
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  setAccountStatus(`League created: ${code}`);
+}
+
+async function refreshLeagueDirectory() {
+  if (!accountSignedIn()) {
+    state.leagueDirectory.items = [];
+    return;
+  }
+  state.leagueDirectory.loading = true;
+  try {
+    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
+    const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
+    state.leagueDirectory.items = leagues;
+    const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+    if (codes.length) {
+      state.familyLeague.joinedLeagueCodes = codes;
+      const current = String(state.familyLeague.leagueCode || "").toUpperCase();
+      if (!current || !codes.includes(current)) {
+        state.familyLeague.leagueCode = codes[0];
+      }
+      state.familyLeague.currentLeagueIndex = Math.max(0, codes.indexOf(state.familyLeague.leagueCode));
+    } else {
+      state.familyLeague.joinedLeagueCodes = [];
+      state.familyLeague.currentLeagueIndex = 0;
+    }
+  } finally {
+    state.leagueDirectory.loading = false;
+  }
+}
+
+function cycleLeague(delta) {
+  ensureFamilyLeagueState();
+  const codes = state.familyLeague.joinedLeagueCodes || [];
+  if (!codes.length) return;
+  const currentIdx = Number.isInteger(state.familyLeague.currentLeagueIndex) ? state.familyLeague.currentLeagueIndex : 0;
+  const nextIdx = (currentIdx + delta + codes.length) % codes.length;
+  state.familyLeague.currentLeagueIndex = nextIdx;
+  state.familyLeague.leagueCode = codes[nextIdx];
+  persistLocalMetaState();
+  renderFamilyLeaguePanel();
 }
 
 function renderFamilyLeaguePanel() {
@@ -822,36 +847,32 @@ function renderFamilyLeaguePanel() {
     return;
   }
   ensureSignedInUserInFamilyLeague();
-  if (!state.familyLeague.leagueCode) {
-    state.familyLeague.leagueCode = randomLeagueCode();
-  }
-  el.familyCodeLabel.textContent = `League code: ${state.familyLeague.leagueCode}`;
+  const code = String(state.familyLeague.leagueCode || "").toUpperCase();
+  el.familyCodeLabel.textContent = `League code: ${code || "--"} • Your points: ${Number(state.familyLeague.personalPoints || 0)}`;
   el.familyMembers.innerHTML = "";
-  const sorted = [...state.familyLeague.members].sort((a, b) => Number(b.points || 0) - Number(a.points || 0));
-  if (!sorted.length) {
-    el.familyMembers.innerHTML = `<div class="empty">Add players to start your private family table.</div>`;
+  const currentLeague = (state.leagueDirectory.items || []).find((league) => String(league.code || "").toUpperCase() === code);
+  const standings = Array.isArray(currentLeague?.standings) ? currentLeague.standings : [];
+  if (!code) {
+    el.familyMembers.innerHTML = `<div class="empty">Create or join a league code to start.</div>`;
     return;
   }
-  sorted.forEach((member, index) => {
-    const signedInMemberId = accountSignedIn() ? `acct:${String(state.account.user?.id || "")}` : "";
-    const isSignedInMember = Boolean(signedInMemberId && member.id === signedInMemberId);
+  if (!standings.length) {
+    el.familyMembers.innerHTML = `<div class="empty">No members found for this league yet.</div>`;
+    return;
+  }
+  standings.forEach((member, index) => {
+    const isSignedInMember = String(member.user_id || "") === String(state.account.user?.id || "");
     const row = document.createElement("div");
     row.className = `family-row ${isSignedInMember ? "active" : ""}`;
     row.innerHTML = `
       <div class="mission-text">
-        <div class="mission-title">#${index + 1} ${escapeHtml(member.name)}</div>
-        <div class="mission-sub">Points: ${Number(member.points || 0)}</div>
+        <div class="mission-title">#${index + 1} ${escapeHtml(member.name || "User")}</div>
+        <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""}</div>
       </div>
       <div class="account-actions">
         <span class="family-points">${Number(member.points || 0)}</span>
-        <button class="btn" type="button" data-remove="1" ${isSignedInMember ? "disabled" : ""}>x</button>
       </div>
     `;
-    row.querySelector("button[data-remove]")?.addEventListener("click", () => {
-      removeFamilyMember(member.id);
-      renderFamilyLeaguePanel();
-      renderMissionsPanel();
-    });
     el.familyMembers.appendChild(row);
   });
 }

@@ -107,11 +107,136 @@ async function ensureAccountSchema(db) {
         FOREIGN KEY (user_id) REFERENCES ezra_users(id)
       )
     `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_user_scores (
+        user_id TEXT PRIMARY KEY,
+        points INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_leagues (
+        code TEXT PRIMARY KEY,
+        owner_user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (owner_user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_league_members (
+        league_code TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (league_code, user_id),
+        FOREIGN KEY (league_code) REFERENCES ezra_leagues(code),
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_league_members_user_id ON ezra_league_members(user_id)`,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
   }
   accountSchemaReady = true;
+}
+
+function randomLeagueCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const arr = new Uint8Array(6);
+  crypto.getRandomValues(arr);
+  return [...arr].map((n) => chars[n % chars.length]).join("");
+}
+
+function normalizeLeagueCode(code) {
+  return String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 12);
+}
+
+function extractPointsFromState(state, userId) {
+  if (!state || typeof state !== "object") return 0;
+  const personal = Number(state?.familyLeague?.personalPoints);
+  if (Number.isFinite(personal) && personal >= 0) return Math.floor(personal);
+  const members = state?.familyLeague?.members;
+  if (Array.isArray(members)) {
+    const memberId = `acct:${String(userId || "")}`;
+    const row = members.find((m) => String(m?.id || "") === memberId);
+    const pts = Number(row?.points);
+    if (Number.isFinite(pts) && pts >= 0) return Math.floor(pts);
+  }
+  return 0;
+}
+
+async function upsertUserScore(db, userId, points) {
+  const safePoints = Math.max(0, Number(points || 0));
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(`
+      INSERT INTO ezra_user_scores (user_id, points, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(user_id) DO UPDATE SET points = excluded.points, updated_at = excluded.updated_at
+    `)
+    .bind(userId, safePoints, nowIso)
+    .run();
+}
+
+async function ensureDefaultLeagueForUser(db, userId) {
+  const existing = await db
+    .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1 ORDER BY joined_at ASC LIMIT 1")
+    .bind(userId)
+    .first();
+  if (existing?.league_code) return existing.league_code;
+  let code = "";
+  for (let i = 0; i < 12; i += 1) {
+    const candidate = randomLeagueCode();
+    const taken = await db.prepare("SELECT code FROM ezra_leagues WHERE code = ?1 LIMIT 1").bind(candidate).first();
+    if (!taken) {
+      code = candidate;
+      break;
+    }
+  }
+  if (!code) code = randomLeagueCode();
+  const nowIso = new Date().toISOString();
+  await db.prepare("INSERT INTO ezra_leagues (code, owner_user_id, created_at) VALUES (?1, ?2, ?3)").bind(code, userId, nowIso).run();
+  await db
+    .prepare("INSERT OR IGNORE INTO ezra_league_members (league_code, user_id, joined_at) VALUES (?1, ?2, ?3)")
+    .bind(code, userId, nowIso)
+    .run();
+  return code;
+}
+
+async function listLeaguesForUser(db, userId) {
+  const rows = await db
+    .prepare(`
+      SELECT l.code, l.owner_user_id, l.created_at,
+             (SELECT COUNT(*) FROM ezra_league_members lm2 WHERE lm2.league_code = l.code) AS member_count
+      FROM ezra_league_members lm
+      JOIN ezra_leagues l ON l.code = lm.league_code
+      WHERE lm.user_id = ?1
+      ORDER BY lm.joined_at ASC
+    `)
+    .bind(userId)
+    .all();
+  return rows?.results || [];
+}
+
+async function leagueStandings(db, code) {
+  const rows = await db
+    .prepare(`
+      SELECT u.id AS user_id, u.name,
+             COALESCE(s.points, 0) AS points
+      FROM ezra_league_members lm
+      JOIN ezra_users u ON u.id = lm.user_id
+      LEFT JOIN ezra_user_scores s ON s.user_id = lm.user_id
+      WHERE lm.league_code = ?1
+      ORDER BY points DESC, u.name COLLATE NOCASE ASC
+    `)
+    .bind(code)
+    .all();
+  return rows?.results || [];
 }
 
 async function createSession(db, userId) {
@@ -185,6 +310,8 @@ async function handleAccountRegister(db, request) {
     .prepare("INSERT OR REPLACE INTO ezra_profile_states (user_id, state_json, updated_at) VALUES (?1, ?2, ?3)")
     .bind(userId, "{}", nowIso)
     .run();
+  await upsertUserScore(db, userId, 0);
+  await ensureDefaultLeagueForUser(db, userId);
 
   const token = await createSession(db, userId);
   return json({ token, user: { id: userId, name: valid.cleanName } }, 200);
@@ -267,7 +394,61 @@ async function handleAccountPutState(db, request) {
     `)
     .bind(session.user_id, JSON.stringify(safeState), nowIso)
     .run();
+  await upsertUserScore(db, session.user_id, extractPointsFromState(safeState, session.user_id));
   return json({ ok: true, updatedAt: nowIso }, 200);
+}
+
+async function handleLeagueCreate(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  let code = "";
+  for (let i = 0; i < 12; i += 1) {
+    const candidate = randomLeagueCode();
+    const taken = await db.prepare("SELECT code FROM ezra_leagues WHERE code = ?1 LIMIT 1").bind(candidate).first();
+    if (!taken) {
+      code = candidate;
+      break;
+    }
+  }
+  if (!code) code = randomLeagueCode();
+  const nowIso = new Date().toISOString();
+  await db.prepare("INSERT INTO ezra_leagues (code, owner_user_id, created_at) VALUES (?1, ?2, ?3)").bind(code, session.user_id, nowIso).run();
+  await db
+    .prepare("INSERT OR IGNORE INTO ezra_league_members (league_code, user_id, joined_at) VALUES (?1, ?2, ?3)")
+    .bind(code, session.user_id, nowIso)
+    .run();
+  return json({ ok: true, code }, 200);
+}
+
+async function handleLeagueJoin(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const code = normalizeLeagueCode(body?.code);
+  if (!code) return json({ error: "Invalid league code." }, 400);
+  const league = await db.prepare("SELECT code FROM ezra_leagues WHERE code = ?1 LIMIT 1").bind(code).first();
+  if (!league) return json({ error: "League code not found." }, 404);
+  await db
+    .prepare("INSERT OR IGNORE INTO ezra_league_members (league_code, user_id, joined_at) VALUES (?1, ?2, ?3)")
+    .bind(code, session.user_id, new Date().toISOString())
+    .run();
+  return json({ ok: true, code }, 200);
+}
+
+async function handleLeagueList(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  await ensureDefaultLeagueForUser(db, session.user_id);
+  const leagues = await listLeaguesForUser(db, session.user_id);
+  const detailed = await Promise.all(
+    leagues.map(async (league) => ({
+      code: league.code,
+      ownerUserId: league.owner_user_id,
+      memberCount: Number(league.member_count || 0),
+      standings: await leagueStandings(db, league.code),
+    }))
+  );
+  return json({ leagues: detailed }, 200);
 }
 
 async function handleEzraAccountRoute(context, accountPath) {
@@ -297,6 +478,15 @@ async function handleEzraAccountRoute(context, accountPath) {
     }
     if (route === "state" && request.method === "GET") {
       return handleAccountGetState(db, request);
+    }
+    if (route === "league/create" && request.method === "POST") {
+      return handleLeagueCreate(db, request);
+    }
+    if (route === "league/join" && request.method === "POST") {
+      return handleLeagueJoin(db, request);
+    }
+    if (route === "leagues" && request.method === "GET") {
+      return handleLeagueList(db, request);
     }
 
     return json({ error: "Unsupported account route or method" }, 405);
