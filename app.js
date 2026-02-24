@@ -939,26 +939,59 @@ async function createFamilyLeagueCode() {
 }
 
 async function refreshLeagueDirectory() {
-  if (!accountSignedIn()) {
-    state.leagueDirectory.items = [];
-    return;
-  }
+  ensureFamilyLeagueState();
   state.leagueDirectory.loading = true;
   try {
-    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
-    const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
-    state.leagueDirectory.items = leagues;
-    const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
-    if (codes.length) {
-      state.familyLeague.joinedLeagueCodes = codes;
-      const current = String(state.familyLeague.leagueCode || "").toUpperCase();
-      if (!current || !codes.includes(current)) {
-        state.familyLeague.leagueCode = codes[0];
+    if (accountSignedIn()) {
+      const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
+      const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
+      state.leagueDirectory.items = leagues;
+      const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+      if (codes.length) {
+        state.familyLeague.joinedLeagueCodes = codes;
+        const current = String(state.familyLeague.leagueCode || "").toUpperCase();
+        if (!current || !codes.includes(current)) {
+          state.familyLeague.leagueCode = codes[0];
+        }
+        state.familyLeague.currentLeagueIndex = Math.max(0, codes.indexOf(state.familyLeague.leagueCode));
+      } else {
+        state.familyLeague.joinedLeagueCodes = [];
+        state.familyLeague.currentLeagueIndex = 0;
       }
-      state.familyLeague.currentLeagueIndex = Math.max(0, codes.indexOf(state.familyLeague.leagueCode));
     } else {
-      state.familyLeague.joinedLeagueCodes = [];
-      state.familyLeague.currentLeagueIndex = 0;
+      const codes = Array.from(
+        new Set(
+          [state.familyLeague.leagueCode, ...(state.familyLeague.joinedLeagueCodes || [])]
+            .map((code) => String(code || "").trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+      const leagues = [];
+      for (const code of codes) {
+        const data = await safeLoad(
+          () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/standings?code=${encodeURIComponent(code)}`),
+          null
+        );
+        if (!data?.league) continue;
+        leagues.push({
+          code: String(data.league.code || code).toUpperCase(),
+          name: data.league.name || `League ${code}`,
+          ownerUserId: data.league.ownerUserId || "",
+          isOwner: false,
+          memberCount: Number(data.league.memberCount || 0),
+          standings: Array.isArray(data.standings) ? data.standings : [],
+        });
+      }
+      state.leagueDirectory.items = leagues;
+      if (leagues.length) {
+        const nextCodes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+        state.familyLeague.joinedLeagueCodes = nextCodes;
+        const current = String(state.familyLeague.leagueCode || "").toUpperCase();
+        if (!current || !nextCodes.includes(current)) {
+          state.familyLeague.leagueCode = nextCodes[0];
+        }
+        state.familyLeague.currentLeagueIndex = Math.max(0, nextCodes.indexOf(state.familyLeague.leagueCode));
+      }
     }
     state.lastLeagueDirectoryAt = Date.now();
   } finally {
@@ -1373,21 +1406,18 @@ function renderFamilyLeaguePanel() {
   if (!el.familyMembers || !el.familyCodeLabel) return;
   ensureFamilyLeagueState();
   updateFamilyControlsState();
-  if (!accountSignedIn()) {
-    el.familyCodeLabel.textContent = "League code: sign in required";
-    if (el.familyLeagueNameInput) {
-      el.familyLeagueNameInput.value = "";
-    }
-    el.familyMembers.innerHTML = `<div class="empty">Sign in to create and manage your Family Mini-League.</div>`;
-    return;
+  if (accountSignedIn()) {
+    ensureSignedInUserInFamilyLeague();
   }
-  ensureSignedInUserInFamilyLeague();
   const code = String(state.familyLeague.leagueCode || "").toUpperCase();
   const joinedCount = Array.isArray(state.familyLeague.joinedLeagueCodes) ? state.familyLeague.joinedLeagueCodes.length : 0;
   const currentPos = joinedCount ? state.familyLeague.currentLeagueIndex + 1 : 0;
   const currentLeague = currentSelectedLeagueRecord();
   const leagueName = String(currentLeague?.name || "").trim() || `League ${code || "--"}`;
-  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"}) • Your points: ${Number(state.familyLeague.personalPoints || 0)}`;
+  const myPointsText = accountSignedIn()
+    ? ` • Your points: ${Number(state.familyLeague.personalPoints || 0)}`
+    : "";
+  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"})${myPointsText}`;
   const isOwner = Boolean(currentLeague?.isOwner);
   if (el.familyLeagueNameInput) {
     el.familyLeagueNameInput.value = leagueName;
@@ -1407,7 +1437,7 @@ function renderFamilyLeaguePanel() {
     return;
   }
   if (!code) {
-    el.familyMembers.innerHTML = `<div class="empty">Create or join a league code to start.</div>`;
+    el.familyMembers.innerHTML = `<div class="empty">${accountSignedIn() ? "Create or join a league code to start." : "Sign in to create or join a league code."}</div>`;
     return;
   }
   if (!standings.length) {
@@ -3881,6 +3911,7 @@ async function initAccountSession() {
   renderAccountUI();
   if (!state.account.token) {
     resetAccountScopedLocalState();
+    await safeLoad(() => refreshLeagueDirectory(), null);
     setAccountStatus("Logged out. Existing features still work locally.");
     renderFamilyLeaguePanel();
     return;
@@ -4626,7 +4657,7 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   detailsEl.classList.add("loading");
   detailsEl.innerHTML = `${renderDetailRows(baseRows)}<p class="detail-empty">Loading match details...</p>`;
   const rich = await getRichEventData(eventId);
-  const core = rich?.event || event;
+  const core = { ...(event || {}), ...(rich?.event || {}) };
   const resolvedState = eventState(core);
   const rows = detailRowsFromEvent(core, resolvedState);
   const statsHtml = renderStatsTable(rich?.stats);

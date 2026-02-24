@@ -244,6 +244,7 @@ async function listLeaguesForUser(db, userId) {
 }
 
 async function leagueStandings(db, code) {
+  await syncLeagueScoresFromStates(db, code);
   const rows = await db
     .prepare(`
       SELECT u.id AS user_id, u.name,
@@ -257,6 +258,28 @@ async function leagueStandings(db, code) {
     .bind(code)
     .all();
   return rows?.results || [];
+}
+
+async function syncLeagueScoresFromStates(db, code) {
+  if (!code) return;
+  const members = await db
+    .prepare("SELECT user_id FROM ezra_league_members WHERE league_code = ?1")
+    .bind(code)
+    .all();
+  const ids = (members?.results || []).map((row) => String(row?.user_id || "")).filter(Boolean);
+  if (!ids.length) return;
+
+  await Promise.all(
+    ids.map(async (userId) => {
+      const row = await db
+        .prepare("SELECT state_json FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+        .bind(userId)
+        .first();
+      const state = safeParseJsonText(row?.state_json || "{}");
+      const points = extractPointsFromState(state, userId);
+      await upsertUserScore(db, userId, points);
+    })
+  );
 }
 
 async function createSession(db, userId) {
@@ -576,6 +599,31 @@ async function handleLeagueMemberView(db, request) {
   );
 }
 
+async function handlePublicLeagueStandings(db, request) {
+  const url = new URL(request.url);
+  const code = normalizeLeagueCode(url.searchParams.get("code"));
+  if (!code) return json({ error: "Invalid league code." }, 400);
+  const league = await db
+    .prepare("SELECT code, owner_user_id, name, created_at FROM ezra_leagues WHERE code = ?1 LIMIT 1")
+    .bind(code)
+    .first();
+  if (!league) return json({ error: "League code not found." }, 404);
+  const standings = await leagueStandings(db, code);
+  return json(
+    {
+      league: {
+        code,
+        name: normalizeLeagueName(league.name, `League ${code}`),
+        ownerUserId: league.owner_user_id || "",
+        createdAt: league.created_at || null,
+        memberCount: standings.length,
+      },
+      standings,
+    },
+    200
+  );
+}
+
 async function handleEzraAccountRoute(context, accountPath) {
   const { request, env } = context;
   const db = env.EZRA_DB;
@@ -615,6 +663,9 @@ async function handleEzraAccountRoute(context, accountPath) {
     }
     if (route === "league/member" && request.method === "GET") {
       return handleLeagueMemberView(db, request);
+    }
+    if (route === "league/standings" && request.method === "GET") {
+      return handlePublicLeagueStandings(db, request);
     }
     if (route === "leagues" && request.method === "GET") {
       return handleLeagueList(db, request);
