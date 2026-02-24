@@ -60,6 +60,25 @@
                   <button class="btn motion-btn" type="button" data-motion="arcade">Arcade</button>
                 </div>
               </div>
+              <div class="settings-group">
+                <p class="settings-label">Account (optional cloud save)</p>
+                <div id="account-auth-signedout" class="account-auth-box">
+                  <input id="account-name-input" class="account-input" type="text" maxlength="32" placeholder="Display name" />
+                  <input id="account-pin-input" class="account-input" type="password" maxlength="24" placeholder="PIN / passcode" />
+                  <div class="account-actions">
+                    <button id="account-register-btn" class="btn" type="button">Create Account</button>
+                    <button id="account-login-btn" class="btn" type="button">Sign In</button>
+                  </div>
+                </div>
+                <div id="account-auth-signedin" class="account-auth-box hidden">
+                  <p id="account-user-label" class="muted">Signed in</p>
+                  <div class="account-actions">
+                    <button id="account-sync-btn" class="btn" type="button">Sync Save</button>
+                    <button id="account-logout-btn" class="btn" type="button">Sign Out</button>
+                  </div>
+                </div>
+                <p id="account-status" class="settings-note muted">Logged out. Existing features still work locally.</p>
+              </div>
             </div>
           </div>
           <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop Quiz">

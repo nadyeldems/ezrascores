@@ -1345,6 +1345,33 @@ body.dream-team-overlay-open::before {
   justify-content: flex-end;
 }
 
+.account-auth-box {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.account-input {
+  width: 100%;
+  min-height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: #090503;
+  color: var(--text);
+  font: inherit;
+  padding: 0.22rem 0.5rem;
+}
+
+.account-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.settings-note {
+  margin: 0.2rem 0 0;
+  line-height: 1.2;
+}
+
 .dream-row {
   display: flex;
   align-items: center;
