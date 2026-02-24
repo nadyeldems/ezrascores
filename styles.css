@@ -1376,6 +1376,103 @@ body.dream-team-overlay-open::before {
   color: #ff8f8f;
 }
 
+.fun-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.fun-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.8rem;
+  padding: 0.55rem;
+  background: rgba(10, 6, 3, 0.56);
+}
+
+.compact-head {
+  margin-bottom: 0.35rem;
+}
+
+.compact-head h4 {
+  margin: 0;
+  color: var(--text);
+}
+
+.mission-row,
+.family-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  border-top: 1px dashed var(--line-soft);
+  padding: 0.35rem 0;
+}
+
+.mission-row:first-child,
+.family-row:first-child {
+  border-top: 0;
+}
+
+.mission-text {
+  min-width: 0;
+}
+
+.mission-title {
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.mission-sub {
+  color: var(--text-soft);
+  line-height: 1.05;
+}
+
+.story-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.story-item {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.65rem;
+  padding: 0.38rem 0.45rem;
+  background: rgba(255, 153, 32, 0.04);
+}
+
+.story-item h5 {
+  margin: 0 0 0.2rem;
+  color: var(--text);
+  font-size: 1.04rem;
+}
+
+.story-item p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.15;
+}
+
+.family-controls {
+  display: grid;
+  gap: 0.32rem;
+  margin-bottom: 0.25rem;
+}
+
+.family-points {
+  display: inline-flex;
+  min-width: 2rem;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 0.05rem 0.42rem;
+}
+
+@media (max-width: 980px) {
+  .fun-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .dream-row {
   display: flex;
   align-items: center;
