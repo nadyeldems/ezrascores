@@ -1504,6 +1504,84 @@ async function handleEzraTeamFormRoute(context, key) {
   );
 }
 
+async function handleEzraTeamFixturesRoute(context, key) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  if (!db) {
+    return json({ error: "Fixtures cache unavailable. Add D1 binding EZRA_DB." }, 503);
+  }
+  await ensureAccountSchema(db);
+  const url = new URL(request.url);
+  const leagueId = String(url.searchParams.get("leagueId") || "").trim();
+  const teamId = String(url.searchParams.get("teamId") || "").trim();
+  const teamName = String(url.searchParams.get("teamName") || "").trim();
+  const fromIso = normalizeEventDate(url.searchParams.get("from"));
+  const toIso = normalizeEventDate(url.searchParams.get("to"));
+  const maxRows = Math.max(1, Math.min(600, Number(url.searchParams.get("limit") || 160)));
+  if (!TABLE_LEAGUE_IDS.includes(leagueId) || (!teamId && !teamName) || !fromIso || !toIso) {
+    return json({ error: "Missing/invalid params. Use leagueId, teamId/teamName, from, to." }, 400);
+  }
+
+  const teamToken = normalizeTeamToken(teamName);
+  const readMatches = async () => {
+    const rows = await db
+      .prepare(
+        `
+        SELECT payload_json
+        FROM ezra_fixtures_cache
+        WHERE league_id = ?1
+          AND date_event >= ?2
+          AND date_event <= ?3
+        ORDER BY date_event ASC, COALESCE(str_time, '') ASC
+        LIMIT ?4
+        `
+      )
+      .bind(leagueId, fromIso, toIso, maxRows)
+      .all();
+    const list = Array.isArray(rows?.results) ? rows.results : [];
+    const matched = [];
+    const seen = new Set();
+    for (const row of list) {
+      const event = safeParseJsonText(row?.payload_json);
+      if (!event || typeof event !== "object") continue;
+      const key = fixtureCacheKey(event);
+      if (!key || seen.has(key)) continue;
+      const homeId = String(event.idHomeTeam || "").trim();
+      const awayId = String(event.idAwayTeam || "").trim();
+      const byId = teamId && (homeId === teamId || awayId === teamId);
+      const byName =
+        !byId &&
+        teamToken &&
+        (normalizeTeamToken(event.strHomeTeam) === teamToken || normalizeTeamToken(event.strAwayTeam) === teamToken);
+      if (!byId && !byName) continue;
+      seen.add(key);
+      matched.push(event);
+    }
+    return matched;
+  };
+
+  let events = await readMatches();
+  if (!events.length) {
+    await ingestLeagueFixtureFeeds(db, key, leagueId, fromIso).catch(() => null);
+    await ingestLeagueFixtureFeeds(db, key, leagueId, toIso).catch(() => null);
+    events = await readMatches();
+  }
+
+  return json(
+    {
+      events: sortByDateTime(events),
+      leagueId,
+      teamId,
+      teamName,
+      from: fromIso,
+      to: toIso,
+      source: "d1",
+    },
+    200,
+    { "Cache-Control": "public, max-age=60, s-maxage=60" }
+  );
+}
+
 function canonicalEventHash(event) {
   const parts = [
     String(event?.idEvent || ""),
@@ -1930,9 +2008,12 @@ export async function onRequest(context) {
     if (version === "v1" && lowerPath === "ezra/fixtures" && request.method === "GET") {
       return handleEzraFixturesRoute(context, key);
     }
-    if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
-      return handleEzraTeamFormRoute(context, key);
-    }
+  if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
+    return handleEzraTeamFormRoute(context, key);
+  }
+  if (version === "v1" && lowerPath === "ezra/teamfixtures" && request.method === "GET") {
+    return handleEzraTeamFixturesRoute(context, key);
+  }
     if (version === "v1" && lowerPath === "ezra/live/stream") {
       return handleEzraLiveStreamRoute(context, key);
     }

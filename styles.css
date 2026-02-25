@@ -1971,6 +1971,26 @@ body.league-member-overlay-open::before {
   line-height: 1.15;
 }
 
+.story-item.loading {
+  position: relative;
+  overflow: hidden;
+}
+
+.story-item.loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 165, 47, 0) 0%,
+    rgba(255, 165, 47, 0.12) 48%,
+    rgba(255, 165, 47, 0) 100%
+  );
+  transform: translateX(-100%);
+  animation: story-loading-sweep 1.25s linear infinite;
+  pointer-events: none;
+}
+
 .family-controls {
   display: grid;
   gap: 0.32rem;
@@ -2473,12 +2493,41 @@ body[data-theme="club"] .btn:hover {
   background: rgba(0, 0, 0, 0.28);
 }
 
+.favorite-fixture-block.loading {
+  position: relative;
+}
+
+.favorite-fixture-block.loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 0.7rem;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 165, 47, 0) 0%,
+    rgba(255, 165, 47, 0.1) 48%,
+    rgba(255, 165, 47, 0) 100%
+  );
+  transform: translateX(-100%);
+  animation: story-loading-sweep 1.2s linear infinite;
+  pointer-events: none;
+}
+
 .favorite-fixture-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.55rem;
   margin-bottom: 0.22rem;
+}
+
+@keyframes story-loading-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .favorite-goal-cinematic {

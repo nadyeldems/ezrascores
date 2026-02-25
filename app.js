@@ -178,6 +178,7 @@ const state = {
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false },
   leagueDirectory: { items: [], loading: false },
   lastLeagueDirectoryAt: 0,
+  favoriteDataLoading: false,
   mobileTab: "fixtures",
   account: {
     token: STORED_ACCOUNT_TOKEN,
@@ -190,6 +191,7 @@ const state = {
   dreamTeamOpen: false,
   squadOpen: false,
   favoriteTeam: null,
+  favoriteUpcomingEvent: null,
   gameDayCountdownTimer: null,
   lastCountdownTarget: null,
   liveScoreSnapshot: new Map(),
@@ -895,6 +897,13 @@ function renderMissionsPanel() {
 }
 
 function storyCardData() {
+  if (state.favoriteDataLoading) {
+    return [
+      { title: "Next Up", text: "Loading next fixture..." },
+      { title: "Table Pulse", text: "Loading table position..." },
+      { title: "Rival Watch", text: "Loading rival context..." },
+    ];
+  }
   if (!state.favoriteTeam) return [];
   const team = state.favoriteTeam;
   const leagueCode = teamLeagueCode(team);
@@ -908,7 +917,11 @@ function storyCardData() {
   const nextPool = [...state.fixtures.next.EPL, ...state.fixtures.next.CHAMP];
   const teamMatch = (event) => event && (event.strHomeTeam === team.strTeam || event.strAwayTeam === team.strTeam);
   const todayEvent = todayPool.find((e) => teamMatch(e) && e.dateEvent === todayIso) || null;
-  const nextEvent = nextPool.find((e) => teamMatch(e)) || state.fixtures.today[leagueCode]?.find((e) => teamMatch(e) && e.dateEvent !== todayIso) || null;
+  const nextEvent =
+    nextPool.find((e) => teamMatch(e)) ||
+    state.fixtures.today[leagueCode]?.find((e) => teamMatch(e) && e.dateEvent !== todayIso) ||
+    state.favoriteUpcomingEvent ||
+    null;
   const above = row ? table.find((r) => Number(r.intRank) === Number(row.intRank) - 1) : null;
   const below = row ? table.find((r) => Number(r.intRank) === Number(row.intRank) + 1) : null;
   return [
@@ -945,7 +958,7 @@ function renderStoryCardsPanel() {
   }
   cards.forEach((card) => {
     const item = document.createElement("article");
-    item.className = "story-item";
+    item.className = `story-item ${state.favoriteDataLoading ? "loading" : ""}`;
     item.innerHTML = `<h5>${escapeHtml(card.title)}</h5><p>${escapeHtml(card.text)}</p>`;
     el.storyList.appendChild(item);
   });
@@ -4301,6 +4314,19 @@ async function fetchTeamNextEvents(teamId) {
   return safeArray(data);
 }
 
+async function fetchTeamWindowFixturesFromCache(team, fromIso, toIso, limit = 240) {
+  if (!team) return [];
+  const leagueCode = teamLeagueCode(team);
+  const leagueId = LEAGUES[leagueCode]?.id;
+  if (!leagueId) return [];
+  const payload = await apiGetV1(
+    `ezra/teamfixtures?leagueId=${encodeURIComponent(leagueId)}&teamId=${encodeURIComponent(team.idTeam || "")}&teamName=${encodeURIComponent(
+      team.strTeam || ""
+    )}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}&limit=${encodeURIComponent(limit)}`
+  );
+  return safeArray(payload, "events");
+}
+
 async function fetchTeamLastEvents(teamId) {
   const base = await safeLoad(async () => {
     const data = await apiGetV1(`eventslast.php?id=${teamId}`);
@@ -5903,9 +5929,40 @@ function nextFixtureSummary(team, nextEvent) {
   };
 }
 
+function showFavoriteLoadingState() {
+  if (el.favoriteEmpty) el.favoriteEmpty.classList.add("hidden");
+  if (el.favoriteContent) el.favoriteContent.classList.remove("hidden");
+  if (el.favoriteStatus) {
+    el.favoriteStatus.classList.remove("gameday", "live", "final");
+    el.favoriteStatus.textContent = "Loading";
+  }
+  const fixtureBlock = document.querySelector(".favorite-fixture-block");
+  if (fixtureBlock) fixtureBlock.classList.add("loading");
+  if (el.favoriteFixtureLine) el.favoriteFixtureLine.textContent = "Loading match centre...";
+  if (el.favoriteFixtureDetail) el.favoriteFixtureDetail.textContent = "Fetching latest fixtures and results";
+  if (el.favoriteLiveStrip) {
+    el.favoriteLiveStrip.classList.remove("hidden");
+    el.favoriteLiveStrip.classList.add("ticker-static");
+    el.favoriteLiveStrip.innerHTML = `<span class="ticker-content">Loading team schedule...</span>`;
+  }
+}
+
+function clearFavoriteLoadingVisual() {
+  const fixtureBlock = document.querySelector(".favorite-fixture-block");
+  if (fixtureBlock) fixtureBlock.classList.remove("loading");
+}
+
 async function renderFavorite() {
+  state.favoriteDataLoading = Boolean(state.favoriteTeamId);
+  if (state.favoriteDataLoading) {
+    showFavoriteLoadingState();
+    renderFunZone();
+  }
   if (!state.favoriteTeamId) {
+    clearFavoriteLoadingVisual();
+    state.favoriteDataLoading = false;
     state.favoriteTeam = null;
+    state.favoriteUpcomingEvent = null;
     applyClubThemeFromFavoriteTeam();
     clearFavoriteGoalCinematic();
     clearGameDayCountdownTimer();
@@ -5932,8 +5989,11 @@ async function renderFavorite() {
 
   const team = await safeLoad(() => fetchTeamById(state.favoriteTeamId), null);
   if (!team) {
+    clearFavoriteLoadingVisual();
+    state.favoriteDataLoading = false;
     state.favoriteTeamId = "";
     state.favoriteTeam = null;
+    state.favoriteUpcomingEvent = null;
     applyClubThemeFromFavoriteTeam();
     localStorage.removeItem("esra_favorite_team");
     clearFavoriteGoalCinematic();
@@ -5960,6 +6020,7 @@ async function renderFavorite() {
   }
 
   state.favoriteTeam = team;
+  clearFavoriteLoadingVisual();
   applyClubThemeFromFavoriteTeam();
   if (team.idTeam && !state.squadByTeamId[team.idTeam]) {
     const rawPlayers = await safeLoad(() => fetchPlayersForTeam(team), []);
@@ -5978,12 +6039,17 @@ async function renderFavorite() {
   const liveEventDetailed = liveEvent?.idEvent ? (await safeLoad(() => fetchEventById(liveEvent.idEvent), null)) || liveEvent : liveEvent;
   const chosenToday = liveEventDetailed || todayEventDetailed;
   const nextEvents = await safeLoad(() => fetchTeamNextEvents(team.idTeam), []);
-  const todayUpcomingFromNext = nextEvents.find((event) => event.dateEvent === todayIso) || null;
+  const windowFrom = addDaysIso(todayIso, -7);
+  const windowTo = addDaysIso(todayIso, FIXTURES_FUTURE_DAYS);
+  const cachedWindow = await safeLoad(() => fetchTeamWindowFixturesFromCache(team, windowFrom, windowTo), []);
+  const mergedNextEvents = mergeUniqueEvents([...nextEvents, ...cachedWindow]).sort(fixtureSort);
+  const todayUpcomingFromNext = mergedNextEvents.find((event) => event.dateEvent === todayIso) || null;
   const todayPrimaryEvent =
     (chosenToday && chosenToday.dateEvent === todayIso && chosenToday) || todayUpcomingFromNext || null;
-  const nextEvent = nextEvents.find((event) => !isSameFixture(event, todayPrimaryEvent || chosenToday)) || null;
+  const nextEvent = mergedNextEvents.find((event) => !isSameFixture(event, todayPrimaryEvent || chosenToday) && event.dateEvent >= todayIso) || null;
+  state.favoriteUpcomingEvent = nextEvent || null;
   const hasFixtureToday = Boolean(
-    (chosenToday && chosenToday.dateEvent === todayIso) || nextEvents.some((event) => event.dateEvent === todayIso)
+    (chosenToday && chosenToday.dateEvent === todayIso) || mergedNextEvents.some((event) => event.dateEvent === todayIso)
   );
   if (hasFixtureToday) {
     clearGameDayCountdownTimer();
@@ -6018,6 +6084,9 @@ async function renderFavorite() {
       lastCompleted = findLastCompletedForTeam(pastLeague, team, todayIso, chosenToday);
     }
   }
+  if (!lastCompleted && cachedWindow.length) {
+    lastCompleted = findLastCompletedForTeam(cachedWindow, team, todayIso, chosenToday);
+  }
 
   el.favoriteEmpty.classList.add("hidden");
   el.favoriteContent.classList.remove("hidden");
@@ -6032,6 +6101,7 @@ async function renderFavorite() {
     const formEvents = mergeUniqueEvents([
       ...lastEvents,
       ...pastLeague,
+      ...cachedWindow,
       ...(chosenToday && eventState(chosenToday).key === "final" ? [chosenToday] : []),
     ]);
     const d1Form = await safeLoad(() => fetchTeamFormFromCache(team, 5), []);
@@ -6059,6 +6129,7 @@ async function renderFavorite() {
     el.favoriteLiveStrip.classList.remove("ticker-static");
     el.favoriteLiveStrip.innerHTML = `<span class="ticker-content">${nextFixtureTickerText(team, nextEvent)}</span>`;
     maybeTriggerFavoriteGoalCinematic(chosenToday);
+    state.favoriteDataLoading = false;
     renderFunZone();
     return;
   }
@@ -6072,6 +6143,7 @@ async function renderFavorite() {
     el.favoriteLiveStrip.classList.remove("hidden");
     el.favoriteLiveStrip.classList.remove("ticker-static");
     el.favoriteLiveStrip.innerHTML = `<span class="ticker-content">${nextFixtureTickerText(team, nextEvent)}</span>`;
+    state.favoriteDataLoading = false;
     renderFunZone();
     return;
   }
@@ -6097,6 +6169,7 @@ async function renderFavorite() {
 
   el.favoriteLiveStrip.classList.remove("hidden");
   el.favoriteLiveStrip.innerHTML = `<span class="ticker-content">${nextFixtureTickerText(team, nextEvent)}</span>`;
+  state.favoriteDataLoading = false;
   renderFunZone();
 }
 
