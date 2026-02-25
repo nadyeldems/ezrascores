@@ -1866,6 +1866,16 @@ body.league-member-overlay-open::before {
   color: var(--text);
 }
 
+.fun-guide {
+  margin: -0.05rem 0 0.42rem;
+  padding: 0.3rem 0.38rem;
+  border: 1px dashed var(--line-soft);
+  border-radius: 0.55rem;
+  color: var(--text-soft);
+  background: rgba(255, 153, 32, 0.06);
+  line-height: 1.08;
+}
+
 .mission-row,
 .family-row {
   display: flex;

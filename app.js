@@ -202,7 +202,7 @@ const state = {
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
-  leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false },
+  leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
   leagueDirectory: { items: [], loading: false },
   lastLeagueDirectoryAt: 0,
   challengeDashboard: null,
@@ -508,7 +508,6 @@ function updateFamilyControlsState() {
   const deleteBtn = el.familyDeleteCodeBtn;
   const currentLeague = currentSelectedLeagueRecord();
   const hasLeague = Boolean(currentLeague?.code);
-  const isOwner = Boolean(currentLeague?.isOwner);
   if (joinInput) {
     joinInput.disabled = !signedIn;
     joinInput.placeholder = signedIn ? "Enter league code" : "Sign in to join a league";
@@ -518,13 +517,13 @@ function updateFamilyControlsState() {
   if (optionsBtn) optionsBtn.disabled = !signedIn;
   if (codeBtn) codeBtn.disabled = !signedIn;
   if (nameInput) {
-    nameInput.disabled = !signedIn || !hasLeague || !isOwner;
+    nameInput.disabled = !signedIn;
     nameInput.placeholder = signedIn ? "League name (owner only)" : "Sign in to name your league";
   }
-  if (nameSaveBtn) nameSaveBtn.disabled = !signedIn || !hasLeague || !isOwner;
+  if (nameSaveBtn) nameSaveBtn.disabled = !signedIn;
   if (joinBtn) joinBtn.disabled = !signedIn;
-  if (leaveBtn) leaveBtn.disabled = !signedIn || !hasLeague || isOwner;
-  if (deleteBtn) deleteBtn.disabled = !signedIn || !hasLeague || !isOwner;
+  if (leaveBtn) leaveBtn.disabled = !signedIn || !hasLeague;
+  if (deleteBtn) deleteBtn.disabled = !signedIn || !hasLeague;
 }
 
 function setFamilyOptionsOpen(open) {
@@ -1217,6 +1216,7 @@ function closeLeagueMemberView() {
   state.leagueMemberView.error = "";
   state.leagueMemberView.data = null;
   state.leagueMemberView.compare = false;
+  state.leagueMemberView.showPreviousRound = false;
   if (el.leagueMemberPanel) {
     el.leagueMemberPanel.classList.add("hidden");
   }
@@ -1336,6 +1336,21 @@ function predictionJoinKey(item) {
   return `fx:${home}|${away}|${kickoff}`;
 }
 
+function predictionKickoffMs(item) {
+  const kickoff = String(item?.kickoff || "").trim();
+  if (!kickoff) return Number.POSITIVE_INFINITY;
+  const dt = new Date(kickoff);
+  return Number.isNaN(dt.getTime()) ? Number.POSITIVE_INFINITY : dt.getTime();
+}
+
+function predictionRoundKey(item) {
+  const kickoff = String(item?.kickoff || "").trim();
+  if (!kickoff) return "";
+  const dt = new Date(kickoff);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toISOString().slice(0, 10);
+}
+
 function currentUserPredictionsSnapshot() {
   const memberId = currentFamilyMemberId();
   if (!memberId) return [];
@@ -1362,7 +1377,7 @@ function currentUserPredictionsSnapshot() {
   return out.sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
 }
 
-function renderPredictionCardsHtml(memberData, compareEnabled) {
+function renderPredictionCardsHtml(memberData, compareEnabled, showPreviousRound = false) {
   const yourList = currentUserPredictionsSnapshot();
   const yourMap = new Map(
     yourList
@@ -1416,8 +1431,29 @@ function renderPredictionCardsHtml(memberData, compareEnabled) {
     return `<div class="empty">No saved predictions yet.</div>`;
   }
 
-  return merged
-    .slice(0, 36)
+  const incompleteRows = merged
+    .filter((row) => !Boolean(row.them?.settled ?? row.you?.settled))
+    .sort((a, b) => predictionKickoffMs(a) - predictionKickoffMs(b));
+  const nextIncompleteRoundKey = incompleteRows.length ? predictionRoundKey(incompleteRows[0]) : "";
+
+  const completeRows = merged
+    .filter((row) => Boolean(row.them?.settled ?? row.you?.settled))
+    .sort((a, b) => predictionKickoffMs(b) - predictionKickoffMs(a));
+  const previousCompleteRoundKey = completeRows.length ? predictionRoundKey(completeRows[0]) : "";
+
+  let scopedRows = [];
+  if (showPreviousRound) {
+    scopedRows = previousCompleteRoundKey ? merged.filter((row) => predictionRoundKey(row) === previousCompleteRoundKey) : [];
+  } else {
+    scopedRows = nextIncompleteRoundKey ? merged.filter((row) => predictionRoundKey(row) === nextIncompleteRoundKey) : [];
+  }
+
+  if (!scopedRows.length) {
+    return `<div class="empty">${showPreviousRound ? "No previous round picks yet." : "No incomplete round picks available."}</div>`;
+  }
+
+  return scopedRows
+    .slice(0, 24)
     .map((row) => {
       const kickoffText = row.kickoff ? new Date(row.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "TBA";
       const finalText =
@@ -1501,10 +1537,11 @@ function renderLeagueMemberView() {
   const isSelf = String(data?.user?.id || "") === String(state.account.user?.id || "");
   const compareAvailable = !isSelf;
   const compareEnabled = Boolean(state.leagueMemberView.compare && compareAvailable);
+  const showPreviousRound = Boolean(state.leagueMemberView.showPreviousRound);
   el.leagueMemberTitle.textContent = `${memberName} • Profile`;
   const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
   const myDream = leagueMemberDreamTeamSummary(state.dreamTeam);
-  const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled);
+  const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled, showPreviousRound);
 
   el.leagueMemberBody.innerHTML = `
     <div class="member-compare-sticky">
@@ -1519,7 +1556,10 @@ function renderLeagueMemberView() {
       </button>
     </div>
     <section class="member-view-group">
-      <h4>Score Predictions</h4>
+      <div class="panel-head compact-head">
+        <h4>Score Predictions</h4>
+        <button id="member-round-toggle" class="btn" type="button">${showPreviousRound ? "Next Incomplete Round" : "Previous Round Picks"}</button>
+      </div>
       <div class="member-pred-grid">${predictionsHtml}</div>
     </section>
     <section class="member-view-group">
@@ -1531,10 +1571,17 @@ function renderLeagueMemberView() {
     </section>
   `;
   const compareToggle = el.leagueMemberBody.querySelector("#member-compare-toggle");
+  const roundToggle = el.leagueMemberBody.querySelector("#member-round-toggle");
   if (compareToggle) {
     compareToggle.addEventListener("click", () => {
       if (!compareAvailable) return;
       state.leagueMemberView.compare = !state.leagueMemberView.compare;
+      renderLeagueMemberView();
+    });
+  }
+  if (roundToggle) {
+    roundToggle.addEventListener("click", () => {
+      state.leagueMemberView.showPreviousRound = !state.leagueMemberView.showPreviousRound;
       renderLeagueMemberView();
     });
   }
@@ -1554,6 +1601,7 @@ async function openLeagueMemberView(userId, displayName) {
   state.leagueMemberView.loading = true;
   state.leagueMemberView.error = "";
   state.leagueMemberView.compare = false;
+  state.leagueMemberView.showPreviousRound = false;
   state.leagueMemberView.data = { user: { name: displayName || "User" }, predictions: [], dreamTeam: null };
   renderLeagueMemberView();
   try {
@@ -1611,10 +1659,7 @@ function renderFamilyLeaguePanel() {
   const currentPos = joinedCount ? state.familyLeague.currentLeagueIndex + 1 : 0;
   const currentLeague = currentSelectedLeagueRecord();
   const leagueName = String(currentLeague?.name || "").trim() || `League ${code || "--"}`;
-  const myPointsText = accountSignedIn()
-    ? ` • Your points: ${Number(state.familyLeague.personalPoints || 0)}`
-    : "";
-  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"})${myPointsText}`;
+  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"})`;
   const isOwner = Boolean(currentLeague?.isOwner);
   if (el.familyLeagueNameInput) {
     el.familyLeagueNameInput.value = leagueName;
@@ -1628,14 +1673,14 @@ function renderFamilyLeaguePanel() {
   if (el.familyPrevLeagueBtn) el.familyPrevLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   if (el.familyNextLeagueBtn) el.familyNextLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   if (el.familyDeleteCodeBtn) {
-    const canDelete = Boolean(accountSignedIn() && currentLeague?.isOwner && currentLeague?.code);
+    const canDelete = Boolean(accountSignedIn() && currentLeague?.code);
     el.familyDeleteCodeBtn.disabled = !canDelete;
-    el.familyDeleteCodeBtn.title = canDelete ? "Delete this league (owner only)" : "Only owner can delete this league";
+    el.familyDeleteCodeBtn.title = canDelete ? "Delete this league (owner only)" : "Select a league first";
   }
   if (el.familyLeaveCodeBtn) {
-    const canLeave = Boolean(accountSignedIn() && currentLeague?.code && !currentLeague?.isOwner);
+    const canLeave = Boolean(accountSignedIn() && currentLeague?.code);
     el.familyLeaveCodeBtn.disabled = !canLeave;
-    el.familyLeaveCodeBtn.title = canLeave ? "Leave this league" : "Owner cannot leave. Delete the league instead.";
+    el.familyLeaveCodeBtn.title = canLeave ? "Leave this league" : "Select a league first";
   }
   el.familyMembers.innerHTML = "";
   const standings = Array.isArray(currentLeague?.standings) ? currentLeague.standings : [];
@@ -3018,8 +3063,6 @@ function renderSquadPanel() {
     row.className = "squad-row";
     const cache = player.idPlayer ? state.playerProfileCache[player.idPlayer] : null;
     const profile = cache?.profile || null;
-    const goals = player.goals ?? extractPlayerGoals(profile || {}) ?? null;
-    const appearances = player.appearances ?? extractPlayerAppearances(profile || {}) ?? null;
     const starOn = isDreamPlayer(player.key);
     const shirtNo = player.number ? player.number : "—";
     row.innerHTML = `
@@ -3029,7 +3072,7 @@ function renderSquadPanel() {
           <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
           <span class="squad-name">${player.name}</span>
         </div>
-        <span class="squad-meta">${nationalityWithFlag(player.nationality)} • ${player.position} • G ${goals ?? "--"} • APP ${appearances ?? "--"}</span>
+        <span class="squad-meta">${nationalityWithFlag(player.nationality)} • ${player.position}</span>
       </div>
       <button class="btn squad-star ${starOn ? "active" : ""}" type="button" aria-label="Toggle Dream Team player">${starOn ? "★" : "☆"}</button>
     `;
@@ -3089,8 +3132,6 @@ function renderSquadPanel() {
             <div><span class="label">Name</span><span class="value">${player.name}</span></div>
             <div><span class="label">Nationality</span><span class="value">${nationalityWithFlag(profile?.strNationality || player.nationality)}</span></div>
             <div><span class="label">Position</span><span class="value">${role}</span></div>
-            <div><span class="label">Goals</span><span class="value">${goals ?? "--"}</span></div>
-            <div><span class="label">Appearances</span><span class="value">${appearances ?? "--"}</span></div>
             <div><span class="label">Age</span><span class="value">${ageLine}</span></div>
             <div><span class="label">Height</span><span class="value">${height}</span></div>
             <div><span class="label">Weight</span><span class="value">${weight}</span></div>
@@ -5910,6 +5951,28 @@ function scheduleSelectedDateChange(dateIso, delayMs = 35) {
   }, delayMs);
 }
 
+function updateDateNavControls() {
+  const bounds = fixtureWindowBounds();
+  const atMin = state.selectedDate <= bounds.minIso;
+  const atMax = state.selectedDate >= bounds.maxIso;
+  if (el.datePrevBtn) {
+    el.datePrevBtn.disabled = atMin;
+    el.datePrevBtn.title = atMin ? `Earliest available date: ${formatDateUK(bounds.minIso)}` : "Previous day";
+  }
+  if (el.dateNextBtn) {
+    el.dateNextBtn.disabled = atMax;
+    el.dateNextBtn.title = atMax ? `Latest available date: ${formatDateUK(bounds.maxIso)}` : "Next day";
+  }
+  if (el.stickyDatePrev) {
+    el.stickyDatePrev.disabled = atMin;
+    el.stickyDatePrev.title = atMin ? `Earliest available date: ${formatDateUK(bounds.minIso)}` : "Previous day";
+  }
+  if (el.stickyDateNext) {
+    el.stickyDateNext.disabled = atMax;
+    el.stickyDateNext.title = atMax ? `Latest available date: ${formatDateUK(bounds.maxIso)}` : "Next day";
+  }
+}
+
 function renderFixtures() {
   el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateUK(state.selectedDate)})`;
   const events =
@@ -5928,6 +5991,7 @@ function renderFixtures() {
     el.stickyDateLabel.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   }
   setDateButtonState();
+  updateDateNavControls();
   renderMobileSectionLayout();
 }
 
@@ -7494,9 +7558,8 @@ function attachEvents() {
   });
 
   const shiftSelectedDate = (delta) => {
-    const base = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
-    base.setDate(base.getDate() + delta);
-    scheduleSelectedDateChange(toISODate(base));
+    const baseIso = state.selectedDate || toISODate(new Date());
+    scheduleSelectedDateChange(addDaysIso(baseIso, delta));
   };
 
   if (el.datePrevBtn) {
@@ -7541,7 +7604,46 @@ function attachEvents() {
   });
 }
 
+function initFunGuideToggles() {
+  const buttons = [...document.querySelectorAll(".fun-info-btn")];
+  buttons.forEach((btn) => {
+    const card = btn.closest(".fun-card");
+    const guide = card?.querySelector(".fun-guide");
+    if (!card || !guide) return;
+    const setOpen = (open) => {
+      guide.classList.toggle("hidden", !open);
+      btn.setAttribute("aria-expanded", String(open));
+    };
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const pinned = btn.dataset.pinned === "1";
+      if (pinned) {
+        btn.dataset.pinned = "0";
+        setOpen(false);
+      } else {
+        btn.dataset.pinned = "1";
+        setOpen(true);
+      }
+    });
+    btn.addEventListener("mouseenter", () => {
+      setOpen(true);
+    });
+    card.addEventListener("mouseleave", () => {
+      if (btn.dataset.pinned === "1") return;
+      setOpen(false);
+    });
+    btn.addEventListener("focus", () => {
+      setOpen(true);
+    });
+    btn.addEventListener("blur", () => {
+      if (btn.dataset.pinned === "1") return;
+      setOpen(false);
+    });
+  });
+}
+
 attachEvents();
+initFunGuideToggles();
 applyUiTheme(state.uiTheme);
 applyMotionSetting("standard");
 setPlayerPopScope(state.playerPopScope);

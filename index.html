@@ -216,7 +216,10 @@
             <article class="fun-card" id="quests-panel">
               <div class="panel-head compact-head">
                 <h4>Daily Quests</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Daily Quests" title="Daily quests reset each day. Complete them to earn bonus league points.">i</button>
+                <button class="fun-info-btn" type="button" aria-label="About Daily Quests" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Daily quests reset every day. Complete both quests to earn bonus points for your mini-league rank.
               </div>
               <div id="missions-meta" class="muted"></div>
               <div id="missions-list" class="list"></div>
@@ -224,14 +227,20 @@
             <article class="fun-card" id="story-panel">
               <div class="panel-head compact-head">
                 <h4>Team Story Cards</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Team Story Cards" title="Auto-generated snapshots: next fixture, table context, and rival watch for your pinned club.">i</button>
+                <button class="fun-info-btn" type="button" aria-label="About Team Story Cards" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Story cards auto-summarize your pinned team: next match view, table pulse, and nearby rivals.
               </div>
               <div id="story-list" class="story-list"></div>
             </article>
             <article class="fun-card" id="family-league-panel">
               <div class="panel-head compact-head">
                 <h4>Family Mini-League</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Family Mini-League" title="Create or join private leagues. Points come from score predictions and quest bonuses.">i</button>
+                <button class="fun-info-btn" type="button" aria-label="About Family Mini-League" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Create or join private leagues using a code. Points are awarded from predictions and completed quests.
               </div>
               <div class="family-controls">
                 <div class="account-actions">
@@ -242,13 +251,15 @@
                 <div id="family-options-panel" class="family-options-panel hidden">
                   <div class="account-actions">
                     <button id="family-create-code-btn" class="btn" type="button">Create League</button>
-                    <button id="family-join-code-btn" class="btn" type="button">Join League</button>
                     <button id="family-league-name-save-btn" class="btn" type="button">Rename League</button>
                     <button id="family-leave-code-btn" class="btn" type="button">Leave League</button>
                     <button id="family-delete-code-btn" class="btn danger" type="button">Delete League</button>
                   </div>
                   <div class="account-actions">
                     <input id="family-join-code-input" class="account-input" type="text" maxlength="12" placeholder="Enter league code" />
+                    <button id="family-join-code-btn" class="btn" type="button">Join League</button>
+                  </div>
+                  <div class="account-actions">
                     <input id="family-league-name-input" class="account-input" type="text" maxlength="48" placeholder="League name (owner only)" />
                   </div>
                 </div>
@@ -259,40 +270,42 @@
             <article class="fun-card challenge-card" id="challenge-streak-panel">
               <div class="panel-head compact-head">
                 <h4>Streak</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Streak" title="Tracks consecutive days where you complete daily quests.">i</button>
+                <button class="fun-info-btn" type="button" aria-label="About Streak" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Streak tracks consecutive days where you complete daily quests. Keep the run alive to build momentum.
               </div>
               <div id="challenge-streak" class="challenge-block"></div>
             </article>
             <article class="fun-card challenge-card" id="challenge-combo-panel">
               <div class="panel-head compact-head">
                 <h4>Combo</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Combo" title="Prediction combo runs increase your scoring momentum when you keep getting results right.">i</button>
+                <button class="fun-info-btn" type="button" aria-label="About Combo" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Combo reflects current prediction form and best combo run, helping you track consistency.
               </div>
               <div id="challenge-combo" class="challenge-block"></div>
             </article>
             <article class="fun-card challenge-card" id="challenge-mastery-panel">
               <div class="panel-head compact-head">
                 <h4>Team Mastery</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Team Mastery" title="Shows which clubs have earned you the most prediction points.">i</button>
+                <button class="fun-info-btn" type="button" aria-label="About Team Mastery" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Team Mastery ranks clubs by the points your predictions have earned, then shows exact/result/played.
               </div>
               <div id="challenge-mastery" class="challenge-block"></div>
             </article>
             <article class="fun-card challenge-card" id="challenge-achievements-panel">
               <div class="panel-head compact-head">
                 <h4>Achievements</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Achievements" title="Milestones unlocked from streaks, exact picks, and consistent play.">i</button>
+                <button class="fun-info-btn" type="button" aria-label="About Achievements" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Achievements unlock through streaks, combos, exact picks and team prediction volume. Locked items show progress.
               </div>
               <div id="challenge-achievements" class="challenge-block"></div>
-            </article>
-            <article class="fun-card" id="higher-lower-panel">
-              <div class="panel-head compact-head">
-                <h4>Higher or Lower: Goals</h4>
-                <button class="fun-info-btn" type="button" aria-label="About Higher or Lower" title="10-round game: decide if the lower player has more or fewer goals than the top player.">i</button>
-              </div>
-              <div class="account-actions">
-                <button id="higher-lower-start-btn" class="btn" type="button">Start 10-Question Game</button>
-              </div>
-              <div id="higher-lower-body" class="higher-lower-body"></div>
             </article>
           </div>
         </section>
