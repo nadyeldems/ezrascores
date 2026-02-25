@@ -1596,6 +1596,14 @@ function formatDashboardDate(value) {
   return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
+const ACHIEVEMENT_GUIDE = [
+  { code: "streak_3", name: "On Fire", description: "Complete quests 3 days in a row.", icon: "🔥" },
+  { code: "streak_7", name: "Unstoppable", description: "Complete quests 7 days in a row.", icon: "🏆" },
+  { code: "combo_3", name: "Prediction Combo", description: "Hit 3 correct outcomes in a row.", icon: "⚡" },
+  { code: "exact_10", name: "Sniper", description: "Get 10 exact score predictions.", icon: "🎯" },
+  { code: "mastery_25", name: "Team Analyst", description: "Make 25 predictions for one club.", icon: "📈" },
+];
+
 function renderChallengeDashboardPanels() {
   if (!el.challengeStreak || !el.challengeCombo || !el.challengeMastery || !el.challengeAchievements) return;
   const loading = accountSignedIn() && !state.challengeDashboard;
@@ -1677,12 +1685,12 @@ function renderChallengeDashboardPanels() {
     `;
   }
 
-  if (!achievements.length) {
-    el.challengeAchievements.innerHTML = `<p class="muted">No achievements yet. Complete quests and hit score streaks to unlock them.</p>`;
-    return;
-  }
-  const recent = achievements.slice(0, 4);
+  const earnedCodes = new Set(achievements.map((item) => String(item?.code || "")));
+  const unlocked = ACHIEVEMENT_GUIDE.filter((item) => earnedCodes.has(item.code));
+  const locked = ACHIEVEMENT_GUIDE.filter((item) => !earnedCodes.has(item.code));
+  const recent = unlocked.length ? unlocked : [];
   el.challengeAchievements.innerHTML = `
+    <p class="challenge-footnote">Unlocked ${unlocked.length}/${ACHIEVEMENT_GUIDE.length}</p>
     <ul class="challenge-achievement-list">
       ${recent
         .map(
@@ -1691,6 +1699,19 @@ function renderChallengeDashboardPanels() {
               <span class="challenge-achievement-icon">${escapeHtml(item.icon || "★")}</span>
               <span class="challenge-achievement-text">
                 <strong>${escapeHtml(item.name || "Achievement")}</strong>
+                <small>${escapeHtml(item.description || "")}</small>
+              </span>
+            </li>
+          `
+        )
+        .join("")}
+      ${locked
+        .map(
+          (item) => `
+            <li class="locked">
+              <span class="challenge-achievement-icon">${escapeHtml(item.icon || "★")}</span>
+              <span class="challenge-achievement-text">
+                <strong>${escapeHtml(item.name || "Achievement")} (locked)</strong>
                 <small>${escapeHtml(item.description || "")}</small>
               </span>
             </li>

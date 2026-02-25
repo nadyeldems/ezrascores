@@ -2115,6 +2115,15 @@ body.league-member-overlay-open::before {
   background: rgba(255, 153, 32, 0.04);
 }
 
+.challenge-achievement-list li.locked {
+  opacity: 0.76;
+  border-style: dashed;
+}
+
+.challenge-achievement-list li.locked .challenge-achievement-icon {
+  filter: grayscale(0.65);
+}
+
 .challenge-achievement-icon {
   display: inline-flex;
   align-items: center;
