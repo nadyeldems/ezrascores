@@ -40,6 +40,13 @@ function normalizeName(name) {
   return String(name || "").trim().replace(/\s+/g, " ");
 }
 
+function normalizeTeamToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 function validateCredentials(name, pin) {
   const cleanName = normalizeName(name);
   const cleanPin = String(pin || "").trim();
@@ -161,6 +168,13 @@ async function ensureAccountSchema(db) {
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_fixtures_league_date ON ezra_fixtures_cache(league_id, date_event)`,
     `CREATE INDEX IF NOT EXISTS idx_ezra_fixtures_updated_at ON ezra_fixtures_cache(updated_at)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_fixture_ingest_state (
+        key TEXT PRIMARY KEY,
+        value_text TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -954,12 +968,32 @@ async function handleEzraAccountRoute(context, accountPath, key) {
         return json({ error: "Unauthorized cron call" }, 401);
       }
       const todayIso = new Date().toISOString().slice(0, 10);
-      const results = [];
-      for (const leagueId of TABLE_LEAGUE_IDS) {
-        const out = await ingestLeagueFixtureFeeds(db, key, leagueId, todayIso);
-        results.push({ leagueId, upserts: out.count });
+      const chunk = Math.max(1, Math.min(30, Number(env.EZRA_FIXTURE_CRON_CHUNK || 12)));
+      let cursor = await getIngestStateNumber(db, "fixtures_backfill_cursor", -FIXTURE_HISTORY_DAYS);
+      if (cursor < -FIXTURE_HISTORY_DAYS || cursor > FIXTURE_FUTURE_DAYS) {
+        cursor = -FIXTURE_HISTORY_DAYS;
       }
-      return json({ ok: true, date: todayIso, results }, 200);
+
+      const results = [];
+      const offsets = [];
+      for (let i = 0; i < chunk; i += 1) {
+        offsets.push(cursor + i);
+      }
+      for (const leagueId of TABLE_LEAGUE_IDS) {
+        let upserts = 0;
+        for (const offset of offsets) {
+          const targetIso = addDaysIso(todayIso, offset);
+          const out = await ingestLeagueFixtureFeeds(db, key, leagueId, targetIso);
+          upserts += Number(out.count || 0);
+        }
+        results.push({ leagueId, upserts, daysProcessed: offsets.length });
+      }
+      let nextCursor = cursor + chunk;
+      if (nextCursor > FIXTURE_FUTURE_DAYS) {
+        nextCursor = -FIXTURE_HISTORY_DAYS;
+      }
+      await setIngestStateNumber(db, "fixtures_backfill_cursor", nextCursor);
+      return json({ ok: true, date: todayIso, cursor, nextCursor, chunk, results }, 200);
     }
     if (route === "leagues" && request.method === "GET") {
       return handleLeagueList(db, request, key);
@@ -981,6 +1015,8 @@ const TABLE_LEAGUE_IDS = ["4328", "4329"];
 const TABLE_REFRESH_LIVE_MS = 60 * 1000;
 const TABLE_REFRESH_MATCHDAY_MS = 2 * 60 * 1000;
 const TABLE_REFRESH_IDLE_MS = 15 * 60 * 1000;
+const FIXTURE_HISTORY_DAYS = 92;
+const FIXTURE_FUTURE_DAYS = 183;
 const LIVE_SNAPSHOT_REFRESH_MS = 60 * 1000;
 const LIVE_STREAM_POLL_MS = 5000;
 const LIVE_STREAM_MAX_MS = 55 * 1000;
@@ -1035,6 +1071,18 @@ function normalizeEventDate(value) {
   const dt = new Date(raw);
   if (Number.isNaN(dt.getTime())) return "";
   return dt.toISOString().slice(0, 10);
+}
+
+function addDaysIso(baseIso, deltaDays) {
+  const dt = new Date(`${baseIso}T00:00:00Z`);
+  dt.setUTCDate(dt.getUTCDate() + Number(deltaDays || 0));
+  return dt.toISOString().slice(0, 10);
+}
+
+function fixtureDateInWindow(dateIso, todayIso) {
+  const minIso = addDaysIso(todayIso, -FIXTURE_HISTORY_DAYS);
+  const maxIso = addDaysIso(todayIso, FIXTURE_FUTURE_DAYS);
+  return dateIso >= minIso && dateIso <= maxIso;
 }
 
 function normalizeTime(value) {
@@ -1150,6 +1198,31 @@ async function ingestLeagueFixtureFeeds(db, key, leagueId, dayIso = "") {
   return { count, merged };
 }
 
+async function getIngestStateNumber(db, key, fallback = 0) {
+  const row = await db
+    .prepare("SELECT value_text FROM ezra_fixture_ingest_state WHERE key = ?1 LIMIT 1")
+    .bind(String(key))
+    .first();
+  const n = Number(row?.value_text);
+  return Number.isFinite(n) ? n : Number(fallback);
+}
+
+async function setIngestStateNumber(db, key, value) {
+  const now = Date.now();
+  await db
+    .prepare(
+      `
+      INSERT INTO ezra_fixture_ingest_state (key, value_text, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(key) DO UPDATE SET
+        value_text = excluded.value_text,
+        updated_at = excluded.updated_at
+      `
+    )
+    .bind(String(key), String(Number(value || 0)), now)
+    .run();
+}
+
 async function handleEzraFixturesRoute(context, key) {
   const { request, env } = context;
   const db = env.EZRA_DB;
@@ -1163,6 +1236,21 @@ async function handleEzraFixturesRoute(context, key) {
   if (!TABLE_LEAGUE_IDS.includes(leagueId) || !dateIso) {
     return json({ error: "Missing or invalid parameters. Use l=4328|4329 and d=YYYY-MM-DD" }, 400);
   }
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (!fixtureDateInWindow(dateIso, todayIso)) {
+    const minIso = addDaysIso(todayIso, -FIXTURE_HISTORY_DAYS);
+    const maxIso = addDaysIso(todayIso, FIXTURE_FUTURE_DAYS);
+    return json(
+      {
+        events: [],
+        leagueId,
+        date: dateIso,
+        source: "d1",
+        window: { min: minIso, max: maxIso },
+      },
+      200
+    );
+  }
 
   let fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
   if (!fromCache.length) {
@@ -1175,6 +1263,101 @@ async function handleEzraFixturesRoute(context, key) {
       events: sortByDateTime(fromCache),
       leagueId,
       date: dateIso,
+      source: "d1",
+      window: {
+        min: addDaysIso(todayIso, -FIXTURE_HISTORY_DAYS),
+        max: addDaysIso(todayIso, FIXTURE_FUTURE_DAYS),
+      },
+    },
+    200,
+    { "Cache-Control": "public, max-age=30, s-maxage=30" }
+  );
+}
+
+async function handleEzraTeamFormRoute(context) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  if (!db) {
+    return json({ error: "Fixtures cache unavailable. Add D1 binding EZRA_DB." }, 503);
+  }
+  await ensureAccountSchema(db);
+  const url = new URL(request.url);
+  const leagueId = String(url.searchParams.get("leagueId") || "").trim();
+  const teamId = String(url.searchParams.get("teamId") || "").trim();
+  const teamName = String(url.searchParams.get("teamName") || "").trim();
+  const maxGames = Math.max(1, Math.min(10, Number(url.searchParams.get("n") || 5)));
+  if (!TABLE_LEAGUE_IDS.includes(leagueId) || (!teamId && !teamName)) {
+    return json({ error: "Missing leagueId and teamId/teamName" }, 400);
+  }
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const minIso = addDaysIso(todayIso, -FIXTURE_HISTORY_DAYS);
+  const rows = await db
+    .prepare(
+      `
+      SELECT payload_json
+      FROM ezra_fixtures_cache
+      WHERE league_id = ?1
+        AND date_event >= ?2
+        AND date_event <= ?3
+      ORDER BY date_event DESC, COALESCE(str_time, '') DESC
+      LIMIT 800
+      `
+    )
+    .bind(leagueId, minIso, todayIso)
+    .all();
+
+  const teamToken = normalizeTeamToken(teamName);
+  const matched = [];
+  const seen = new Set();
+  const list = Array.isArray(rows?.results) ? rows.results : [];
+  for (const row of list) {
+    const event = safeParseJsonText(row?.payload_json);
+    if (!event || typeof event !== "object") continue;
+    const key = fixtureCacheKey(event);
+    if (!key || seen.has(key)) continue;
+
+    const home = numericScore(event.intHomeScore);
+    const away = numericScore(event.intAwayScore);
+    if (home === null || away === null) continue;
+
+    const homeId = String(event.idHomeTeam || "").trim();
+    const awayId = String(event.idAwayTeam || "").trim();
+    const byId = teamId && (homeId === teamId || awayId === teamId);
+    const byName =
+      !byId &&
+      teamToken &&
+      (normalizeTeamToken(event.strHomeTeam) === teamToken || normalizeTeamToken(event.strAwayTeam) === teamToken);
+    if (!byId && !byName) continue;
+
+    seen.add(key);
+    const isHome = byId ? homeId === teamId : normalizeTeamToken(event.strHomeTeam) === teamToken;
+    const teamScore = isHome ? home : away;
+    const oppScore = isHome ? away : home;
+    let result = "D";
+    if (teamScore > oppScore) result = "W";
+    else if (teamScore < oppScore) result = "L";
+
+    matched.push({
+      idEvent: String(event.idEvent || ""),
+      dateEvent: String(event.dateEvent || ""),
+      strTime: String(event.strTime || ""),
+      strHomeTeam: String(event.strHomeTeam || ""),
+      strAwayTeam: String(event.strAwayTeam || ""),
+      intHomeScore: home,
+      intAwayScore: away,
+      result,
+    });
+    if (matched.length >= maxGames) break;
+  }
+
+  return json(
+    {
+      leagueId,
+      teamId,
+      teamName,
+      results: matched.map((m) => m.result),
+      matches: matched,
       source: "d1",
     },
     200,
@@ -1606,6 +1789,9 @@ export async function onRequest(context) {
   }
   if (version === "v1" && lowerPath === "ezra/fixtures" && request.method === "GET") {
     return handleEzraFixturesRoute(context, key);
+  }
+  if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
+    return handleEzraTeamFormRoute(context);
   }
   if (version === "v1" && lowerPath === "ezra/live/stream") {
     return handleEzraLiveStreamRoute(context, key);

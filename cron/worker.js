@@ -98,10 +98,14 @@ async function runProtectedCron(env, path) {
 }
 
 async function runJobs(env) {
-  const [tables, fixtures, settle] = await Promise.all([
+  const now = new Date();
+  const shouldRunFixtures = now.getUTCMinutes() === 0 && now.getUTCHours() % 3 === 0;
+  const [tables, settle, fixtures] = await Promise.all([
     warmTables(env),
-    runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures"),
     runProtectedCron(env, "/api/v1/ezra/account/cron/settle"),
+    shouldRunFixtures
+      ? runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures")
+      : Promise.resolve({ ok: true, skipped: true, reason: "Runs every 3 hours at minute 00" }),
   ]);
   return {
     ok: Boolean(tables.ok && fixtures.ok && settle.ok),

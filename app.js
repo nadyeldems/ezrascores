@@ -1,6 +1,8 @@
 const API_PROXY_BASE = "/api";
 const ONE_MINUTE_MS = 60 * 1000;
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+const RESULTS_HISTORY_DAYS = 92;
+const FIXTURES_FUTURE_DAYS = 183;
 const POLL_LIVE_MS = ONE_MINUTE_MS;
 const POLL_MATCHDAY_MS = THREE_HOURS_MS;
 const POLL_IDLE_MS = THREE_HOURS_MS;
@@ -3598,6 +3600,21 @@ function toISODate(date) {
   return `${y}-${m}-${d}`;
 }
 
+function fixtureWindowBounds(baseDate = new Date()) {
+  const min = new Date(baseDate);
+  min.setDate(min.getDate() - RESULTS_HISTORY_DAYS);
+  const max = new Date(baseDate);
+  max.setDate(max.getDate() + FIXTURES_FUTURE_DAYS);
+  return { minIso: toISODate(min), maxIso: toISODate(max) };
+}
+
+function clampDateToFixtureWindow(dateIso) {
+  const { minIso, maxIso } = fixtureWindowBounds();
+  if (dateIso < minIso) return minIso;
+  if (dateIso > maxIso) return maxIso;
+  return dateIso;
+}
+
 function normalizeName(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
@@ -4125,6 +4142,18 @@ async function fetchLeagueMeta(leagueId) {
 async function fetchPastLeagueEvents(leagueId) {
   const data = await apiGetV1(`eventspastleague.php?id=${leagueId}`);
   return safeArray(data);
+}
+
+async function fetchTeamFormFromCache(team, n = 5) {
+  if (!team?.idTeam) return [];
+  const leagueCode = teamLeagueCode(team);
+  const leagueId = LEAGUES[leagueCode]?.id;
+  if (!leagueId) return [];
+  const data = await apiGetV1(
+    `ezra/teamform?leagueId=${encodeURIComponent(leagueId)}&teamId=${encodeURIComponent(team.idTeam)}&teamName=${encodeURIComponent(team.strTeam || "")}&n=${encodeURIComponent(n)}`
+  );
+  const values = Array.isArray(data?.results) ? data.results : [];
+  return values.filter((value) => value === "W" || value === "D" || value === "L").slice(0, n);
 }
 
 async function fetchAllTeams(leagueId) {
@@ -4976,7 +5005,7 @@ function normalizeDateIsoInput(value) {
   if (!raw) return toISODate(new Date());
   const parsed = new Date(`${raw}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return toISODate(new Date());
-  return toISODate(parsed);
+  return clampDateToFixtureWindow(toISODate(parsed));
 }
 
 async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = state.selectedDateLoadSeq) {
@@ -5064,6 +5093,9 @@ function renderFixtures() {
   renderFixtureList(el.fixturesList, events, "selected");
   if (el.datePicker) {
     el.datePicker.value = state.selectedDate;
+    const bounds = fixtureWindowBounds();
+    el.datePicker.min = bounds.minIso;
+    el.datePicker.max = bounds.maxIso;
   }
   if (el.stickyDateLabel) {
     const d = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
@@ -5878,22 +5910,16 @@ async function renderFavorite() {
       ...pastLeague,
       ...(chosenToday && eventState(chosenToday).key === "final" ? [chosenToday] : []),
     ]);
-    const form = teamFormFromEvents(formEvents, team);
+    const d1Form = await safeLoad(() => fetchTeamFormFromCache(team, 5), []);
+    const fallbackForm = teamFormFromEvents(formEvents, team);
+    const form = d1Form.length ? d1Form : fallbackForm;
     const formHtml = renderFavoriteFormBadges(form);
-    if (form.length) {
-      el.favoriteForm.classList.remove("hidden");
-      el.favoriteForm.innerHTML = formHtml;
-      if (el.favoriteFormRight) {
-        el.favoriteFormRight.classList.remove("hidden");
-        el.favoriteFormRight.innerHTML = formHtml;
-      }
-    } else {
-      el.favoriteForm.classList.add("hidden");
-      el.favoriteForm.innerHTML = "";
-      if (el.favoriteFormRight) {
-        el.favoriteFormRight.classList.add("hidden");
-        el.favoriteFormRight.innerHTML = "";
-      }
+    const showInlineForm = isMobileViewport();
+    el.favoriteForm.innerHTML = formHtml;
+    el.favoriteForm.classList.toggle("hidden", !showInlineForm);
+    if (el.favoriteFormRight) {
+      el.favoriteFormRight.innerHTML = formHtml;
+      el.favoriteFormRight.classList.toggle("hidden", showInlineForm);
     }
   }
   setFavoritePickerDisplay(team);
