@@ -9,11 +9,14 @@ const POLL_IDLE_MS = THREE_HOURS_MS;
 const LIVE_PROBE_MATCHDAY_MS = THREE_HOURS_MS;
 const LIVE_PROBE_IDLE_MS = THREE_HOURS_MS;
 const STATIC_REFRESH_MS = THREE_HOURS_MS;
+const API_FETCH_TIMEOUT_MS = 12000;
+const API_FETCH_RETRIES = 1;
 
 const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
   CHAMP: { id: "4329", name: "English League Championship" },
 };
+const inflightApiGets = new Map();
 const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
 const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
 const STORED_ACCOUNT_TOKEN = localStorage.getItem("ezra_account_token") || "";
@@ -3796,33 +3799,95 @@ function updateServerTimeOffsetFromResponse(res) {
   state.serverTimeOffsetMs = serverMs - Date.now();
 }
 
-async function apiGetV1(path) {
-  const res = await fetch(`${API_PROXY_BASE}/v1/${path}`);
-  updateServerTimeOffsetFromResponse(res);
-  if (!res.ok) {
-    throw new Error(`API call failed (${res.status}) for ${path}`);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRetryResponseStatus(status) {
+  return status === 429 || status >= 500;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json();
+}
+
+async function fetchWithRetry(url, options = {}) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= API_FETCH_RETRIES; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(url, options);
+      if (!shouldRetryResponseStatus(res.status) || attempt >= API_FETCH_RETRIES) {
+        return res;
+      }
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= API_FETCH_RETRIES) {
+        throw err;
+      }
+    }
+    await sleep(180 * (attempt + 1));
+  }
+  if (lastErr) throw lastErr;
+  throw new Error("Request failed");
+}
+
+async function apiGetJson(version, path) {
+  const key = `${version}:${path}`;
+  if (inflightApiGets.has(key)) {
+    return inflightApiGets.get(key);
+  }
+  const promise = (async () => {
+    const url = `${API_PROXY_BASE}/${version}/${path}`;
+    let res;
+    try {
+      res = await fetchWithRetry(url);
+    } catch (err) {
+      const isTimeout = String(err?.name || "").toLowerCase() === "aborterror" || String(err?.message || "").includes("timeout");
+      throw new Error(isTimeout ? `Request timed out for ${path}` : `Request failed for ${path}`);
+    }
+    updateServerTimeOffsetFromResponse(res);
+    if (!res.ok) {
+      throw new Error(`API call failed (${res.status}) for ${path}`);
+    }
+    return res.json();
+  })();
+  inflightApiGets.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightApiGets.delete(key);
+  }
+}
+
+async function apiGetV1(path) {
+  return apiGetJson("v1", path);
 }
 
 async function apiGetV2(path) {
-  const res = await fetch(`${API_PROXY_BASE}/v2/${path}`);
-  updateServerTimeOffsetFromResponse(res);
-  if (!res.ok) {
-    throw new Error(`API call failed (${res.status}) for ${path}`);
-  }
-  return res.json();
+  return apiGetJson("v2", path);
 }
 
 async function apiRequest(method, path, body = null, token = "") {
   const headers = {};
   if (body !== null) headers["Content-Type"] = "application/json";
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(path, {
-    method,
-    headers,
-    body: body !== null ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetchWithTimeout(path, {
+      method,
+      headers,
+      body: body !== null ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    const isTimeout = String(err?.name || "").toLowerCase() === "aborterror" || String(err?.message || "").includes("timeout");
+    throw new Error(isTimeout ? "Request timed out. Please try again." : "Network request failed. Please try again.");
+  }
   updateServerTimeOffsetFromResponse(res);
   const isJson = (res.headers.get("Content-Type") || "").includes("application/json");
   const payload = isJson ? await res.json() : { error: await res.text() };

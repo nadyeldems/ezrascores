@@ -289,6 +289,25 @@ body[data-theme="club"] {
     var(--bg);
 }
 
+.skip-link {
+  position: fixed;
+  left: 0.6rem;
+  top: calc(var(--safe-top) + 0.45rem);
+  z-index: 1200;
+  transform: translateY(-170%);
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #130802;
+  color: var(--text);
+  text-decoration: none;
+  transition: transform 180ms ease;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
 .app-shell {
   width: min(1180px, 100% - 1.4rem);
   margin: max(0.85rem, calc(var(--safe-top) + 0.8rem)) auto 1rem;

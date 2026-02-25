@@ -18,6 +18,45 @@ function upstreamUrl(version, key, pathWithQuery) {
   return "";
 }
 
+const UPSTREAM_TIMEOUT_MS = 12000;
+const UPSTREAM_RETRIES = 1;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRetryUpstream(status) {
+  return status === 429 || status >= 500;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchUpstreamWithRetry(url, options = {}) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= UPSTREAM_RETRIES; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(url, options);
+      if (!shouldRetryUpstream(res.status) || attempt >= UPSTREAM_RETRIES) {
+        return res;
+      }
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= UPSTREAM_RETRIES) throw err;
+    }
+    await sleep(220 * (attempt + 1));
+  }
+  if (lastErr) throw lastErr;
+  throw new Error("Upstream fetch failed");
+}
+
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -1858,83 +1897,96 @@ async function handleEzraTablesRoute(context, key) {
 }
 
 export async function onRequest(context) {
-  const { request, env } = context;
-  const url = new URL(request.url);
+  try {
+    const { request, env } = context;
+    const url = new URL(request.url);
 
-  // Expecting: /api/{version}/{...path}
-  const parts = url.pathname.replace(/^\/+/, "").split("/");
-  if (parts.length < 3 || parts[0] !== "api") {
-    return Response.json({ error: "Invalid API route" }, { status: 400 });
-  }
+    // Expecting: /api/{version}/{...path}
+    const parts = url.pathname.replace(/^\/+/, "").split("/");
+    if (parts.length < 3 || parts[0] !== "api") {
+      return Response.json({ error: "Invalid API route" }, { status: 400 });
+    }
 
-  const version = parts[1];
-  const upstreamPath = parts.slice(2).join("/");
-  if (!upstreamPath) {
-    return Response.json({ error: "Missing upstream path" }, { status: 400 });
-  }
+    const version = parts[1];
+    const upstreamPath = parts.slice(2).join("/");
+    if (!upstreamPath) {
+      return Response.json({ error: "Missing upstream path" }, { status: 400 });
+    }
 
-  const lowerPath = upstreamPath.toLowerCase();
-  const key = env.SPORTSDB_KEY || "074910";
-  if (version === "v1" && lowerPath.startsWith("ezra/account")) {
-    const accountPath = upstreamPath.slice("ezra/account".length).replace(/^\/+/, "");
-    return handleEzraAccountRoute(context, accountPath, key);
-  }
+    const lowerPath = upstreamPath.toLowerCase();
+    const key = env.SPORTSDB_KEY || "074910";
+    if (version === "v1" && lowerPath.startsWith("ezra/account")) {
+      const accountPath = upstreamPath.slice("ezra/account".length).replace(/^\/+/, "");
+      return handleEzraAccountRoute(context, accountPath, key);
+    }
 
-  if (request.method !== "GET") {
-    return new Response("Method Not Allowed", { status: 405 });
-  }
+    if (request.method !== "GET") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
 
-  if (version === "v1" && lowerPath === "ezra/tables") {
-    return handleEzraTablesRoute(context, key);
-  }
-  if (version === "v1" && lowerPath === "ezra/fixtures" && request.method === "GET") {
-    return handleEzraFixturesRoute(context, key);
-  }
-  if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
-    return handleEzraTeamFormRoute(context, key);
-  }
-  if (version === "v1" && lowerPath === "ezra/live/stream") {
-    return handleEzraLiveStreamRoute(context, key);
-  }
+    if (version === "v1" && lowerPath === "ezra/tables") {
+      return handleEzraTablesRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/fixtures" && request.method === "GET") {
+      return handleEzraFixturesRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
+      return handleEzraTeamFormRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/live/stream") {
+      return handleEzraLiveStreamRoute(context, key);
+    }
 
-  const upstream = upstreamUrl(version, key, `${upstreamPath}${url.search}`);
-  if (!upstream) {
-    return Response.json({ error: "Invalid API version" }, { status: 400 });
-  }
+    const upstream = upstreamUrl(version, key, `${upstreamPath}${url.search}`);
+    if (!upstream) {
+      return Response.json({ error: "Invalid API version" }, { status: 400 });
+    }
 
-  const cacheKey = new Request(request.url, request);
-  const cache = caches.default;
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    const headers = new Headers(cached.headers);
-    headers.set("X-EZRA-Cache", "HIT");
-    return new Response(cached.body, { status: cached.status, headers });
-  }
+    const cacheKey = new Request(request.url, request);
+    const cache = caches.default;
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      const headers = new Headers(cached.headers);
+      headers.set("X-EZRA-Cache", "HIT");
+      return new Response(cached.body, { status: cached.status, headers });
+    }
 
-  const upstreamRes = await fetch(upstream, {
-    headers: version === "v2" ? { "X-API-KEY": key } : undefined,
-  });
+    let upstreamRes;
+    try {
+      upstreamRes = await fetchUpstreamWithRetry(upstream, {
+        headers: version === "v2" ? { "X-API-KEY": key } : undefined,
+      });
+    } catch (err) {
+      return json({ error: "Upstream fetch failed", detail: String(err?.message || err) }, 502, {
+        "Cache-Control": "no-store",
+      });
+    }
 
-  if (!upstreamRes.ok) {
-    const body = await upstreamRes.text();
-    return new Response(body || `Upstream error (${upstreamRes.status})`, {
+    if (!upstreamRes.ok) {
+      const body = await upstreamRes.text();
+      return new Response(body || `Upstream error (${upstreamRes.status})`, {
+        status: upstreamRes.status,
+        headers: {
+          "Content-Type": upstreamRes.headers.get("Content-Type") || "text/plain",
+        },
+      });
+    }
+
+    const ttl = ttlForPath(upstreamPath);
+    const headers = new Headers(upstreamRes.headers);
+    headers.set("Cache-Control", `public, max-age=${ttl}, s-maxage=${ttl}`);
+    headers.set("X-EZRA-Cache", "MISS");
+
+    const response = new Response(upstreamRes.body, {
       status: upstreamRes.status,
-      headers: {
-        "Content-Type": upstreamRes.headers.get("Content-Type") || "text/plain",
-      },
+      headers,
+    });
+
+    context.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  } catch (err) {
+    return json({ error: "Unhandled API exception", detail: String(err?.message || err) }, 500, {
+      "Cache-Control": "no-store",
     });
   }
-
-  const ttl = ttlForPath(upstreamPath);
-  const headers = new Headers(upstreamRes.headers);
-  headers.set("Cache-Control", `public, max-age=${ttl}, s-maxage=${ttl}`);
-  headers.set("X-EZRA-Cache", "MISS");
-
-  const response = new Response(upstreamRes.body, {
-    status: upstreamRes.status,
-    headers,
-  });
-
-  context.waitUntil(cache.put(cacheKey, response.clone()));
-  return response;
 }

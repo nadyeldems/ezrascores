@@ -7,10 +7,30 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#120904" />
+    <meta
+      name="description"
+      content="EZRASCORES: live scores, fixtures, league tables, family mini-leagues, and dream teams for the Premier League and Championship."
+    />
+    <meta property="og:title" content="EZRASCORES" />
+    <meta
+      property="og:description"
+      content="Live scores, fixtures, tables, dream teams, and family league fun for Premier League and Championship."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ezrascores.com/" />
+    <meta property="og:image" content="https://ezrascores.com/assets/icons/icon-512.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="EZRASCORES" />
+    <meta
+      name="twitter:description"
+      content="Live scores, fixtures, tables, dream teams, and family league fun for Premier League and Championship."
+    />
+    <meta name="twitter:image" content="https://ezrascores.com/assets/icons/icon-512.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="EZRASCORES" />
     <title>EZRASCORES</title>
+    <link rel="canonical" href="https://ezrascores.com/" />
     <link rel="icon" type="image/svg+xml" href="assets/icons/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="assets/icons/favicon-16.png" />
@@ -25,6 +45,7 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <div class="app-shell">
       <header class="hero-bar">
         <div class="hero-left">
@@ -155,7 +176,7 @@
         </div>
       </section>
 
-      <main>
+      <main id="main-content">
         <section class="panel mobile-tabs-panel" id="mobile-tabs-panel" aria-label="Mobile sections">
           <div class="mobile-tabs" role="tablist" aria-label="Section tabs">
             <button class="btn mobile-tab-btn active" type="button" data-mobile-tab="fixtures" role="tab" aria-selected="true">Fixtures</button>
@@ -213,7 +234,7 @@
                 <button class="btn date-quick-btn" type="button" data-offset="1">Tomorrow</button>
                 <div class="date-nav">
                   <button id="date-prev-btn" class="btn date-arrow-btn" type="button" aria-label="Previous day">◀</button>
-                  <input id="date-picker" class="date-picker" type="date" />
+                  <input id="date-picker" class="date-picker" type="date" aria-label="Choose date" />
                   <button id="date-next-btn" class="btn date-arrow-btn" type="button" aria-label="Next day">▶</button>
                 </div>
               </div>
