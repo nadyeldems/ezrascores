@@ -839,6 +839,28 @@ async function leagueStandings(db, code, key) {
   return rows?.results || [];
 }
 
+async function leagueStandingsFallback(db, code) {
+  const season = currentSevenDaySeasonWindow();
+  const rows = await db
+    .prepare(`
+      SELECT u.id AS user_id, u.name,
+             COALESCE(sp.points, 0) AS points,
+             COALESCE(s.points, 0) AS lifetime_points
+      FROM ezra_league_members lm
+      JOIN ezra_users u ON u.id = lm.user_id
+      LEFT JOIN ezra_league_season_points sp
+        ON sp.user_id = lm.user_id
+       AND sp.league_code = lm.league_code
+       AND sp.season_id = ?2
+      LEFT JOIN ezra_user_scores s ON s.user_id = lm.user_id
+      WHERE lm.league_code = ?1
+      ORDER BY points DESC, lifetime_points DESC, u.name COLLATE NOCASE ASC
+    `)
+    .bind(code, season.seasonId)
+    .all();
+  return rows?.results || [];
+}
+
 async function syncLeagueScoresFromStates(db, code, key) {
   if (!code) return;
   const members = await db
@@ -1233,14 +1255,22 @@ async function handleLeagueList(db, request, key) {
   await ensureDefaultLeagueForUser(db, session.user_id);
   const leagues = await listLeaguesForUser(db, session.user_id);
   const detailed = await Promise.all(
-    leagues.map(async (league) => ({
-      code: league.code,
-      name: normalizeLeagueName(league.name, `League ${league.code}`),
-      ownerUserId: league.owner_user_id,
-      isOwner: String(league.owner_user_id || "") === String(session.user_id || ""),
-      memberCount: Number(league.member_count || 0),
-      standings: await leagueStandings(db, league.code, key),
-    }))
+    leagues.map(async (league) => {
+      let standings = [];
+      try {
+        standings = await leagueStandings(db, league.code, key);
+      } catch {
+        standings = await leagueStandingsFallback(db, league.code);
+      }
+      return {
+        code: league.code,
+        name: normalizeLeagueName(league.name, `League ${league.code}`),
+        ownerUserId: league.owner_user_id,
+        isOwner: String(league.owner_user_id || "") === String(session.user_id || ""),
+        memberCount: Number(league.member_count || 0),
+        standings,
+      };
+    })
   );
   return json({ leagues: detailed }, 200);
 }
@@ -1473,7 +1503,12 @@ async function handlePublicLeagueStandings(db, request, key) {
   if (!league) return json({ error: "League code not found." }, 404);
   const season = currentSevenDaySeasonWindow();
   await ensureLeagueSeason(db, code, season);
-  const standings = await leagueStandings(db, code, key);
+  let standings = [];
+  try {
+    standings = await leagueStandings(db, code, key);
+  } catch {
+    standings = await leagueStandingsFallback(db, code);
+  }
   return json(
     {
       league: {

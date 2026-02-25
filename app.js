@@ -1109,10 +1109,12 @@ async function refreshLeagueDirectory() {
     state.familyLeague.joinedLeagueCodes = prevCodes;
     state.familyLeague.leagueCode = prevCode;
     state.familyLeague.currentLeagueIndex = prevIdx;
-    throw err;
+    setAccountStatus(`League sync issue: ${err.message || "using last known standings."}`, true);
+    return false;
   } finally {
     state.leagueDirectory.loading = false;
   }
+  return true;
 }
 
 function cycleLeague(delta) {
