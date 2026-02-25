@@ -127,6 +127,27 @@ export default {
     if (url.pathname === "/health") {
       return new Response("ok", { status: 200 });
     }
+    if (url.pathname === "/full-backfill") {
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures/full");
+      return new Response(JSON.stringify(payload, null, 2), {
+        status: payload.ok ? 200 : 502,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+    if (url.pathname === "/fixtures-backfill") {
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures");
+      return new Response(JSON.stringify(payload, null, 2), {
+        status: payload.ok ? 200 : 502,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+    if (url.pathname === "/settle-now") {
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/settle");
+      return new Response(JSON.stringify(payload, null, 2), {
+        status: payload.ok ? 200 : 502,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
     const payload = await runJobs(env);
     return new Response(JSON.stringify(payload, null, 2), {
       status: payload.ok ? 200 : 502,
