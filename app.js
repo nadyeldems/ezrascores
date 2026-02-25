@@ -319,6 +319,10 @@ const el = {
   missionsMeta: document.getElementById("missions-meta"),
   missionsList: document.getElementById("missions-list"),
   storyList: document.getElementById("story-list"),
+  challengeStreak: document.getElementById("challenge-streak"),
+  challengeCombo: document.getElementById("challenge-combo"),
+  challengeMastery: document.getElementById("challenge-mastery"),
+  challengeAchievements: document.getElementById("challenge-achievements"),
   familyPrevLeagueBtn: document.getElementById("family-prev-league-btn"),
   familyNextLeagueBtn: document.getElementById("family-next-league-btn"),
   familyCreateCodeBtn: document.getElementById("family-create-code-btn"),
@@ -1583,6 +1587,118 @@ function renderFamilyLeaguePanel() {
   });
 }
 
+function formatDashboardDate(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function renderChallengeDashboardPanels() {
+  if (!el.challengeStreak || !el.challengeCombo || !el.challengeMastery || !el.challengeAchievements) return;
+  const loading = accountSignedIn() && !state.challengeDashboard;
+  const dash = state.challengeDashboard || null;
+  const progress = dash?.progress || {};
+  const achievements = Array.isArray(dash?.achievements) ? dash.achievements : [];
+  const mastery = Array.isArray(dash?.teamMastery) ? dash.teamMastery : [];
+  const seasonRows = Array.isArray(dash?.currentSeason?.standings) ? dash.currentSeason.standings : [];
+  const mySeasonPoints = Number(
+    seasonRows.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0
+  );
+
+  if (!accountSignedIn()) {
+    el.challengeStreak.innerHTML = `<p class="muted">Sign in to track your streak and weekly points.</p>`;
+    el.challengeCombo.innerHTML = `<p class="muted">Sign in to unlock combo scoring and multipliers.</p>`;
+    el.challengeMastery.innerHTML = `<p class="muted">Sign in to track team-by-team prediction performance.</p>`;
+    el.challengeAchievements.innerHTML = `<p class="muted">Sign in to unlock and save achievements.</p>`;
+    return;
+  }
+
+  if (loading) {
+    const skeleton = `
+      <div class="challenge-skeleton">
+        <span class="skeleton-line w-35"></span>
+        <span class="skeleton-line w-80"></span>
+        <span class="skeleton-line w-60"></span>
+      </div>
+    `;
+    el.challengeStreak.innerHTML = skeleton;
+    el.challengeCombo.innerHTML = skeleton;
+    el.challengeMastery.innerHTML = skeleton;
+    el.challengeAchievements.innerHTML = skeleton;
+    return;
+  }
+
+  const currentStreak = Number(progress.currentStreak || 0);
+  const bestStreak = Number(progress.bestStreak || 0);
+  const comboCount = Number(progress.comboCount || 0);
+  const bestCombo = Math.max(1, Number(progress.bestCombo || 1));
+
+  el.challengeStreak.innerHTML = `
+    <div class="challenge-stat-row">
+      <span class="challenge-stat-pill">${currentStreak}d</span>
+      <div class="challenge-stat-copy">
+        <p class="challenge-stat-title">Current streak</p>
+        <p class="challenge-stat-sub">Best ${bestStreak}d • Season ${mySeasonPoints} pts</p>
+      </div>
+    </div>
+    <p class="challenge-footnote">Last quest: ${formatDashboardDate(progress.lastQuestDate)}</p>
+  `;
+
+  el.challengeCombo.innerHTML = `
+    <div class="challenge-stat-row">
+      <span class="challenge-stat-pill">x${Math.max(1, comboCount)}</span>
+      <div class="challenge-stat-copy">
+        <p class="challenge-stat-title">Current combo</p>
+        <p class="challenge-stat-sub">Best x${bestCombo}</p>
+      </div>
+    </div>
+    <p class="challenge-footnote">Combo boosts prediction points on active runs.</p>
+  `;
+
+  const topMastery = mastery.slice(0, 4);
+  if (!topMastery.length) {
+    el.challengeMastery.innerHTML = `<p class="muted">No mastery data yet. Make score predictions to populate this card.</p>`;
+  } else {
+    el.challengeMastery.innerHTML = `
+      <ul class="challenge-list">
+        ${topMastery
+          .map((row) => {
+            const played = Number(row.pred_count || 0);
+            const exact = Number(row.exact_correct || 0);
+            const result = Number(row.result_correct || 0);
+            return `<li><span>${escapeHtml(row.team_name || "Team")}</span><span>${exact}/${result}/${played}</span></li>`;
+          })
+          .join("")}
+      </ul>
+      <p class="challenge-footnote">Format: exact/result/played</p>
+    `;
+  }
+
+  if (!achievements.length) {
+    el.challengeAchievements.innerHTML = `<p class="muted">No achievements yet. Complete quests and hit score streaks to unlock them.</p>`;
+    return;
+  }
+  const recent = achievements.slice(0, 4);
+  el.challengeAchievements.innerHTML = `
+    <ul class="challenge-achievement-list">
+      ${recent
+        .map(
+          (item) => `
+            <li>
+              <span class="challenge-achievement-icon">${escapeHtml(item.icon || "★")}</span>
+              <span class="challenge-achievement-text">
+                <strong>${escapeHtml(item.name || "Achievement")}</strong>
+                <small>${escapeHtml(item.description || "")}</small>
+              </span>
+            </li>
+          `
+        )
+        .join("")}
+    </ul>
+  `;
+}
+
 function renderFunZone() {
   if (el.funZoneBody) {
     el.funZoneBody.classList.remove("hidden");
@@ -1590,6 +1706,7 @@ function renderFunZone() {
   renderMissionsPanel();
   renderStoryCardsPanel();
   renderFamilyLeaguePanel();
+  renderChallengeDashboardPanels();
 }
 
 function normalizeHexColor(value) {
@@ -4085,6 +4202,7 @@ async function refreshChallengeDashboard(force = false) {
   if (!accountSignedIn()) {
     state.challengeDashboard = null;
     state.challengeDashboardAt = 0;
+    renderChallengeDashboardPanels();
     return null;
   }
   if (!force && Date.now() - Number(state.challengeDashboardAt || 0) < 30 * 1000) {
@@ -4093,6 +4211,7 @@ async function refreshChallengeDashboard(force = false) {
   const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/challenges/dashboard`, null, state.account.token);
   state.challengeDashboard = data || null;
   state.challengeDashboardAt = Date.now();
+  renderChallengeDashboardPanels();
   return state.challengeDashboard;
 }
 
@@ -4166,15 +4285,26 @@ async function registerAccount() {
   state.account.user = data.user || null;
   localStorage.setItem("ezra_account_token", state.account.token);
   resetAccountScopedLocalState();
-  await safeLoad(() => refreshChallengeDashboard(true), null);
+  let partialWarning = false;
+  const dash = await safeLoad(() => refreshChallengeDashboard(true), null);
+  if (!dash) partialWarning = true;
   ensureSignedInUserInFamilyLeague();
-  await refreshLeagueDirectory();
+  const leaguesOk = await safeLoad(async () => {
+    await refreshLeagueDirectory();
+    return true;
+  }, false);
+  if (!leaguesOk) partialWarning = true;
   persistLocalMetaState();
-  await syncCloudStateNow();
+  const synced = await safeLoad(() => syncCloudStateNow(), null);
+  if (synced === null) partialWarning = true;
   renderAccountUI();
   renderFamilyLeaguePanel();
   refreshVisibleFixturePredictionBadges();
-  setAccountStatus(`Account created. Cloud save enabled for ${state.account.user?.name || "user"}.`);
+  setAccountStatus(
+    partialWarning
+      ? `Account created for ${state.account.user?.name || "user"}. Some sections are still loading; retry in a moment.`
+      : `Account created. Cloud save enabled for ${state.account.user?.name || "user"}.`
+  );
 }
 
 async function loginAccount() {
@@ -4185,16 +4315,27 @@ async function loginAccount() {
   state.account.user = data.user || null;
   localStorage.setItem("ezra_account_token", state.account.token);
   resetAccountScopedLocalState();
-  await loadCloudState();
-  await safeLoad(() => refreshChallengeDashboard(true), null);
+  let partialWarning = false;
+  const cloud = await safeLoad(() => loadCloudState(), null);
+  if (cloud === null) partialWarning = true;
+  const dash = await safeLoad(() => refreshChallengeDashboard(true), null);
+  if (!dash) partialWarning = true;
   ensureSignedInUserInFamilyLeague();
-  await refreshLeagueDirectory();
+  const leaguesOk = await safeLoad(async () => {
+    await refreshLeagueDirectory();
+    return true;
+  }, false);
+  if (!leaguesOk) partialWarning = true;
   persistLocalMetaState();
   scheduleCloudStateSync();
   renderAccountUI();
   renderFamilyLeaguePanel();
   refreshVisibleFixturePredictionBadges();
-  setAccountStatus(`Signed in as ${state.account.user?.name || "user"}.`);
+  setAccountStatus(
+    partialWarning
+      ? `Signed in as ${state.account.user?.name || "user"}. Some sections are still loading; retry in a moment.`
+      : `Signed in as ${state.account.user?.name || "user"}.`
+  );
 }
 
 async function logoutAccount() {

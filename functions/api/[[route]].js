@@ -1163,7 +1163,7 @@ async function handleAccountGetState(db, request) {
     .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
     .bind(session.user_id)
     .first();
-  const parsed = row?.state_json ? JSON.parse(row.state_json) : {};
+  const parsed = safeParseJsonText(row?.state_json || "{}");
   return json({ state: parsed, updatedAt: row?.updated_at || null }, 200);
 }
 

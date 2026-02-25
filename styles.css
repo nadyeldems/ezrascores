@@ -2020,6 +2020,128 @@ body.league-member-overlay-open::before {
   padding-inline: 0.35rem;
 }
 
+.challenge-card {
+  min-height: 8.5rem;
+}
+
+.challenge-block {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.challenge-skeleton {
+  display: grid;
+  gap: 0.34rem;
+  min-height: 5.2rem;
+  align-content: start;
+}
+
+.challenge-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.challenge-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.8rem;
+  min-height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  color: var(--text);
+  background: rgba(255, 153, 32, 0.08);
+}
+
+.challenge-stat-copy {
+  min-width: 0;
+}
+
+.challenge-stat-title {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.05;
+}
+
+.challenge-stat-sub {
+  margin: 0.12rem 0 0;
+  color: var(--text-soft);
+  line-height: 1.05;
+}
+
+.challenge-footnote {
+  margin: 0;
+  color: var(--text-soft);
+  opacity: 0.9;
+}
+
+.challenge-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.challenge-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.55rem;
+  padding: 0.2rem 0.36rem;
+  background: rgba(255, 153, 32, 0.04);
+}
+
+.challenge-achievement-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.challenge-achievement-list li {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.62rem;
+  padding: 0.28rem 0.34rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.36rem;
+  background: rgba(255, 153, 32, 0.04);
+}
+
+.challenge-achievement-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 153, 32, 0.08);
+}
+
+.challenge-achievement-text {
+  min-width: 0;
+  display: grid;
+  gap: 0.05rem;
+}
+
+.challenge-achievement-text strong {
+  color: var(--text);
+  line-height: 1.05;
+}
+
+.challenge-achievement-text small {
+  color: var(--text-soft);
+  line-height: 1.05;
+}
+
 .fixture-predict {
   border: 1px solid var(--line-soft);
   border-radius: 0.7rem;
