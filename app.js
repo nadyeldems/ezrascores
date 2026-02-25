@@ -210,6 +210,7 @@ const state = {
   openFixtureKey: "",
   eventDetailCache: {},
   fixtureScoreSnapshot: new Map(),
+  dateFixturesCache: {},
   selectedDateLoadSeq: 0,
   selectedDateTimer: null,
   liveStream: { es: null, reconnectTimer: null, lastVersion: "", connected: false },
@@ -358,11 +359,15 @@ const el = {
   playerQuizOptions: document.getElementById("player-quiz-options"),
   playerQuizFeedback: document.getElementById("player-quiz-feedback"),
   controlsPanel: document.querySelector(".controls-panel"),
+  controlsPanelSecondary: document.getElementById("controls-panel-secondary"),
   stickyDateBar: document.getElementById("sticky-date-bar"),
   stickyDateLabel: document.getElementById("sticky-date-label"),
   stickyDatePrev: document.getElementById("sticky-date-prev"),
   stickyDateToday: document.getElementById("sticky-date-today"),
   stickyDateNext: document.getElementById("sticky-date-next"),
+  datePrevBtnSecondary: document.getElementById("date-prev-btn-secondary"),
+  dateNextBtnSecondary: document.getElementById("date-next-btn-secondary"),
+  dateLabelSecondary: document.getElementById("date-label-secondary"),
 };
 
 function clearGameDayCountdownTimer() {
@@ -5099,6 +5104,39 @@ function renderFixtureList(target, events, mode) {
   });
 }
 
+function tableBandClass(leagueCode, rank) {
+  const r = Number(rank || 0);
+  if (!Number.isFinite(r) || r <= 0) return "";
+  if (leagueCode === "EPL") {
+    if (r <= 4) return "table-band-europe";
+    if (r >= 18) return "table-band-relegation";
+    return "";
+  }
+  if (leagueCode === "CHAMP") {
+    if (r <= 2) return "table-band-promotion";
+    if (r >= 3 && r <= 6) return "table-band-playoff";
+    if (r >= 22) return "table-band-relegation";
+  }
+  return "";
+}
+
+function tableBandLegendHtml(leagueCode) {
+  if (leagueCode === "EPL") {
+    return `<div class="table-band-legend">
+      <span class="legend-pill europe">Top 4: Europe</span>
+      <span class="legend-pill relegation">Bottom 3: Relegation</span>
+    </div>`;
+  }
+  if (leagueCode === "CHAMP") {
+    return `<div class="table-band-legend">
+      <span class="legend-pill promotion">Top 2: Promotion</span>
+      <span class="legend-pill playoff">3-6: Playoffs</span>
+      <span class="legend-pill relegation">Bottom 3: Relegation</span>
+    </div>`;
+  }
+  return "";
+}
+
 function renderTables() {
   el.tablesWrap.innerHTML = "";
 
@@ -5116,6 +5154,7 @@ function renderTables() {
       logoEl.classList.add("hidden");
     }
     const tbody = card.querySelector("tbody");
+    card.insertAdjacentHTML("beforeend", tableBandLegendHtml(key));
 
     if (!rows.length) {
       const tr = document.createElement("tr");
@@ -5127,6 +5166,8 @@ function renderTables() {
     } else {
       rows.forEach((row) => {
         const tr = document.createElement("tr");
+        const bandClass = tableBandClass(key, row.intRank);
+        if (bandClass) tr.classList.add(bandClass);
         const cols = [
           row.intRank,
           row.strTeam,
@@ -5196,6 +5237,7 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
     state.selectedDateFixtures.EPL = [...state.fixtures.today.EPL];
     state.selectedDateFixtures.CHAMP = [...state.fixtures.today.CHAMP];
+    setDateFixtureCache(dateIso, { EPL: state.selectedDateFixtures.EPL, CHAMP: state.selectedDateFixtures.CHAMP });
     return true;
   }
 
@@ -5203,6 +5245,7 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
     state.selectedDateFixtures.EPL = [...state.fixtures.previous.EPL];
     state.selectedDateFixtures.CHAMP = [...state.fixtures.previous.CHAMP];
+    setDateFixtureCache(dateIso, { EPL: state.selectedDateFixtures.EPL, CHAMP: state.selectedDateFixtures.CHAMP });
     return true;
   }
 
@@ -5210,16 +5253,42 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
     state.selectedDateFixtures.EPL = [...state.fixtures.next.EPL];
     state.selectedDateFixtures.CHAMP = [...state.fixtures.next.CHAMP];
+    setDateFixtureCache(dateIso, { EPL: state.selectedDateFixtures.EPL, CHAMP: state.selectedDateFixtures.CHAMP });
     return true;
   }
 
-  const [epl, champ] = await Promise.all([
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dateIso), []),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dateIso), []),
+  const cached = getDateFixtureCache(dateIso);
+  let epl = cached?.EPL;
+  let champ = cached?.CHAMP;
+  const needEpl = state.selectedLeague === "ALL" ? !Array.isArray(epl) : state.selectedLeague === "EPL" && !Array.isArray(epl);
+  const needChamp = state.selectedLeague === "ALL" ? !Array.isArray(champ) : state.selectedLeague === "CHAMP" && !Array.isArray(champ);
+
+  const [fetchedEpl, fetchedChamp] = await Promise.all([
+    needEpl ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dateIso), []) : Promise.resolve(epl || []),
+    needChamp ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dateIso), []) : Promise.resolve(champ || []),
   ]);
+
+  if (needEpl) epl = fetchedEpl;
+  if (needChamp) champ = fetchedChamp;
+  setDateFixtureCache(dateIso, { EPL: Array.isArray(epl) ? epl : [], CHAMP: Array.isArray(champ) ? champ : [] });
+
+  const prefetchedCache = getDateFixtureCache(dateIso);
+  // Background prefetch for the other league when user is focused on one league.
+  if (state.selectedLeague !== "ALL") {
+    const otherLeague = state.selectedLeague === "EPL" ? "CHAMP" : "EPL";
+    const otherMissing = !Array.isArray(prefetchedCache?.[otherLeague]);
+    if (otherMissing) {
+      safeLoad(async () => {
+        const rows = await fetchLeagueDayFixtures(LEAGUES[otherLeague].id, dateIso);
+        setDateFixtureCache(dateIso, { [otherLeague]: rows });
+      }, null);
+    }
+  }
+
   if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-  state.selectedDateFixtures.EPL = epl.sort(fixtureSort);
-  state.selectedDateFixtures.CHAMP = champ.sort(fixtureSort);
+  const resolved = getDateFixtureCache(dateIso);
+  state.selectedDateFixtures.EPL = [...(resolved?.EPL || [])].sort(fixtureSort);
+  state.selectedDateFixtures.CHAMP = [...(resolved?.CHAMP || [])].sort(fixtureSort);
   return true;
 }
 
@@ -5235,6 +5304,26 @@ function selectedDateLabel(dateIso) {
   return "Fixtures";
 }
 
+function getDateFixtureCache(dateIso) {
+  const entry = state.dateFixturesCache?.[dateIso];
+  if (!entry || typeof entry !== "object") return null;
+  return {
+    EPL: Array.isArray(entry.EPL) ? entry.EPL : null,
+    CHAMP: Array.isArray(entry.CHAMP) ? entry.CHAMP : null,
+    updatedAt: Number(entry.updatedAt || 0),
+  };
+}
+
+function setDateFixtureCache(dateIso, next = {}) {
+  if (!dateIso) return;
+  const prev = getDateFixtureCache(dateIso) || { EPL: null, CHAMP: null, updatedAt: 0 };
+  state.dateFixturesCache[dateIso] = {
+    EPL: Array.isArray(next.EPL) ? [...next.EPL] : prev.EPL,
+    CHAMP: Array.isArray(next.CHAMP) ? [...next.CHAMP] : prev.CHAMP,
+    updatedAt: Date.now(),
+  };
+}
+
 async function setSelectedDate(dateIso) {
   const normalized = normalizeDateIsoInput(dateIso);
   state.selectedDate = normalized;
@@ -5245,7 +5334,7 @@ async function setSelectedDate(dateIso) {
   renderFixtures();
 }
 
-function scheduleSelectedDateChange(dateIso, delayMs = 90) {
+function scheduleSelectedDateChange(dateIso, delayMs = 35) {
   const nextIso = normalizeDateIsoInput(dateIso);
   if (state.selectedDateTimer) {
     clearTimeout(state.selectedDateTimer);
@@ -5273,6 +5362,10 @@ function renderFixtures() {
   if (el.stickyDateLabel) {
     const d = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
     el.stickyDateLabel.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  }
+  if (el.dateLabelSecondary) {
+    const d = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
+    el.dateLabelSecondary.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   }
   setDateButtonState();
   renderMobileSectionLayout();
@@ -5385,6 +5478,7 @@ function setMobileTab(tab) {
 function renderMobileSectionLayout() {
   const mobile = isMobileViewport();
   const controls = el.controlsPanel;
+  const controlsSecondary = el.controlsPanelSecondary;
   const fixtures = document.getElementById("fixtures-panel");
   const tables = document.getElementById("table-panel");
   const fun = document.getElementById("fun-zone-panel");
@@ -5393,6 +5487,7 @@ function renderMobileSectionLayout() {
   if (!mobile) {
     el.mobileTabsPanel?.classList.add("hidden");
     controls.classList.remove("hidden");
+    controlsSecondary?.classList.remove("hidden");
     fixtures.classList.remove("hidden");
     tables.classList.remove("hidden");
     fun.classList.remove("hidden");
@@ -5407,6 +5502,7 @@ function renderMobileSectionLayout() {
   });
 
   controls.classList.toggle("hidden", state.mobileTab === "fun");
+  controlsSecondary?.classList.toggle("hidden", state.mobileTab === "table");
   fixtures.classList.toggle("hidden", state.mobileTab !== "fixtures");
   tables.classList.toggle("hidden", state.mobileTab !== "table");
   fun.classList.toggle("hidden", state.mobileTab !== "fun");
@@ -6288,6 +6384,9 @@ async function loadCoreData(options = {}) {
   state.fixtures.previous.CHAMP = prevChamp.sort(fixtureSort);
   state.fixtures.next.EPL = nextEpl.sort(fixtureSort);
   state.fixtures.next.CHAMP = nextChamp.sort(fixtureSort);
+  setDateFixtureCache(dates.today, { EPL: state.fixtures.today.EPL, CHAMP: state.fixtures.today.CHAMP });
+  setDateFixtureCache(dates.prev, { EPL: state.fixtures.previous.EPL, CHAMP: state.fixtures.previous.CHAMP });
+  setDateFixtureCache(dates.next, { EPL: state.fixtures.next.EPL, CHAMP: state.fixtures.next.CHAMP });
   state.tables.EPL = includeTables ? (tableEpl.length ? tableEpl : prevTablesEpl) : prevTablesEpl;
   state.tables.CHAMP = includeTables ? (tableChamp.length ? tableChamp : prevTablesChamp) : prevTablesChamp;
   state.teamsByLeague.EPL = includeStatic ? (teamsEpl.length ? teamsEpl : prevTeamsEpl) : prevTeamsEpl;
@@ -6806,6 +6905,18 @@ function attachEvents() {
 
   if (el.dateNextBtn) {
     el.dateNextBtn.addEventListener("click", () => {
+      shiftSelectedDate(1);
+    });
+  }
+
+  if (el.datePrevBtnSecondary) {
+    el.datePrevBtnSecondary.addEventListener("click", () => {
+      shiftSelectedDate(-1);
+    });
+  }
+
+  if (el.dateNextBtnSecondary) {
+    el.dateNextBtnSecondary.addEventListener("click", () => {
       shiftSelectedDate(1);
     });
   }

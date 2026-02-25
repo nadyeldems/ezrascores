@@ -285,6 +285,32 @@
           </div>
         </section>
 
+        <section class="panel controls-panel controls-panel-secondary" id="controls-panel-secondary">
+          <div class="filter-toolbar">
+            <div class="filter-group">
+              <p class="filter-label">League Filter</p>
+              <div class="league-controls" role="tablist" aria-label="League selection (secondary)">
+                <button class="btn league-btn active" type="button" data-league="EPL">Premier League</button>
+                <button class="btn league-btn" type="button" data-league="CHAMP">Championship</button>
+                <button class="btn league-btn" type="button" data-league="ALL">All</button>
+              </div>
+            </div>
+            <div class="filter-group">
+              <p class="filter-label">Date Filter</p>
+              <div class="date-controls">
+                <button class="btn date-quick-btn" type="button" data-offset="-1">Yesterday</button>
+                <button class="btn date-quick-btn active" type="button" data-offset="0">Today</button>
+                <button class="btn date-quick-btn" type="button" data-offset="1">Tomorrow</button>
+                <div class="date-nav">
+                  <button id="date-prev-btn-secondary" class="btn date-arrow-btn" type="button" aria-label="Previous day">◀</button>
+                  <span id="date-label-secondary" class="date-label-secondary">--</span>
+                  <button id="date-next-btn-secondary" class="btn date-arrow-btn" type="button" aria-label="Next day">▶</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="grid-layout">
           <article class="panel" id="fixtures-panel">
             <div class="panel-head">

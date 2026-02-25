@@ -2921,6 +2921,10 @@ body[data-theme="t90"] .status-pill.final {
   margin-bottom: 0;
 }
 
+.controls-panel-secondary {
+  margin-top: 0.15rem;
+}
+
 .panel {
   border-radius: 1.05rem;
   padding: 0.7rem;
@@ -2970,6 +2974,16 @@ main {
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
+}
+
+.date-label-secondary {
+  min-width: 9.8rem;
+  text-align: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.6rem;
+  padding: 0.32rem 0.55rem;
+  color: var(--text);
+  background: rgba(255, 153, 32, 0.06);
 }
 
 .date-arrow-btn {
@@ -3437,6 +3451,59 @@ body[data-theme="t90"] .team-score.leading {
   padding: 0.5rem;
   background: #080502;
   transition: border-color 140ms ease;
+}
+
+.table-band-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.38rem 0.5rem 0.15rem;
+}
+
+.legend-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 0.08rem 0.45rem;
+  font-size: 0.84rem;
+  color: var(--text-soft);
+}
+
+.legend-pill.europe,
+tr.table-band-europe td:first-child {
+  border-left: 2px solid #3e8cff;
+}
+
+.legend-pill.promotion,
+tr.table-band-promotion td:first-child {
+  border-left: 2px solid #2fbf70;
+}
+
+.legend-pill.playoff,
+tr.table-band-playoff td:first-child {
+  border-left: 2px solid #7f6cff;
+}
+
+.legend-pill.relegation,
+tr.table-band-relegation td:first-child {
+  border-left: 2px solid #d94f4f;
+}
+
+tr.table-band-europe td {
+  background: linear-gradient(90deg, rgba(62, 140, 255, 0.12), transparent 42%);
+}
+
+tr.table-band-promotion td {
+  background: linear-gradient(90deg, rgba(47, 191, 112, 0.12), transparent 42%);
+}
+
+tr.table-band-playoff td {
+  background: linear-gradient(90deg, rgba(127, 108, 255, 0.12), transparent 42%);
+}
+
+tr.table-band-relegation td {
+  background: linear-gradient(90deg, rgba(217, 79, 79, 0.12), transparent 42%);
 }
 
 .table-card:hover {
