@@ -60,6 +60,17 @@ function parseStoredJson(key, fallback) {
   }
 }
 
+function parseStoredArray(key, fallback = []) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function defaultMissionState() {
   return { dailyByDate: {} };
 }
@@ -216,6 +227,38 @@ const state = {
   dreamRenderReason: "default",
   lastRefresh: null,
 };
+
+function hydrateCachedBootstrapData() {
+  const cachedEplTeams = parseStoredArray("ezra_cache_teams_epl", []);
+  const cachedChampTeams = parseStoredArray("ezra_cache_teams_champ", []);
+  const cachedEplTable = parseStoredArray("ezra_cache_table_epl", []);
+  const cachedChampTable = parseStoredArray("ezra_cache_table_champ", []);
+  const cachedLeagueBadges = parseStoredJson("ezra_cache_league_badges", { EPL: "", CHAMP: "" });
+
+  if (!state.teamsByLeague.EPL.length && cachedEplTeams.length) state.teamsByLeague.EPL = cachedEplTeams;
+  if (!state.teamsByLeague.CHAMP.length && cachedChampTeams.length) state.teamsByLeague.CHAMP = cachedChampTeams;
+  if (!state.tables.EPL.length && cachedEplTable.length) state.tables.EPL = cachedEplTable;
+  if (!state.tables.CHAMP.length && cachedChampTable.length) state.tables.CHAMP = cachedChampTable;
+  if (cachedLeagueBadges && typeof cachedLeagueBadges === "object") {
+    state.leagueBadges.EPL = cachedLeagueBadges.EPL || state.leagueBadges.EPL || "";
+    state.leagueBadges.CHAMP = cachedLeagueBadges.CHAMP || state.leagueBadges.CHAMP || "";
+  }
+
+  rebuildTeamBadgeMap();
+  ensureDefaultFavoriteTeam();
+}
+
+function persistCachedBootstrapData() {
+  try {
+    localStorage.setItem("ezra_cache_teams_epl", JSON.stringify(state.teamsByLeague.EPL || []));
+    localStorage.setItem("ezra_cache_teams_champ", JSON.stringify(state.teamsByLeague.CHAMP || []));
+    localStorage.setItem("ezra_cache_table_epl", JSON.stringify(state.tables.EPL || []));
+    localStorage.setItem("ezra_cache_table_champ", JSON.stringify(state.tables.CHAMP || []));
+    localStorage.setItem("ezra_cache_league_badges", JSON.stringify(state.leagueBadges || { EPL: "", CHAMP: "" }));
+  } catch {
+    // Ignore localStorage write errors.
+  }
+}
 
 const el = {
   gameDayMessage: document.getElementById("game-day-message"),
@@ -4239,8 +4282,18 @@ async function fetchAllTeams(leagueId) {
 }
 
 async function fetchTeamById(teamId) {
-  const data = await apiGetV1(`lookupteam.php?id=${teamId}`);
-  return Array.isArray(data?.teams) && data.teams[0] ? data.teams[0] : null;
+  const known = findKnownTeamById(teamId);
+  if (known) return known;
+  try {
+    const data = await apiGetV1(`lookupteam.php?id=${teamId}`);
+    if (Array.isArray(data?.teams) && data.teams[0]) return data.teams[0];
+  } catch (err) {
+    console.error(err);
+  }
+  if (state.favoriteTeam && String(state.favoriteTeam.idTeam || "") === String(teamId)) {
+    return state.favoriteTeam;
+  }
+  return null;
 }
 
 async function fetchTeamNextEvents(teamId) {
@@ -4321,6 +4374,12 @@ function setFavoritePickerDisplay(team) {
   el.favoritePickerLogo.src = team.strBadge || "";
   el.favoritePickerLogo.alt = `${team.strTeam} badge`;
   el.favoritePickerText.textContent = `${team.strTeam} (${team.strLeague || "League"})`;
+}
+
+function findKnownTeamById(teamId) {
+  if (!teamId) return null;
+  const allTeams = [...(state.teamsByLeague.EPL || []), ...(state.teamsByLeague.CHAMP || [])];
+  return allTeams.find((team) => String(team?.idTeam || "") === String(teamId)) || null;
 }
 
 function ensureDefaultFavoriteTeam() {
@@ -6303,13 +6362,24 @@ async function fullRefresh() {
     renderLastRefreshed();
     nextContext = currentPollContext();
   } catch (err) {
-    displayApiError(el.fixturesList, err);
-    el.tablesWrap.innerHTML = `<div class="error">Unable to load league tables. ${err.message}</div>`;
+    console.error(err);
+    const hasFixtureRows = Boolean(el.fixturesList?.querySelector(".fixture-item"));
+    const hasTableRows = Boolean(el.tablesWrap?.querySelector(".table-card"));
+    if (!hasFixtureRows) {
+      displayApiError(el.fixturesList, err);
+    }
+    if (!hasTableRows) {
+      el.tablesWrap.innerHTML = `<div class="error">Unable to load league tables. ${err.message}</div>`;
+    }
     await safeLoad(() => ensureFavoritePickerDataLoaded(), null);
     buildFavoriteOptions();
     renderFunZone();
+    if (el.lastRefreshed) {
+      el.lastRefreshed.textContent = `Last refresh failed: ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+    }
   } finally {
     state.refreshInFlight = false;
+    persistCachedBootstrapData();
     scheduleNextRefresh(nextContext);
   }
 }
@@ -6665,6 +6735,7 @@ applyUiTheme(state.uiTheme);
 applyMotionSetting(state.motionLevel);
 setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
+hydrateCachedBootstrapData();
 renderAccountUI();
 refreshPlayerPopScoreBadge();
 normalizeDreamSelections();
