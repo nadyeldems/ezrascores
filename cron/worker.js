@@ -63,9 +63,58 @@ async function warmTables(env) {
   };
 }
 
+async function runProtectedCron(env, path) {
+  const baseUrl = normalizeBase(env.PAGES_BASE_URL);
+  const timeoutMs = Number(env.TABLE_WARM_TIMEOUT_MS || 15000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  const url = `${baseUrl}${path}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "ezrascores-table-cron/1.0",
+        "x-ezra-cron-secret": String(env.EZRA_CRON_SECRET || ""),
+      },
+    });
+    const body = await res.text();
+    return {
+      ok: res.ok,
+      status: res.status,
+      url,
+      body: body.slice(0, 400),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      url,
+      error: String(err?.message || err),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runJobs(env) {
+  const [tables, fixtures, settle] = await Promise.all([
+    warmTables(env),
+    runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures"),
+    runProtectedCron(env, "/api/v1/ezra/account/cron/settle"),
+  ]);
+  return {
+    ok: Boolean(tables.ok && fixtures.ok && settle.ok),
+    at: new Date().toISOString(),
+    tables,
+    fixtures,
+    settle,
+  };
+}
+
 export default {
   async scheduled(event, env, ctx) {
-    const payload = await warmTables(env);
+    const payload = await runJobs(env);
     console.log(JSON.stringify({ source: "scheduled", cron: event.cron, ...payload }));
   },
 
@@ -74,7 +123,7 @@ export default {
     if (url.pathname === "/health") {
       return new Response("ok", { status: 200 });
     }
-    const payload = await warmTables(env);
+    const payload = await runJobs(env);
     return new Response(JSON.stringify(payload, null, 2), {
       status: payload.ok ? 200 : 502,
       headers: { "Content-Type": "application/json; charset=utf-8" },

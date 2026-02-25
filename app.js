@@ -4028,6 +4028,14 @@ async function logoutAccount() {
 }
 
 async function fetchLeagueDayFixtures(leagueId, dateIso) {
+  const fromCache = await safeLoad(async () => {
+    const payload = await apiGetV1(`ezra/fixtures?l=${encodeURIComponent(leagueId)}&d=${encodeURIComponent(dateIso)}`);
+    return safeArray(payload, "events");
+  }, null);
+  if (Array.isArray(fromCache)) {
+    return fromCache;
+  }
+
   const league = Object.values(LEAGUES).find((l) => l.id === leagueId);
   const leagueName = league?.name || leagueId;
   const today = toISODate(new Date());

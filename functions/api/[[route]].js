@@ -148,6 +148,19 @@ async function ensureAccountSchema(db) {
       )
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_event_results_expires_at ON ezra_event_results_cache(expires_at)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_fixtures_cache (
+        event_id TEXT PRIMARY KEY,
+        league_id TEXT NOT NULL,
+        date_event TEXT NOT NULL,
+        str_time TEXT,
+        status_text TEXT,
+        payload_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_fixtures_league_date ON ezra_fixtures_cache(league_id, date_event)`,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_fixtures_updated_at ON ezra_fixtures_cache(updated_at)`,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -934,6 +947,20 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     if (route === "cron/settle" && (request.method === "POST" || request.method === "GET")) {
       return handleCronSettle(db, request, key, env);
     }
+    if (route === "cron/fixtures" && (request.method === "POST" || request.method === "GET")) {
+      const incoming = String(request.headers.get("x-ezra-cron-secret") || "").trim();
+      const configured = String(env.EZRA_CRON_SECRET || "").trim();
+      if (!configured || incoming !== configured) {
+        return json({ error: "Unauthorized cron call" }, 401);
+      }
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const results = [];
+      for (const leagueId of TABLE_LEAGUE_IDS) {
+        const out = await ingestLeagueFixtureFeeds(db, key, leagueId, todayIso);
+        results.push({ leagueId, upserts: out.count });
+      }
+      return json({ ok: true, date: todayIso, results }, 200);
+    }
     if (route === "leagues" && request.method === "GET") {
       return handleLeagueList(db, request, key);
     }
@@ -990,6 +1017,169 @@ function firstArray(payload) {
     if (Array.isArray(value)) return value;
   }
   return [];
+}
+
+function fixtureCacheKey(event) {
+  if (event?.idEvent) return String(event.idEvent);
+  const date = String(event?.dateEvent || "").trim();
+  const home = String(event?.strHomeTeam || "").trim().toLowerCase();
+  const away = String(event?.strAwayTeam || "").trim().toLowerCase();
+  if (!date || !home || !away) return "";
+  return `fallback:${date}:${home}:${away}`;
+}
+
+function normalizeEventDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toISOString().slice(0, 10);
+}
+
+function normalizeTime(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.slice(0, 8);
+}
+
+function mergeEventsByKey(events) {
+  const map = new Map();
+  for (const event of events || []) {
+    if (!event || typeof event !== "object") continue;
+    const key = fixtureCacheKey(event);
+    if (!key) continue;
+    const prev = map.get(key);
+    map.set(key, prev ? { ...prev, ...event } : event);
+  }
+  return [...map.values()];
+}
+
+function sortByDateTime(events) {
+  return [...(events || [])].sort((a, b) => {
+    const ta = `${normalizeEventDate(a?.dateEvent)}T${normalizeTime(a?.strTime || "00:00:00")}`;
+    const tb = `${normalizeEventDate(b?.dateEvent)}T${normalizeTime(b?.strTime || "00:00:00")}`;
+    return ta.localeCompare(tb);
+  });
+}
+
+async function upsertFixtures(db, leagueId, events) {
+  if (!db || !Array.isArray(events) || !events.length) return 0;
+  const now = Date.now();
+  let count = 0;
+  for (const raw of events) {
+    const event = raw && typeof raw === "object" ? raw : null;
+    if (!event) continue;
+    const eventId = fixtureCacheKey(event);
+    const dateEvent = normalizeEventDate(event.dateEvent);
+    if (!eventId || !dateEvent) continue;
+    await db
+      .prepare(
+        `
+        INSERT INTO ezra_fixtures_cache (event_id, league_id, date_event, str_time, status_text, payload_json, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT(event_id) DO UPDATE SET
+          league_id = excluded.league_id,
+          date_event = excluded.date_event,
+          str_time = excluded.str_time,
+          status_text = excluded.status_text,
+          payload_json = excluded.payload_json,
+          updated_at = excluded.updated_at
+        `
+      )
+      .bind(
+        eventId,
+        String(leagueId || ""),
+        dateEvent,
+        normalizeTime(event.strTime),
+        String(event.strStatus || event.strProgress || ""),
+        JSON.stringify(event),
+        now
+      )
+      .run();
+    count += 1;
+  }
+  return count;
+}
+
+async function readFixturesByLeagueDate(db, leagueId, dateIso) {
+  const rows = await db
+    .prepare(
+      `
+      SELECT payload_json
+      FROM ezra_fixtures_cache
+      WHERE league_id = ?1 AND date_event = ?2
+      ORDER BY COALESCE(str_time, '') ASC, event_id ASC
+      `
+    )
+    .bind(String(leagueId), String(dateIso))
+    .all();
+  const list = Array.isArray(rows?.results) ? rows.results : [];
+  return list
+    .map((row) => safeParseJsonText(row?.payload_json))
+    .filter((event) => event && typeof event === "object");
+}
+
+async function ingestLeagueFixtureFeeds(db, key, leagueId, dayIso = "") {
+  const day = normalizeEventDate(dayIso) || new Date().toISOString().slice(0, 10);
+  const prevDay = new Date(`${day}T00:00:00Z`);
+  prevDay.setUTCDate(prevDay.getUTCDate() - 1);
+  const nextDay = new Date(`${day}T00:00:00Z`);
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const prevIso = prevDay.toISOString().slice(0, 10);
+  const nextIso = nextDay.toISOString().slice(0, 10);
+
+  const [todayFeed, prevFeed, nextFeed, pastFeed, futureFeed, liveFeed] = await Promise.all([
+    fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(day)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
+    fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(prevIso)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
+    fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(nextIso)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
+    fetchSportsDb("v1", key, `eventspastleague.php?id=${encodeURIComponent(leagueId)}`).catch(() => null),
+    fetchSportsDb("v1", key, `eventsnextleague.php?id=${encodeURIComponent(leagueId)}`).catch(() => null),
+    fetchSportsDb("v2", key, `livescore/${encodeURIComponent(leagueId)}`).catch(() => null),
+  ]);
+
+  const merged = mergeEventsByKey([
+    ...firstArray(todayFeed),
+    ...firstArray(prevFeed),
+    ...firstArray(nextFeed),
+    ...firstArray(pastFeed),
+    ...firstArray(futureFeed),
+    ...firstArray(liveFeed),
+  ]);
+  const count = await upsertFixtures(db, leagueId, merged);
+  return { count, merged };
+}
+
+async function handleEzraFixturesRoute(context, key) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  if (!db) {
+    return json({ error: "Fixtures cache unavailable. Add D1 binding EZRA_DB." }, 503);
+  }
+  await ensureAccountSchema(db);
+  const url = new URL(request.url);
+  const leagueId = String(url.searchParams.get("l") || "").trim();
+  const dateIso = normalizeEventDate(url.searchParams.get("d"));
+  if (!TABLE_LEAGUE_IDS.includes(leagueId) || !dateIso) {
+    return json({ error: "Missing or invalid parameters. Use l=4328|4329 and d=YYYY-MM-DD" }, 400);
+  }
+
+  let fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
+  if (!fromCache.length) {
+    await ingestLeagueFixtureFeeds(db, key, leagueId, dateIso);
+    fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
+  }
+
+  return json(
+    {
+      events: sortByDateTime(fromCache),
+      leagueId,
+      date: dateIso,
+      source: "d1",
+    },
+    200,
+    { "Cache-Control": "public, max-age=30, s-maxage=30" }
+  );
 }
 
 function canonicalEventHash(event) {
@@ -1413,6 +1603,9 @@ export async function onRequest(context) {
 
   if (version === "v1" && lowerPath === "ezra/tables") {
     return handleEzraTablesRoute(context, key);
+  }
+  if (version === "v1" && lowerPath === "ezra/fixtures" && request.method === "GET") {
+    return handleEzraFixturesRoute(context, key);
   }
   if (version === "v1" && lowerPath === "ezra/live/stream") {
     return handleEzraLiveStreamRoute(context, key);
