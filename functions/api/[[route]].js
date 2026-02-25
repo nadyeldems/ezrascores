@@ -438,14 +438,17 @@ function parseIsoDateMs(value) {
 }
 
 function currentSevenDaySeasonWindow(now = new Date()) {
-  const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const day = utc.getUTCDay(); // 0 Sun ... 6 Sat
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  utc.setUTCDate(utc.getUTCDate() + mondayOffset);
-  const startsAt = utc.toISOString().slice(0, 10);
-  const end = new Date(utc);
-  end.setUTCDate(end.getUTCDate() + 7);
-  const endsAt = end.toISOString().slice(0, 10);
+  // Legacy function name retained for compatibility.
+  // Active "season" window is a rolling 4-week block (28 days) anchored to UTC epoch.
+  const windowDays = 28;
+  const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const epochMidnight = Date.UTC(1970, 0, 1);
+  const dayIndex = Math.floor((utcMidnight - epochMidnight) / (24 * 60 * 60 * 1000));
+  const blockStartDay = Math.floor(dayIndex / windowDays) * windowDays;
+  const startMs = epochMidnight + blockStartDay * 24 * 60 * 60 * 1000;
+  const endMs = startMs + windowDays * 24 * 60 * 60 * 1000;
+  const startsAt = new Date(startMs).toISOString().slice(0, 10);
+  const endsAt = new Date(endMs).toISOString().slice(0, 10);
   return {
     seasonId: startsAt.replace(/-/g, ""),
     startsAt,
@@ -1253,6 +1256,7 @@ async function handleLeagueList(db, request, key) {
   if (!session) return json({ error: "Unauthorized" }, 401);
   await ensureDefaultLeagueForUser(db, session.user_id);
   const leagues = await listLeaguesForUser(db, session.user_id);
+  const season = currentSevenDaySeasonWindow();
   const detailed = await Promise.all(
     leagues.map(async (league) => {
       let standings = [];
@@ -1267,6 +1271,11 @@ async function handleLeagueList(db, request, key) {
         ownerUserId: league.owner_user_id,
         isOwner: String(league.owner_user_id || "") === String(session.user_id || ""),
         memberCount: Number(league.member_count || 0),
+        season: {
+          seasonId: season.seasonId,
+          startsAt: season.startsAt,
+          endsAt: season.endsAt,
+        },
         standings,
       };
     })
@@ -1314,6 +1323,10 @@ async function handleChallengeDashboard(db, request, key) {
     )
     .bind(session.user_id)
     .all();
+  const lifetime = await db
+    .prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1")
+    .bind(session.user_id)
+    .first();
 
   const leagues = await listLeaguesForUser(db, session.user_id);
   const currentLeagueCode = normalizeLeagueCode(leagues?.[0]?.code || "");
@@ -1356,6 +1369,7 @@ async function handleChallengeDashboard(db, request, key) {
       },
       achievements: achievements?.results || [],
       teamMastery: mastery?.results || [],
+      lifetimePoints: Math.max(0, Number(lifetime?.points || 0)),
       currentSeason: season
         ? {
             leagueCode: currentLeagueCode,

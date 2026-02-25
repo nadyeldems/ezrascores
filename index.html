@@ -99,17 +99,22 @@
               </div>
             </div>
           </div>
-          <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop Quiz">
-            POP QUIZ
-            <span id="player-pop-score-badge" class="player-pop-score-badge">0</span>
-          </button>
-          <div class="dream-team-nav">
-            <button id="dream-team-toggle-btn" class="btn dream-team-toggle disabled" type="button" aria-expanded="false" title="Choose a favourite team, then star players to start your Dream Team">
-              Dream Team
-              <span id="dream-team-count" class="dream-team-count">0/18</span>
+          <div class="notifications-menu" id="notifications-menu">
+            <button id="notifications-toggle-btn" class="btn feature-btn settings-cog-btn" type="button" aria-expanded="false" aria-label="Notifications">
+              🔔
+              <span id="notifications-badge" class="notifications-badge hidden">0</span>
             </button>
-            <p id="dream-team-hint" class="dream-team-hint hidden">Choose a favourite team, then star players to start your Dream Team.</p>
+            <div id="notifications-panel" class="settings-panel notifications-panel hidden">
+              <div class="panel-head compact-head">
+                <h4>Notifications</h4>
+                <button id="notifications-clear-btn" class="btn" type="button">Clear</button>
+              </div>
+              <div id="notifications-list" class="notifications-list">
+                <p class="muted">No notifications yet.</p>
+              </div>
+            </div>
           </div>
+          <p id="lifetime-points-pill" class="lifetime-points-pill">Total points: --</p>
           <p id="game-day-message" class="game-day-message neutral">Select a favourite team</p>
           <div class="favorite-picker header-picker" id="favorite-picker">
             <button
@@ -224,6 +229,35 @@
               <div id="missions-meta" class="muted"></div>
               <div id="missions-list" class="list"></div>
             </article>
+            <article class="fun-card" id="pop-quiz-panel">
+              <div class="panel-head compact-head">
+                <h4>Pop Quiz</h4>
+                <button class="fun-info-btn" type="button" aria-label="About Pop Quiz" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Tap start to launch the bouncing player quiz. Build your daily 5/5 quest and streak bonuses.
+              </div>
+              <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop Quiz">
+                Start Pop Quiz
+                <span id="player-pop-score-badge" class="player-pop-score-badge">0</span>
+              </button>
+            </article>
+            <article class="fun-card" id="dream-team-card">
+              <div class="panel-head compact-head">
+                <h4>Dream Team</h4>
+                <button class="fun-info-btn" type="button" aria-label="About Dream Team" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                Build your XI, bench and staff from favourite players and compare with league members.
+              </div>
+              <div class="dream-team-nav">
+                <button id="dream-team-toggle-btn" class="btn dream-team-toggle disabled" type="button" aria-expanded="false" title="Choose a favourite team, then star players to start your Dream Team">
+                  Open Dream Team
+                  <span id="dream-team-count" class="dream-team-count">0/18</span>
+                </button>
+                <p id="dream-team-hint" class="dream-team-hint hidden">Choose a favourite team, then star players to start your Dream Team.</p>
+              </div>
+            </article>
             <article class="fun-card" id="story-panel">
               <div class="panel-head compact-head">
                 <h4>Team Story Cards</h4>
@@ -264,6 +298,7 @@
                   </div>
                 </div>
                 <p id="family-code-label" class="muted">League code: --</p>
+                <p id="family-season-countdown" class="family-season-countdown">Season ends in --</p>
               </div>
               <div id="family-members" class="list"></div>
             </article>

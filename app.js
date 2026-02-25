@@ -109,6 +109,14 @@ function defaultFamilyLeagueState() {
   };
 }
 
+function defaultNotificationsState() {
+  return {
+    unread: 0,
+    items: [],
+    lastGoalToken: "",
+  };
+}
+
 function loadDreamTeamState() {
   const base = defaultDreamTeamState();
   try {
@@ -204,9 +212,13 @@ const state = {
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
   leagueDirectory: { items: [], loading: false },
+  leagueRankByCode: {},
   lastLeagueDirectoryAt: 0,
   challengeDashboard: null,
   challengeDashboardAt: 0,
+  notificationsOpen: false,
+  notifications: parseStoredJson("ezra_notifications", defaultNotificationsState()),
+  lastQuestNotificationDate: localStorage.getItem("ezra_last_quest_notification_date") || missionDateKey(),
   favoriteDataLoading: false,
   mobileTab: "fixtures",
   account: {
@@ -344,6 +356,13 @@ const el = {
   accountLogoutBtn: document.getElementById("account-logout-btn"),
   accountUserLabel: document.getElementById("account-user-label"),
   accountStatus: document.getElementById("account-status"),
+  notificationsMenu: document.getElementById("notifications-menu"),
+  notificationsToggleBtn: document.getElementById("notifications-toggle-btn"),
+  notificationsBadge: document.getElementById("notifications-badge"),
+  notificationsPanel: document.getElementById("notifications-panel"),
+  notificationsList: document.getElementById("notifications-list"),
+  notificationsClearBtn: document.getElementById("notifications-clear-btn"),
+  lifetimePointsPill: document.getElementById("lifetime-points-pill"),
   missionsMeta: document.getElementById("missions-meta"),
   missionsList: document.getElementById("missions-list"),
   storyList: document.getElementById("story-list"),
@@ -365,6 +384,7 @@ const el = {
   familyLeaveCodeBtn: document.getElementById("family-leave-code-btn"),
   familyDeleteCodeBtn: document.getElementById("family-delete-code-btn"),
   familyCodeLabel: document.getElementById("family-code-label"),
+  familySeasonCountdown: document.getElementById("family-season-countdown"),
   familyMembers: document.getElementById("family-members"),
   funZoneBody: document.getElementById("fun-zone-body"),
   mobileTabsPanel: document.getElementById("mobile-tabs-panel"),
@@ -473,6 +493,119 @@ function setAccountMenuOpen(open) {
   el.accountToggleBtn.setAttribute("aria-expanded", String(state.accountMenuOpen));
 }
 
+function persistNotificationsState() {
+  localStorage.setItem("ezra_notifications", JSON.stringify(state.notifications || defaultNotificationsState()));
+}
+
+function ensureNotificationsState() {
+  if (!state.notifications || typeof state.notifications !== "object") {
+    state.notifications = defaultNotificationsState();
+  }
+  if (!Array.isArray(state.notifications.items)) state.notifications.items = [];
+  if (!Number.isFinite(Number(state.notifications.unread))) state.notifications.unread = 0;
+  if (typeof state.notifications.lastGoalToken !== "string") state.notifications.lastGoalToken = "";
+}
+
+function renderNotificationsPanel() {
+  ensureNotificationsState();
+  if (!el.notificationsList || !el.notificationsBadge) return;
+  const items = Array.isArray(state.notifications?.items) ? state.notifications.items : [];
+  if (!items.length) {
+    el.notificationsList.innerHTML = `<p class="muted">No notifications yet.</p>`;
+  } else {
+    el.notificationsList.innerHTML = items
+      .map(
+        (item) => `
+      <div class="notification-row">
+        <p>${escapeHtml(item.message || "")}</p>
+        <p class="notification-time">${escapeHtml(item.timeLabel || "")}</p>
+      </div>
+    `
+      )
+      .join("");
+  }
+  const unread = Math.max(0, Number(state.notifications?.unread || 0));
+  el.notificationsBadge.textContent = String(unread);
+  el.notificationsBadge.classList.toggle("hidden", unread <= 0);
+}
+
+function setNotificationsOpen(open) {
+  ensureNotificationsState();
+  state.notificationsOpen = Boolean(open);
+  if (el.notificationsPanel && el.notificationsToggleBtn) {
+    el.notificationsPanel.classList.toggle("hidden", !state.notificationsOpen);
+    el.notificationsToggleBtn.setAttribute("aria-expanded", String(state.notificationsOpen));
+  }
+  if (state.notificationsOpen) {
+    if (state.notifications) state.notifications.unread = 0;
+    persistNotificationsState();
+    renderNotificationsPanel();
+  }
+}
+
+function addNotification(message, meta = {}) {
+  ensureNotificationsState();
+  const text = String(message || "").trim();
+  if (!text) return;
+  if (!state.notifications || typeof state.notifications !== "object") {
+    state.notifications = defaultNotificationsState();
+  }
+  const now = new Date();
+  const item = {
+    id: `${now.getTime()}:${Math.random().toString(36).slice(2, 8)}`,
+    message: text,
+    category: String(meta.category || "general"),
+    timeIso: now.toISOString(),
+    timeLabel: now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+  };
+  state.notifications.items = [item, ...(state.notifications.items || [])].slice(0, 30);
+  state.notifications.unread = Math.max(0, Number(state.notifications.unread || 0)) + 1;
+  persistNotificationsState();
+  renderNotificationsPanel();
+}
+
+function renderLifetimePointsPill() {
+  if (!el.lifetimePointsPill) return;
+  if (!accountSignedIn()) {
+    el.lifetimePointsPill.textContent = "Total points: --";
+    return;
+  }
+  const lifetime = Number(state.challengeDashboard?.lifetimePoints || 0);
+  el.lifetimePointsPill.textContent = `Total points: ${lifetime}`;
+}
+
+function maybeNotifyDailyQuestReset() {
+  const todayKey = missionDateKey();
+  if (state.lastQuestNotificationDate === todayKey) return;
+  state.lastQuestNotificationDate = todayKey;
+  localStorage.setItem("ezra_last_quest_notification_date", todayKey);
+  addNotification("New daily quests are now available.", { category: "quest" });
+}
+
+function updateLeagueRankSignals(items = [], emitNotifications = true) {
+  const signedInUserId = String(state.account?.user?.id || "");
+  if (!signedInUserId) {
+    state.leagueRankByCode = {};
+    return;
+  }
+  const next = {};
+  (items || []).forEach((league) => {
+    const code = String(league?.code || "").toUpperCase();
+    if (!code) return;
+    const standings = Array.isArray(league?.standings) ? league.standings : [];
+    const rank = standings.findIndex((row) => String(row?.user_id || "") === signedInUserId);
+    if (rank < 0) return;
+    const oneBasedRank = rank + 1;
+    next[code] = oneBasedRank;
+    const prevRank = Number(state.leagueRankByCode?.[code] || 0);
+    if (emitNotifications && prevRank > 0 && oneBasedRank > prevRank) {
+      const overtaker = standings[rank - 1]?.name || "Another player";
+      addNotification(`${overtaker} just moved ahead of you in league ${code} 😢`, { category: "league" });
+    }
+  });
+  state.leagueRankByCode = next;
+}
+
 function accountSignedIn() {
   return Boolean(state.account?.token && state.account?.user?.id);
 }
@@ -491,6 +624,7 @@ function renderAccountUI() {
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
   }
+  renderLifetimePointsPill();
   updateFamilyControlsState();
 }
 
@@ -1159,6 +1293,7 @@ async function refreshLeagueDirectory() {
           ownerUserId: data.league.ownerUserId || "",
           isOwner: false,
           memberCount: Number(data.league.memberCount || 0),
+          season: data.season || null,
           standings: Array.isArray(data.standings) ? data.standings : [],
         });
       }
@@ -1178,6 +1313,7 @@ async function refreshLeagueDirectory() {
     state.familyLeague.joinedLeagueCodes = nextCodes;
     state.familyLeague.leagueCode = nextCode;
     state.familyLeague.currentLeagueIndex = nextIdx;
+    updateLeagueRankSignals(nextItems, Boolean(prevItems.length));
     state.lastLeagueDirectoryAt = Date.now();
   } catch (err) {
     state.leagueDirectory.items = prevItems;
@@ -1660,6 +1796,13 @@ function renderFamilyLeaguePanel() {
   const currentLeague = currentSelectedLeagueRecord();
   const leagueName = String(currentLeague?.name || "").trim() || `League ${code || "--"}`;
   el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"})`;
+  const dashboardSeason = state.challengeDashboard?.currentSeason || null;
+  const endsAt =
+    String(currentLeague?.season?.endsAt || "") ||
+    (dashboardSeason && String(dashboardSeason.leagueCode || "") === String(code || "") ? String(dashboardSeason.endsAt || "") : "");
+  if (el.familySeasonCountdown) {
+    el.familySeasonCountdown.textContent = seasonCountdownText(endsAt);
+  }
   const isOwner = Boolean(currentLeague?.isOwner);
   if (el.familyLeagueNameInput) {
     el.familyLeagueNameInput.value = leagueName;
@@ -1689,6 +1832,7 @@ function renderFamilyLeaguePanel() {
     return;
   }
   if (!code) {
+    if (el.familySeasonCountdown) el.familySeasonCountdown.textContent = "Season ends in --";
     el.familyMembers.innerHTML = `<div class="empty">${accountSignedIn() ? "Create or join a league code to start." : "Sign in to create or join a league code."}</div>`;
     return;
   }
@@ -1728,6 +1872,17 @@ function formatDashboardDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "--";
   return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function seasonCountdownText(endsAt) {
+  if (!endsAt) return "Season ends in --";
+  const target = new Date(`${String(endsAt).slice(0, 10)}T00:00:00Z`).getTime();
+  if (!Number.isFinite(target)) return "Season ends in --";
+  const now = Date.now();
+  const delta = Math.max(0, target - now);
+  const days = Math.floor(delta / (24 * 60 * 60 * 1000));
+  const hours = Math.floor((delta % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  return `Season ends in ${days}d ${hours}h`;
 }
 
 const ACHIEVEMENT_GUIDE = [
@@ -4569,6 +4724,7 @@ function resetAccountScopedLocalState() {
   closeLeagueMemberView();
   state.missions = defaultMissionState();
   state.familyLeague = defaultFamilyLeagueState();
+  state.leagueRankByCode = {};
   if (state.account?.leagueRefreshTimer) {
     clearTimeout(state.account.leagueRefreshTimer);
     state.account.leagueRefreshTimer = null;
@@ -4646,6 +4802,7 @@ async function refreshChallengeDashboard(force = false) {
   state.challengeDashboard = data || null;
   state.challengeDashboardAt = Date.now();
   renderChallengeDashboardPanels();
+  renderLifetimePointsPill();
   return state.challengeDashboard;
 }
 
@@ -6545,6 +6702,18 @@ function detectGoalFlashes() {
       expiresAt: now + 7000,
       force: false,
     });
+    const favoriteId = String(state.favoriteTeam?.idTeam || "");
+    const isFavoriteGoal =
+      favoriteId &&
+      ((String(event.idHomeTeam || "") === favoriteId && homeDelta > awayDelta) ||
+        (String(event.idAwayTeam || "") === favoriteId && awayDelta > homeDelta));
+    if (isFavoriteGoal) {
+      const token = `${key}:${pair.home}-${pair.away}`;
+      if (token !== String(state.notifications?.lastGoalToken || "")) {
+        state.notifications.lastGoalToken = token;
+        addNotification(`GOAL for ${team}: ${pair.home}-${pair.away}`, { category: "goal" });
+      }
+    }
   });
 
   state.liveScoreSnapshot = nextSnapshot;
@@ -7131,6 +7300,7 @@ async function fullRefresh() {
   state.refreshInFlight = true;
   let nextContext = currentPollContext();
   try {
+    maybeNotifyDailyQuestReset();
     if (state.lastRefresh && state.pollMode !== "live") {
       renderFixtureSkeletons(6);
       if (shouldFetchTables(nextContext) || shouldFetchStaticData()) {
@@ -7365,6 +7535,7 @@ function attachEvents() {
       event.stopPropagation();
       closeFavoritePickerMenu();
       setAccountMenuOpen(false);
+      setNotificationsOpen(false);
       setSettingsMenuOpen(!state.settingsOpen);
     });
   }
@@ -7374,7 +7545,27 @@ function attachEvents() {
       event.stopPropagation();
       closeFavoritePickerMenu();
       setSettingsMenuOpen(false);
+      setNotificationsOpen(false);
       setAccountMenuOpen(!state.accountMenuOpen);
+    });
+  }
+
+  if (el.notificationsToggleBtn) {
+    el.notificationsToggleBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeFavoritePickerMenu();
+      setSettingsMenuOpen(false);
+      setAccountMenuOpen(false);
+      setNotificationsOpen(!state.notificationsOpen);
+    });
+  }
+
+  if (el.notificationsClearBtn) {
+    el.notificationsClearBtn.addEventListener("click", () => {
+      state.notifications.items = [];
+      state.notifications.unread = 0;
+      persistNotificationsState();
+      renderNotificationsPanel();
     });
   }
 
@@ -7492,6 +7683,7 @@ function attachEvents() {
 
   el.favoritePickerBtn.addEventListener("click", async (event) => {
     event.stopPropagation();
+    setNotificationsOpen(false);
     if (state.dreamTeamOpen) {
       state.dreamTeamOpen = false;
       state.dreamSwapActiveKey = "";
@@ -7509,6 +7701,9 @@ function attachEvents() {
     }
     if (el.accountMenu && !el.accountMenu.contains(e.target)) {
       setAccountMenuOpen(false);
+    }
+    if (el.notificationsMenu && !el.notificationsMenu.contains(e.target)) {
+      setNotificationsOpen(false);
     }
     if (!el.favoritePicker.contains(e.target)) {
       closeFavoritePickerMenu();
@@ -7650,12 +7845,15 @@ setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
 hydrateCachedBootstrapData();
 renderAccountUI();
+ensureNotificationsState();
+renderNotificationsPanel();
 refreshPlayerPopScoreBadge();
 normalizeDreamSelections();
 renderDreamTeamNavState();
 requestDreamTeamRender();
 setSettingsMenuOpen(false);
 setAccountMenuOpen(false);
+setNotificationsOpen(false);
 setFamilyOptionsOpen(false);
 initRevealOnScroll();
 updateStickyDateBarVisibility();
