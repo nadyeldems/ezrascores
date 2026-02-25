@@ -214,6 +214,100 @@ async function ensureAccountSchema(db) {
         updated_at INTEGER NOT NULL
       )
     `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_user_progress (
+        user_id TEXT PRIMARY KEY,
+        current_streak INTEGER NOT NULL DEFAULT 0,
+        best_streak INTEGER NOT NULL DEFAULT 0,
+        last_quest_date TEXT,
+        combo_count INTEGER NOT NULL DEFAULT 0,
+        best_combo INTEGER NOT NULL DEFAULT 0,
+        combo_updated_at TEXT,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_user_team_mastery (
+        user_id TEXT NOT NULL,
+        team_id TEXT NOT NULL,
+        team_name TEXT NOT NULL,
+        pred_count INTEGER NOT NULL DEFAULT 0,
+        result_correct INTEGER NOT NULL DEFAULT 0,
+        exact_correct INTEGER NOT NULL DEFAULT 0,
+        points_earned INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, team_id),
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_league_seasons (
+        league_code TEXT NOT NULL,
+        season_id TEXT NOT NULL,
+        starts_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (league_code, season_id),
+        FOREIGN KEY (league_code) REFERENCES ezra_leagues(code)
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_league_season_points (
+        league_code TEXT NOT NULL,
+        season_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        points INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (league_code, season_id, user_id),
+        FOREIGN KEY (league_code, season_id) REFERENCES ezra_league_seasons(league_code, season_id),
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_achievements (
+        code TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        icon TEXT,
+        created_at TEXT NOT NULL
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_user_achievements (
+        user_id TEXT NOT NULL,
+        achievement_code TEXT NOT NULL,
+        earned_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, achievement_code),
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id),
+        FOREIGN KEY (achievement_code) REFERENCES ezra_achievements(code)
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_points_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT,
+        user_id TEXT NOT NULL,
+        league_code TEXT,
+        type TEXT NOT NULL,
+        points INTEGER NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        payload_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_points_ledger_user_id ON ezra_points_ledger(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_points_ledger_league_code ON ezra_points_ledger(league_code)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_user_preferences (
+        user_id TEXT PRIMARY KEY,
+        kids_mode INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -329,6 +423,56 @@ function questBonusPointsFromState(state, userId) {
     }
   }
   return count * 5;
+}
+
+function todayIsoUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function parseIsoDateMs(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return Number.NaN;
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00Z` : raw;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : Number.NaN;
+}
+
+function currentSevenDaySeasonWindow(now = new Date()) {
+  const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const day = utc.getUTCDay(); // 0 Sun ... 6 Sat
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  utc.setUTCDate(utc.getUTCDate() + mondayOffset);
+  const startsAt = utc.toISOString().slice(0, 10);
+  const end = new Date(utc);
+  end.setUTCDate(end.getUTCDate() + 7);
+  const endsAt = end.toISOString().slice(0, 10);
+  return {
+    seasonId: startsAt.replace(/-/g, ""),
+    startsAt,
+    endsAt,
+  };
+}
+
+function inSeasonByKickoff(kickoffIso, season) {
+  if (!kickoffIso || !season) return false;
+  const ts = parseIsoDateMs(kickoffIso);
+  if (!Number.isFinite(ts)) return false;
+  const start = parseIsoDateMs(season.startsAt);
+  const end = parseIsoDateMs(season.endsAt);
+  return Number.isFinite(start) && Number.isFinite(end) && ts >= start && ts < end;
+}
+
+function leagueIdToCode(value) {
+  const v = String(value || "").trim();
+  if (v === "4328") return "EPL";
+  if (v === "4329") return "CHAMP";
+  return "";
+}
+
+function normalizeTeamIdToken(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return /^fallback:/i.test(raw) ? "" : raw;
 }
 
 function predictionEntriesForUser(state, userId) {
@@ -463,6 +607,172 @@ async function upsertUserScore(db, userId, points) {
     .run();
 }
 
+async function upsertUserPreference(db, userId, kidsMode = false) {
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `
+      INSERT INTO ezra_user_preferences (user_id, kids_mode, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(user_id) DO UPDATE SET
+        kids_mode = excluded.kids_mode,
+        updated_at = excluded.updated_at
+      `
+    )
+    .bind(userId, kidsMode ? 1 : 0, nowIso)
+    .run();
+}
+
+async function getUserPreference(db, userId) {
+  const row = await db.prepare("SELECT kids_mode, updated_at FROM ezra_user_preferences WHERE user_id = ?1 LIMIT 1").bind(userId).first();
+  return {
+    kidsMode: Boolean(Number(row?.kids_mode || 0)),
+    updatedAt: row?.updated_at || null,
+  };
+}
+
+async function ensureLeagueSeason(db, leagueCode, season) {
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `
+      INSERT OR IGNORE INTO ezra_league_seasons (league_code, season_id, starts_at, ends_at, status, created_at)
+      VALUES (?1, ?2, ?3, ?4, 'active', ?5)
+      `
+    )
+    .bind(leagueCode, season.seasonId, season.startsAt, season.endsAt, nowIso)
+    .run();
+}
+
+async function upsertLeagueSeasonPoints(db, leagueCode, seasonId, userId, points) {
+  const nowIso = new Date().toISOString();
+  const safe = Math.max(0, Number(points || 0));
+  await db
+    .prepare(
+      `
+      INSERT INTO ezra_league_season_points (league_code, season_id, user_id, points, updated_at)
+      VALUES (?1, ?2, ?3, ?4, ?5)
+      ON CONFLICT(league_code, season_id, user_id) DO UPDATE SET
+        points = excluded.points,
+        updated_at = excluded.updated_at
+      `
+    )
+    .bind(leagueCode, seasonId, userId, safe, nowIso)
+    .run();
+}
+
+async function replaceTeamMastery(db, userId, rows) {
+  const nowIso = new Date().toISOString();
+  await db.prepare("DELETE FROM ezra_user_team_mastery WHERE user_id = ?1").bind(userId).run();
+  for (const row of rows || []) {
+    await db
+      .prepare(
+        `
+        INSERT INTO ezra_user_team_mastery
+          (user_id, team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at)
+        VALUES
+          (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        `
+      )
+      .bind(
+        userId,
+        String(row.teamId || ""),
+        String(row.teamName || "Unknown"),
+        Math.max(0, Number(row.predCount || 0)),
+        Math.max(0, Number(row.resultCorrect || 0)),
+        Math.max(0, Number(row.exactCorrect || 0)),
+        Math.max(0, Number(row.pointsEarned || 0)),
+        nowIso
+      )
+      .run();
+  }
+}
+
+async function upsertUserProgress(db, userId, progress) {
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `
+      INSERT INTO ezra_user_progress
+        (user_id, current_streak, best_streak, last_quest_date, combo_count, best_combo, combo_updated_at, updated_at)
+      VALUES
+        (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+      ON CONFLICT(user_id) DO UPDATE SET
+        current_streak = excluded.current_streak,
+        best_streak = excluded.best_streak,
+        last_quest_date = excluded.last_quest_date,
+        combo_count = excluded.combo_count,
+        best_combo = excluded.best_combo,
+        combo_updated_at = excluded.combo_updated_at,
+        updated_at = excluded.updated_at
+      `
+    )
+    .bind(
+      userId,
+      Math.max(0, Number(progress?.currentStreak || 0)),
+      Math.max(0, Number(progress?.bestStreak || 0)),
+      String(progress?.lastQuestDate || ""),
+      Math.max(0, Number(progress?.comboCount || 0)),
+      Math.max(0, Number(progress?.bestCombo || 0)),
+      String(progress?.comboUpdatedAt || ""),
+      nowIso
+    )
+    .run();
+}
+
+async function ensureAchievementCatalog(db) {
+  const nowIso = new Date().toISOString();
+  const rows = [
+    { code: "streak_3", name: "On Fire", description: "Complete quests 3 days in a row.", icon: "🔥" },
+    { code: "streak_7", name: "Unstoppable", description: "Complete quests 7 days in a row.", icon: "🏆" },
+    { code: "combo_3", name: "Prediction Combo", description: "Hit 3 correct outcomes in a row.", icon: "⚡" },
+    { code: "exact_10", name: "Sniper", description: "Get 10 exact score predictions.", icon: "🎯" },
+    { code: "mastery_25", name: "Team Analyst", description: "Make 25 predictions for one club.", icon: "📈" },
+  ];
+  for (const row of rows) {
+    await db
+      .prepare("INSERT OR IGNORE INTO ezra_achievements (code, name, description, icon, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
+      .bind(row.code, row.name, row.description, row.icon, nowIso)
+      .run();
+  }
+}
+
+async function grantAchievement(db, userId, code) {
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare("INSERT OR IGNORE INTO ezra_user_achievements (user_id, achievement_code, earned_at) VALUES (?1, ?2, ?3)")
+    .bind(userId, code, nowIso)
+    .run();
+}
+
+async function replacePointLedgerForUser(db, userId, leagueCode, entries = []) {
+  await db
+    .prepare("DELETE FROM ezra_points_ledger WHERE user_id = ?1 AND league_code = ?2 AND (type = 'prediction' OR type = 'quest_bonus')")
+    .bind(userId, leagueCode)
+    .run();
+  for (const row of entries) {
+    await db
+      .prepare(
+        `
+        INSERT OR IGNORE INTO ezra_points_ledger
+          (event_id, user_id, league_code, type, points, idempotency_key, payload_json, created_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        `
+      )
+      .bind(
+        String(row.eventId || ""),
+        userId,
+        leagueCode,
+        String(row.type || "prediction"),
+        Math.max(0, Number(row.points || 0)),
+        String(row.idempotencyKey || ""),
+        JSON.stringify(row.payload || {}),
+        String(row.createdAt || new Date().toISOString())
+      )
+      .run();
+  }
+}
+
 async function ensureDefaultLeagueForUser(db, userId) {
   const existing = await db
     .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1 ORDER BY joined_at ASC LIMIT 1")
@@ -508,17 +818,23 @@ async function listLeaguesForUser(db, userId) {
 
 async function leagueStandings(db, code, key) {
   await syncLeagueScoresFromStates(db, code, key);
+  const season = currentSevenDaySeasonWindow();
   const rows = await db
     .prepare(`
       SELECT u.id AS user_id, u.name,
-             COALESCE(s.points, 0) AS points
+             COALESCE(sp.points, 0) AS points,
+             COALESCE(s.points, 0) AS lifetime_points
       FROM ezra_league_members lm
       JOIN ezra_users u ON u.id = lm.user_id
+      LEFT JOIN ezra_league_season_points sp
+        ON sp.user_id = lm.user_id
+       AND sp.league_code = lm.league_code
+       AND sp.season_id = ?2
       LEFT JOIN ezra_user_scores s ON s.user_id = lm.user_id
       WHERE lm.league_code = ?1
       ORDER BY points DESC, u.name COLLATE NOCASE ASC
     `)
-    .bind(code)
+    .bind(code, season.seasonId)
     .all();
   return rows?.results || [];
 }
@@ -534,6 +850,20 @@ async function syncLeagueScoresFromStates(db, code, key) {
 
   const sportsKey = String(key || "074910");
   const resultCache = new Map();
+  const season = currentSevenDaySeasonWindow();
+  await ensureLeagueSeason(db, code, season);
+  await ensureAchievementCatalog(db);
+
+  const safePredictionAward = (basePoints, comboCount) => {
+    if (basePoints <= 0) return 0;
+    if (comboCount >= 3) return basePoints + 2;
+    if (comboCount === 2) return basePoints + 1;
+    return basePoints;
+  };
+
+  const todayIso = todayIsoUtc();
+  const yesterdayIso = addDaysIso(todayIso, -1);
+
   await Promise.all(
     ids.map(async (userId) => {
       const row = await db
@@ -542,22 +872,139 @@ async function syncLeagueScoresFromStates(db, code, key) {
         .first();
       const state = safeParseJsonText(row?.state_json || "{}");
       const predictionRows = predictionEntriesForUser(state, userId);
+      const ordered = [...predictionRows].sort((a, b) => String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || "")));
       let predictionPoints = 0;
-      for (const pick of predictionRows) {
+      let seasonPoints = 0;
+      let comboCount = 0;
+      let bestCombo = 0;
+      let totalExact = 0;
+      const mastery = new Map();
+      const ledger = [];
+      for (const pick of ordered) {
         const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, { kickoffIso: pick.kickoffIso || "" });
         if (!result.final || result.home === null || result.away === null) continue;
-        if (pick.home === result.home && pick.away === result.away) {
-          predictionPoints += 2;
-          continue;
+        const eventRow = await db
+          .prepare("SELECT payload_json, league_id FROM ezra_fixtures_cache WHERE event_id = ?1 LIMIT 1")
+          .bind(String(pick.eventId || ""))
+          .first();
+        const event = safeParseJsonText(eventRow?.payload_json || "{}");
+        const leagueCode = leagueIdToCode(eventRow?.league_id);
+        const teamId = normalizeTeamIdToken(String(event?.idHomeTeam || "")) || normalizeTeamIdToken(String(event?.idAwayTeam || "")) || "unknown";
+        const teamName = String(event?.strHomeTeam || "") || String(event?.strAwayTeam || "") || "Unknown";
+        const base =
+          pick.home === result.home && pick.away === result.away
+            ? 2
+            : predictionResultCode(pick.home, pick.away) === predictionResultCode(result.home, result.away)
+              ? 1
+              : 0;
+        if (base > 0) {
+          comboCount += 1;
+          bestCombo = Math.max(bestCombo, comboCount);
+        } else {
+          comboCount = 0;
         }
-        if (predictionResultCode(pick.home, pick.away) === predictionResultCode(result.home, result.away)) {
-          predictionPoints += 1;
+        const awarded = safePredictionAward(base, comboCount);
+        predictionPoints += awarded;
+        if (inSeasonByKickoff(pick.kickoffIso, season) && (leagueCode === "EPL" || leagueCode === "CHAMP")) {
+          seasonPoints += awarded;
+        }
+        if (base === 2) totalExact += 1;
+        const existing = mastery.get(teamId) || {
+          teamId,
+          teamName,
+          predCount: 0,
+          resultCorrect: 0,
+          exactCorrect: 0,
+          pointsEarned: 0,
+        };
+        existing.predCount += 1;
+        if (base > 0) existing.resultCorrect += 1;
+        if (base === 2) existing.exactCorrect += 1;
+        existing.pointsEarned += awarded;
+        mastery.set(teamId, existing);
+        ledger.push({
+          eventId: pick.eventId,
+          type: "prediction",
+          points: awarded,
+          idempotencyKey: `prediction:${code}:${userId}:${pick.eventId}`,
+          createdAt: pick.kickoffIso || new Date().toISOString(),
+          payload: { base, comboCount, exact: base === 2 },
+        });
+      }
+
+      const questBonusPoints = questBonusPointsFromState(state, userId);
+      let questSeasonPoints = 0;
+      const questMap = state?.familyLeague?.questBonusByDate;
+      if (questMap && typeof questMap === "object") {
+        const prefix = `acct:${String(userId || "")}:`;
+        for (const [dateIso, obj] of Object.entries(questMap)) {
+          if (!obj || typeof obj !== "object") continue;
+          if (!inSeasonByKickoff(`${dateIso}T00:00:00Z`, season)) continue;
+          for (const [k, done] of Object.entries(obj)) {
+            if (done && k.startsWith(prefix)) questSeasonPoints += 5;
+          }
         }
       }
-      const questBonusPoints = questBonusPointsFromState(state, userId);
+
       const fallbackPoints = extractPointsFromState(state, userId);
       const total = Math.max(predictionPoints + questBonusPoints, fallbackPoints);
       await upsertUserScore(db, userId, total);
+      await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints + questSeasonPoints);
+      await replaceTeamMastery(db, userId, [...mastery.values()]);
+
+      const questByDate = state?.familyLeague?.questBonusByDate;
+      const todayObj = questByDate && typeof questByDate === "object" ? questByDate[todayIso] : null;
+      const yesterdayObj = questByDate && typeof questByDate === "object" ? questByDate[yesterdayIso] : null;
+      const hasTodayQuest = Boolean(
+        todayObj &&
+          typeof todayObj === "object" &&
+          Object.entries(todayObj).some(([k, done]) => done && String(k || "").startsWith(`acct:${userId}:`))
+      );
+      const hadYesterdayQuest = Boolean(
+        yesterdayObj &&
+          typeof yesterdayObj === "object" &&
+          Object.entries(yesterdayObj).some(([k, done]) => done && String(k || "").startsWith(`acct:${userId}:`))
+      );
+      const progressRow = await db
+        .prepare("SELECT current_streak, best_streak, last_quest_date FROM ezra_user_progress WHERE user_id = ?1 LIMIT 1")
+        .bind(userId)
+        .first();
+      let currentStreak = Math.max(0, Number(progressRow?.current_streak || 0));
+      let bestStreak = Math.max(0, Number(progressRow?.best_streak || 0));
+      const lastQuestDate = String(progressRow?.last_quest_date || "");
+      if (hasTodayQuest && lastQuestDate !== todayIso) {
+        currentStreak = hadYesterdayQuest ? currentStreak + 1 : 1;
+        bestStreak = Math.max(bestStreak, currentStreak);
+      } else if (!hasTodayQuest && !hadYesterdayQuest && lastQuestDate && lastQuestDate !== todayIso) {
+        currentStreak = 0;
+      }
+      const nextLastQuestDate = hasTodayQuest ? todayIso : lastQuestDate;
+      await upsertUserProgress(db, userId, {
+        currentStreak,
+        bestStreak,
+        lastQuestDate: nextLastQuestDate,
+        comboCount,
+        bestCombo,
+        comboUpdatedAt: new Date().toISOString(),
+      });
+
+      if (bestStreak >= 3) await grantAchievement(db, userId, "streak_3");
+      if (bestStreak >= 7) await grantAchievement(db, userId, "streak_7");
+      if (bestCombo >= 3) await grantAchievement(db, userId, "combo_3");
+      if (totalExact >= 10) await grantAchievement(db, userId, "exact_10");
+      if ([...mastery.values()].some((m) => Number(m.predCount || 0) >= 25)) await grantAchievement(db, userId, "mastery_25");
+
+      if (questBonusPoints > 0) {
+        ledger.push({
+          eventId: "",
+          type: "quest_bonus",
+          points: questBonusPoints,
+          idempotencyKey: `quest_bonus:${code}:${userId}:${todayIso}`,
+          createdAt: new Date().toISOString(),
+          payload: { questBonusPoints },
+        });
+      }
+      await replacePointLedgerForUser(db, userId, code, ledger);
     })
   );
 }
@@ -634,6 +1081,7 @@ async function handleAccountRegister(db, request) {
     .bind(userId, "{}", nowIso)
     .run();
   await upsertUserScore(db, userId, 0);
+  await upsertUserPreference(db, userId, false);
   await ensureDefaultLeagueForUser(db, userId);
 
   const token = await createSession(db, userId);
@@ -663,6 +1111,23 @@ async function handleAccountMe(db, request) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
   return json({ user: { id: session.user_id, name: session.name } }, 200);
+}
+
+async function handleAccountGetPreferences(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const prefs = await getUserPreference(db, session.user_id);
+  return json({ preferences: prefs }, 200);
+}
+
+async function handleAccountPutPreferences(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const kidsMode = Boolean(body?.kidsMode);
+  await upsertUserPreference(db, session.user_id, kidsMode);
+  const prefs = await getUserPreference(db, session.user_id);
+  return json({ ok: true, preferences: prefs }, 200);
 }
 
 async function handleAccountLogout(db, request) {
@@ -717,7 +1182,6 @@ async function handleAccountPutState(db, request) {
     `)
     .bind(session.user_id, JSON.stringify(safeState), nowIso)
     .run();
-  await upsertUserScore(db, session.user_id, extractPointsFromState(safeState, session.user_id));
   return json({ ok: true, updatedAt: nowIso }, 200);
 }
 
@@ -779,6 +1243,102 @@ async function handleLeagueList(db, request, key) {
     }))
   );
   return json({ leagues: detailed }, 200);
+}
+
+async function handleChallengeDashboard(db, request, key) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  await ensureAchievementCatalog(db);
+  const prefs = await getUserPreference(db, session.user_id);
+  const progress = await db
+    .prepare(
+      `
+      SELECT current_streak, best_streak, last_quest_date, combo_count, best_combo, combo_updated_at, updated_at
+      FROM ezra_user_progress
+      WHERE user_id = ?1
+      LIMIT 1
+      `
+    )
+    .bind(session.user_id)
+    .first();
+  const achievements = await db
+    .prepare(
+      `
+      SELECT a.code, a.name, a.description, a.icon, ua.earned_at
+      FROM ezra_user_achievements ua
+      JOIN ezra_achievements a ON a.code = ua.achievement_code
+      WHERE ua.user_id = ?1
+      ORDER BY ua.earned_at DESC
+      `
+    )
+    .bind(session.user_id)
+    .all();
+  const mastery = await db
+    .prepare(
+      `
+      SELECT team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at
+      FROM ezra_user_team_mastery
+      WHERE user_id = ?1
+      ORDER BY pred_count DESC, points_earned DESC, team_name COLLATE NOCASE ASC
+      LIMIT 8
+      `
+    )
+    .bind(session.user_id)
+    .all();
+
+  const leagues = await listLeaguesForUser(db, session.user_id);
+  const currentLeagueCode = normalizeLeagueCode(leagues?.[0]?.code || "");
+  let season = null;
+  let seasonStandings = [];
+  if (currentLeagueCode) {
+    await syncLeagueScoresFromStates(db, currentLeagueCode, key);
+    season = currentSevenDaySeasonWindow();
+    await ensureLeagueSeason(db, currentLeagueCode, season);
+    const standingsRows = await db
+      .prepare(
+        `
+        SELECT u.id AS user_id, u.name, COALESCE(sp.points, 0) AS points
+        FROM ezra_league_members lm
+        JOIN ezra_users u ON u.id = lm.user_id
+        LEFT JOIN ezra_league_season_points sp
+          ON sp.user_id = lm.user_id
+         AND sp.league_code = lm.league_code
+         AND sp.season_id = ?2
+        WHERE lm.league_code = ?1
+        ORDER BY points DESC, u.name COLLATE NOCASE ASC
+        `
+      )
+      .bind(currentLeagueCode, season.seasonId)
+      .all();
+    seasonStandings = standingsRows?.results || [];
+  }
+
+  return json(
+    {
+      user: { id: session.user_id, name: session.name },
+      preferences: prefs,
+      progress: {
+        currentStreak: Number(progress?.current_streak || 0),
+        bestStreak: Number(progress?.best_streak || 0),
+        lastQuestDate: progress?.last_quest_date || "",
+        comboCount: Number(progress?.combo_count || 0),
+        bestCombo: Number(progress?.best_combo || 0),
+        updatedAt: progress?.updated_at || null,
+      },
+      achievements: achievements?.results || [],
+      teamMastery: mastery?.results || [],
+      currentSeason: season
+        ? {
+            leagueCode: currentLeagueCode,
+            seasonId: season.seasonId,
+            startsAt: season.startsAt,
+            endsAt: season.endsAt,
+            standings: seasonStandings,
+          }
+        : null,
+    },
+    200
+  );
 }
 
 async function handleLeagueRename(db, request) {
@@ -911,6 +1471,8 @@ async function handlePublicLeagueStandings(db, request, key) {
     .bind(code)
     .first();
   if (!league) return json({ error: "League code not found." }, 404);
+  const season = currentSevenDaySeasonWindow();
+  await ensureLeagueSeason(db, code, season);
   const standings = await leagueStandings(db, code, key);
   return json(
     {
@@ -920,6 +1482,11 @@ async function handlePublicLeagueStandings(db, request, key) {
         ownerUserId: league.owner_user_id || "",
         createdAt: league.created_at || null,
         memberCount: standings.length,
+      },
+      season: {
+        seasonId: season.seasonId,
+        startsAt: season.startsAt,
+        endsAt: season.endsAt,
       },
       standings,
     },
@@ -973,6 +1540,12 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     if (route === "me" && request.method === "GET") {
       return handleAccountMe(db, request);
     }
+    if (route === "preferences" && request.method === "GET") {
+      return handleAccountGetPreferences(db, request);
+    }
+    if (route === "preferences" && (request.method === "PUT" || request.method === "PATCH")) {
+      return handleAccountPutPreferences(db, request);
+    }
     if (route === "logout" && request.method === "POST") {
       return handleAccountLogout(db, request);
     }
@@ -996,6 +1569,9 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "league/standings" && request.method === "GET") {
       return handlePublicLeagueStandings(db, request, key);
+    }
+    if (route === "challenges/dashboard" && request.method === "GET") {
+      return handleChallengeDashboard(db, request, key);
     }
     if (route === "cron/settle" && (request.method === "POST" || request.method === "GET")) {
       return handleCronSettle(db, request, key, env);

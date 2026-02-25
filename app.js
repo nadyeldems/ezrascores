@@ -178,6 +178,8 @@ const state = {
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false },
   leagueDirectory: { items: [], loading: false },
   lastLeagueDirectoryAt: 0,
+  challengeDashboard: null,
+  challengeDashboardAt: 0,
   favoriteDataLoading: false,
   mobileTab: "fixtures",
   account: {
@@ -687,7 +689,9 @@ function scheduleLeagueStandingsRefresh(delayMs = 1800) {
   state.account.leagueRefreshTimer = setTimeout(async () => {
     state.account.leagueRefreshTimer = null;
     await refreshLeagueDirectory();
+    await safeLoad(() => refreshChallengeDashboard(true), null);
     renderFamilyLeaguePanel();
+    renderMissionsPanel();
   }, delayMs);
 }
 
@@ -859,7 +863,12 @@ function renderMissionsPanel() {
   const quests = dailyQuestList();
   const completedCount = quests.filter((q) => q.done).length;
   const name = state.account.user?.name ? ` (${state.account.user.name})` : "";
-  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${name}`;
+  const dash = state.challengeDashboard;
+  const streak = Number(dash?.progress?.currentStreak || 0);
+  const combo = Number(dash?.progress?.comboCount || 0);
+  const seasonPts = Number(dash?.currentSeason?.standings?.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0);
+  const suffix = accountSignedIn() ? ` • Streak ${streak}d • Combo x${Math.max(1, combo)} • Season ${seasonPts} pts` : "";
+  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${name}${suffix}`;
   el.missionsList.innerHTML = "";
   quests.forEach((quest) => {
     const row = document.createElement("div");
@@ -4072,6 +4081,21 @@ async function loadCloudState() {
   applyCloudState(data?.state || {}, { strict: true });
 }
 
+async function refreshChallengeDashboard(force = false) {
+  if (!accountSignedIn()) {
+    state.challengeDashboard = null;
+    state.challengeDashboardAt = 0;
+    return null;
+  }
+  if (!force && Date.now() - Number(state.challengeDashboardAt || 0) < 30 * 1000) {
+    return state.challengeDashboard;
+  }
+  const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/challenges/dashboard`, null, state.account.token);
+  state.challengeDashboard = data || null;
+  state.challengeDashboardAt = Date.now();
+  return state.challengeDashboard;
+}
+
 async function syncCloudStateNow() {
   if (!accountSignedIn() || state.account.syncing) return;
   state.account.syncing = true;
@@ -4100,6 +4124,8 @@ async function initAccountSession() {
   renderAccountUI();
   if (!state.account.token) {
     resetAccountScopedLocalState();
+    state.challengeDashboard = null;
+    state.challengeDashboardAt = 0;
     await safeLoad(() => refreshLeagueDirectory(), null);
     setAccountStatus("Logged out. Existing features still work locally.");
     renderFamilyLeaguePanel();
@@ -4111,6 +4137,7 @@ async function initAccountSession() {
     if (!state.account.user) throw new Error("Session expired");
     resetAccountScopedLocalState();
     await loadCloudState();
+    await safeLoad(() => refreshChallengeDashboard(true), null);
     ensureSignedInUserInFamilyLeague();
     await refreshLeagueDirectory();
     persistLocalMetaState();
@@ -4125,6 +4152,8 @@ async function initAccountSession() {
     renderAccountUI();
     renderFamilyLeaguePanel();
     refreshVisibleFixturePredictionBadges();
+    state.challengeDashboard = null;
+    state.challengeDashboardAt = 0;
     setAccountStatus(`Logged out. ${err.message}`, true);
   }
 }
@@ -4137,6 +4166,7 @@ async function registerAccount() {
   state.account.user = data.user || null;
   localStorage.setItem("ezra_account_token", state.account.token);
   resetAccountScopedLocalState();
+  await safeLoad(() => refreshChallengeDashboard(true), null);
   ensureSignedInUserInFamilyLeague();
   await refreshLeagueDirectory();
   persistLocalMetaState();
@@ -4156,6 +4186,7 @@ async function loginAccount() {
   localStorage.setItem("ezra_account_token", state.account.token);
   resetAccountScopedLocalState();
   await loadCloudState();
+  await safeLoad(() => refreshChallengeDashboard(true), null);
   ensureSignedInUserInFamilyLeague();
   await refreshLeagueDirectory();
   persistLocalMetaState();
@@ -4182,6 +4213,8 @@ async function logoutAccount() {
   }
   localStorage.removeItem("ezra_account_token");
   resetAccountScopedLocalState();
+  state.challengeDashboard = null;
+  state.challengeDashboardAt = 0;
   state.leagueDirectory.items = [];
   renderAccountUI();
   renderFamilyLeaguePanel();
@@ -4796,6 +4829,7 @@ function buildPredictionModule(event, stateInfo) {
     status.textContent = `Saved ✓ ${home}-${away} for ${activeMember.name}`;
     status.classList.add("success");
     refreshVisibleFixturePredictionBadges();
+    scheduleLeagueStandingsRefresh(400);
     renderFamilyLeaguePanel();
   });
   homeInput.addEventListener("input", updateDraftStatus);
@@ -6530,6 +6564,9 @@ async function fullRefresh() {
     await refreshSelectedDateFixtures(selectedDateForRefresh, selectedSeq);
     if (accountSignedIn() && Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
       await safeLoad(() => refreshLeagueDirectory(), null);
+    }
+    if (accountSignedIn()) {
+      await safeLoad(() => refreshChallengeDashboard(false), null);
     }
     settleFamilyPredictions();
     buildFavoriteOptions();
