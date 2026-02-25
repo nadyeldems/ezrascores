@@ -995,6 +995,35 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       await setIngestStateNumber(db, "fixtures_backfill_cursor", nextCursor);
       return json({ ok: true, date: todayIso, cursor, nextCursor, chunk, results }, 200);
     }
+    if (route === "cron/fixtures/full" && (request.method === "POST" || request.method === "GET")) {
+      const incoming = String(request.headers.get("x-ezra-cron-secret") || "").trim();
+      const configured = String(env.EZRA_CRON_SECRET || "").trim();
+      if (!configured || incoming !== configured) {
+        return json({ error: "Unauthorized cron call" }, 401);
+      }
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const seasons = seasonCandidatesForSweep(todayIso);
+      const results = [];
+      for (const leagueId of TABLE_LEAGUE_IDS) {
+        const seasonResults = [];
+        let totalUpserts = 0;
+        for (const season of seasons) {
+          const out = await ingestLeagueSeasonFixtures(db, key, leagueId, season);
+          seasonResults.push(out);
+          totalUpserts += Number(out.upserts || 0);
+        }
+        const dayOut = await ingestLeagueFixtureFeeds(db, key, leagueId, todayIso);
+        totalUpserts += Number(dayOut.count || 0);
+        results.push({
+          leagueId,
+          seasons: seasonResults,
+          dayUpserts: Number(dayOut.count || 0),
+          totalUpserts,
+        });
+      }
+      await setIngestStateNumber(db, "fixtures_backfill_cursor", -FIXTURE_HISTORY_DAYS);
+      return json({ ok: true, date: todayIso, seasons, results }, 200);
+    }
     if (route === "leagues" && request.method === "GET") {
       return handleLeagueList(db, request, key);
     }
@@ -1085,6 +1114,41 @@ function fixtureDateInWindow(dateIso, todayIso) {
   return dateIso >= minIso && dateIso <= maxIso;
 }
 
+function seasonFromDateIso(dateIso) {
+  const iso = normalizeEventDate(dateIso);
+  if (!iso) return "";
+  const [yearStr, monthStr] = iso.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return "";
+  const startYear = month >= 7 ? year : year - 1;
+  return `${startYear}-${startYear + 1}`;
+}
+
+function seasonCandidatesForDate(dayIso, todayIso) {
+  const set = new Set();
+  const daySeason = seasonFromDateIso(dayIso);
+  const todaySeason = seasonFromDateIso(todayIso);
+  if (daySeason) set.add(daySeason);
+  if (todaySeason) set.add(todaySeason);
+  if (daySeason) {
+    const [y] = daySeason.split("-").map(Number);
+    if (Number.isFinite(y)) {
+      set.add(`${y - 1}-${y}`);
+      set.add(`${y + 1}-${y + 2}`);
+    }
+  }
+  return [...set].filter(Boolean);
+}
+
+function seasonCandidatesForSweep(todayIso) {
+  const todaySeason = seasonFromDateIso(todayIso);
+  if (!todaySeason) return [];
+  const [start] = todaySeason.split("-").map(Number);
+  if (!Number.isFinite(start)) return [todaySeason];
+  return [`${start - 1}-${start}`, todaySeason, `${start + 1}-${start + 2}`];
+}
+
 function normalizeTime(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -1170,20 +1234,28 @@ async function readFixturesByLeagueDate(db, leagueId, dateIso) {
 
 async function ingestLeagueFixtureFeeds(db, key, leagueId, dayIso = "") {
   const day = normalizeEventDate(dayIso) || new Date().toISOString().slice(0, 10);
+  const todayIso = new Date().toISOString().slice(0, 10);
   const prevDay = new Date(`${day}T00:00:00Z`);
   prevDay.setUTCDate(prevDay.getUTCDate() - 1);
   const nextDay = new Date(`${day}T00:00:00Z`);
   nextDay.setUTCDate(nextDay.getUTCDate() + 1);
   const prevIso = prevDay.toISOString().slice(0, 10);
   const nextIso = nextDay.toISOString().slice(0, 10);
+  const dayDelta = Math.abs((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${todayIso}T00:00:00Z`)) / (24 * 60 * 60 * 1000));
+  const seasons = seasonCandidatesForDate(day, todayIso);
 
-  const [todayFeed, prevFeed, nextFeed, pastFeed, futureFeed, liveFeed] = await Promise.all([
+  const [todayFeed, prevFeed, nextFeed, pastFeed, futureFeed, liveFeed, ...seasonFeeds] = await Promise.all([
     fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(day)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
     fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(prevIso)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
     fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(nextIso)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
     fetchSportsDb("v1", key, `eventspastleague.php?id=${encodeURIComponent(leagueId)}`).catch(() => null),
     fetchSportsDb("v1", key, `eventsnextleague.php?id=${encodeURIComponent(leagueId)}`).catch(() => null),
     fetchSportsDb("v2", key, `livescore/${encodeURIComponent(leagueId)}`).catch(() => null),
+    ...(dayDelta > 7
+      ? seasons.map((season) =>
+          fetchSportsDb("v1", key, `eventsseason.php?id=${encodeURIComponent(leagueId)}&s=${encodeURIComponent(season)}`).catch(() => null)
+        )
+      : []),
   ]);
 
   const merged = mergeEventsByKey([
@@ -1193,9 +1265,17 @@ async function ingestLeagueFixtureFeeds(db, key, leagueId, dayIso = "") {
     ...firstArray(pastFeed),
     ...firstArray(futureFeed),
     ...firstArray(liveFeed),
+    ...seasonFeeds.flatMap((payload) => firstArray(payload)),
   ]);
   const count = await upsertFixtures(db, leagueId, merged);
-  return { count, merged };
+  return { count, merged, seasonsUsed: dayDelta > 7 ? seasons : [] };
+}
+
+async function ingestLeagueSeasonFixtures(db, key, leagueId, season) {
+  const payload = await fetchSportsDb("v1", key, `eventsseason.php?id=${encodeURIComponent(leagueId)}&s=${encodeURIComponent(season)}`);
+  const events = mergeEventsByKey(firstArray(payload));
+  const upserts = await upsertFixtures(db, leagueId, events);
+  return { season, upserts };
 }
 
 async function getIngestStateNumber(db, key, fallback = 0) {
