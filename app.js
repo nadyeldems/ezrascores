@@ -79,6 +79,25 @@ function defaultStoryCardState() {
   return { density: "standard", focusTeamIds: [] };
 }
 
+function defaultHigherLowerState() {
+  return {
+    loading: false,
+    error: "",
+    active: false,
+    completed: false,
+    total: 10,
+    asked: 0,
+    correct: 0,
+    poolKey: "",
+    pool: [],
+    usedKeys: [],
+    top: null,
+    bottom: null,
+    feedback: "",
+    feedbackMode: "",
+  };
+}
+
 function defaultFamilyLeagueState() {
   return { leagueCode: "", joinedLeagueCodes: [], currentLeagueIndex: 0, personalPoints: 0, predictions: {}, questBonusByDate: {} };
 }
@@ -172,6 +191,7 @@ const state = {
   dreamManualLayout: false,
   missions: parseStoredJson("ezra_missions", defaultMissionState()),
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
+  higherLower: defaultHigherLowerState(),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
@@ -319,6 +339,8 @@ const el = {
   missionsMeta: document.getElementById("missions-meta"),
   missionsList: document.getElementById("missions-list"),
   storyList: document.getElementById("story-list"),
+  higherLowerBody: document.getElementById("higher-lower-body"),
+  higherLowerStartBtn: document.getElementById("higher-lower-start-btn"),
   challengeStreak: document.getElementById("challenge-streak"),
   challengeCombo: document.getElementById("challenge-combo"),
   challengeMastery: document.getElementById("challenge-mastery"),
@@ -1722,6 +1744,88 @@ function renderChallengeDashboardPanels() {
   `;
 }
 
+function renderHigherLowerPanel() {
+  if (!el.higherLowerBody || !el.higherLowerStartBtn) return;
+  const game = state.higherLower;
+  const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
+  const sourceLabel = favorite?.strTeam
+    ? `${favorite.strTeam} players`
+    : "Premier League + Championship players";
+  el.higherLowerStartBtn.disabled = game.loading;
+  el.higherLowerStartBtn.textContent = game.active ? "Restart Game" : game.completed ? "Play Again" : "Start 10-Question Game";
+  el.higherLowerBody.innerHTML = "";
+
+  if (game.loading) {
+    el.higherLowerBody.innerHTML = `
+      <div class="challenge-skeleton">
+        <span class="skeleton-line w-40"></span>
+        <span class="skeleton-line w-75"></span>
+        <span class="skeleton-line w-60"></span>
+      </div>
+    `;
+    return;
+  }
+
+  if (game.error) {
+    el.higherLowerBody.innerHTML = `<div class="empty">${escapeHtml(game.error)}</div>`;
+    return;
+  }
+
+  if (!game.active && !game.completed) {
+    el.higherLowerBody.innerHTML = `<p class="muted">10 questions. Pick whether the bottom player has more or fewer current-season goals than the top player. Source: ${escapeHtml(sourceLabel)}.</p>`;
+    return;
+  }
+
+  if (game.completed) {
+    el.higherLowerBody.innerHTML = `
+      <div class="higher-lower-status">
+        <span class="family-points">Final Score ${game.correct}/${game.total}</span>
+      </div>
+      <p class="muted">Great run. Start again for a new random set.</p>
+    `;
+    return;
+  }
+
+  const top = game.top;
+  const bottom = game.bottom;
+  if (!top || !bottom) {
+    el.higherLowerBody.innerHTML = `<div class="empty">Unable to load players for this round.</div>`;
+    return;
+  }
+
+  el.higherLowerBody.innerHTML = `
+    <div class="higher-lower-status">
+      <span class="family-points">Q ${Math.min(game.asked + 1, game.total)}/${game.total}</span>
+      <span class="family-points">Score ${game.correct}</span>
+      ${game.feedback ? `<span class="family-points ${game.feedbackMode === "correct" ? "hl-correct" : "hl-wrong"}">${escapeHtml(game.feedback)}</span>` : ""}
+    </div>
+    <div class="higher-lower-player top">
+      <img class="higher-lower-cutout ${top.image ? "" : "hidden"}" src="${top.image || ""}" alt="${escapeHtml(top.name)} cutout" />
+      <div class="higher-lower-meta">
+        <strong>${escapeHtml(top.name)}</strong>
+        <span>#${escapeHtml(top.number || "—")} • ${top.goals} goals</span>
+      </div>
+    </div>
+    <div class="higher-lower-controls">
+      <button class="btn higher-lower-arrow up" type="button" data-hl="up" aria-label="Bottom player has more goals">▲</button>
+      <button class="btn higher-lower-arrow down" type="button" data-hl="down" aria-label="Bottom player has fewer goals">▼</button>
+    </div>
+    <div class="higher-lower-player bottom">
+      <img class="higher-lower-cutout ${bottom.image ? "" : "hidden"}" src="${bottom.image || ""}" alt="${escapeHtml(bottom.name)} cutout" />
+      <div class="higher-lower-meta">
+        <strong>${escapeHtml(bottom.name)}</strong>
+        <span>#${escapeHtml(bottom.number || "—")}</span>
+      </div>
+    </div>
+  `;
+
+  [...el.higherLowerBody.querySelectorAll("button[data-hl]")].forEach((btn) => {
+    btn.addEventListener("click", () => {
+      handleHigherLowerAnswer(btn.dataset.hl === "up" ? "up" : "down");
+    });
+  });
+}
+
 function renderFunZone() {
   if (el.funZoneBody) {
     el.funZoneBody.classList.remove("hidden");
@@ -1730,6 +1834,7 @@ function renderFunZone() {
   renderStoryCardsPanel();
   renderFamilyLeaguePanel();
   renderChallengeDashboardPanels();
+  renderHigherLowerPanel();
 }
 
 function normalizeHexColor(value) {
@@ -1987,6 +2092,161 @@ function normalizeSquadPlayer(raw, team) {
     teamName: team?.strTeam || raw.strTeam || "",
     teamBadge: team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || "",
   };
+}
+
+function extractPlayerGoals(raw = {}) {
+  const candidates = [
+    raw.intGoals,
+    raw.strGoals,
+    raw.intSeasonGoals,
+    raw.strSeasonGoals,
+    raw.intSoccerXMLTotalGoals,
+    raw.intSoccerXMLGoals,
+    raw.intGoal,
+    raw.strGoal,
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
+function normalizeHigherLowerPlayer(raw, team) {
+  if (!raw) return null;
+  const base = normalizeSquadPlayer(raw, team);
+  if (!base || !base.name) return null;
+  return {
+    ...base,
+    image: base.image || raw.strThumb || "",
+    goals: extractPlayerGoals(raw),
+  };
+}
+
+function higherLowerPoolKey() {
+  const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
+  if (favorite?.idTeam) return `team:${favorite.idTeam}`;
+  return "all-leagues";
+}
+
+async function buildHigherLowerPool() {
+  const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
+  const teams = favorite ? [favorite] : shuffleList(allLeagueTeams()).slice(0, 6);
+  const poolByKey = new Map();
+  const hydrateFromTeams = async (teamsToUse) => {
+    for (const team of teamsToUse) {
+      const rows = await fetchPlayersForTeam(team);
+      const normalized = rows
+        .map((raw) => normalizeHigherLowerPlayer(raw, team))
+        .filter((player) => player && player.name && player.image);
+      const unresolved = normalized.filter((player) => player.goals === null && player.idPlayer).slice(0, 8);
+      if (unresolved.length) {
+        const profiles = await Promise.all(
+          unresolved.map((player) => safeLoad(() => fetchPlayerProfile(player.idPlayer), null))
+        );
+        unresolved.forEach((player, idx) => {
+          const goals = extractPlayerGoals(profiles[idx] || {});
+          if (goals !== null) player.goals = goals;
+        });
+      }
+      normalized
+        .filter((player) => player.goals !== null)
+        .forEach((player) => {
+          if (!poolByKey.has(player.key)) poolByKey.set(player.key, player);
+        });
+      if (poolByKey.size >= 36) break;
+    }
+  };
+
+  await hydrateFromTeams(teams);
+
+  if (poolByKey.size < 2 && favorite) {
+    await hydrateFromTeams(shuffleList(allLeagueTeams()).slice(0, 6));
+  }
+
+  return shuffleList([...poolByKey.values()]);
+}
+
+function pickHigherLowerCandidate(topPlayer, pool, usedKeys = []) {
+  const used = new Set((usedKeys || []).filter(Boolean));
+  const unused = pool.filter((p) => p && p.key !== topPlayer?.key && !used.has(p.key) && p.goals !== topPlayer?.goals);
+  if (unused.length) return randomFrom(unused);
+  const fallback = pool.filter((p) => p && p.key !== topPlayer?.key && p.goals !== topPlayer?.goals);
+  return randomFrom(fallback);
+}
+
+async function startHigherLowerGame(forceRebuild = false) {
+  const game = state.higherLower;
+  if (game.loading) return;
+  game.loading = true;
+  game.error = "";
+  game.feedback = "";
+  game.feedbackMode = "";
+  renderHigherLowerPanel();
+  try {
+    const key = higherLowerPoolKey();
+    if (forceRebuild || game.poolKey !== key || !Array.isArray(game.pool) || game.pool.length < 2) {
+      const pool = await buildHigherLowerPool();
+      game.pool = pool;
+      game.poolKey = key;
+    }
+    if (!Array.isArray(game.pool) || game.pool.length < 2) {
+      throw new Error("Not enough player goal data yet. Try again in a moment.");
+    }
+    game.total = 10;
+    game.asked = 0;
+    game.correct = 0;
+    game.completed = false;
+    game.active = true;
+    game.top = randomFrom(game.pool);
+    game.usedKeys = game.top?.key ? [game.top.key] : [];
+    game.bottom = pickHigherLowerCandidate(game.top, game.pool, game.usedKeys);
+    if (!game.bottom) {
+      throw new Error("Not enough unique player goals available.");
+    }
+    game.usedKeys.push(game.bottom.key);
+  } catch (err) {
+    game.active = false;
+    game.completed = false;
+    game.top = null;
+    game.bottom = null;
+    game.error = err?.message || "Unable to start Higher or Lower.";
+  } finally {
+    game.loading = false;
+    renderHigherLowerPanel();
+  }
+}
+
+function handleHigherLowerAnswer(direction) {
+  const game = state.higherLower;
+  if (!game.active || !game.top || !game.bottom) return;
+  const topGoals = Number(game.top.goals || 0);
+  const bottomGoals = Number(game.bottom.goals || 0);
+  const relation = bottomGoals > topGoals ? "up" : bottomGoals < topGoals ? "down" : "same";
+  const correct = relation === direction;
+  game.asked += 1;
+  if (correct) game.correct += 1;
+  game.feedback = correct ? "Correct" : relation === "same" ? "Same goals" : "Wrong";
+  game.feedbackMode = correct ? "correct" : "wrong";
+
+  if (game.asked >= game.total) {
+    game.active = false;
+    game.completed = true;
+    renderHigherLowerPanel();
+    return;
+  }
+
+  const promoted = game.bottom;
+  game.top = promoted;
+  const nextBottom = pickHigherLowerCandidate(game.top, game.pool, game.usedKeys);
+  game.bottom = nextBottom;
+  if (nextBottom?.key) game.usedKeys.push(nextBottom.key);
+  if (!game.bottom) {
+    game.active = false;
+    game.completed = true;
+    game.error = "Round ended early due to limited unique goal pairs.";
+  }
+  renderHigherLowerPanel();
 }
 
 function formatAgeFromBirthDate(dateBorn) {
@@ -6999,6 +7259,12 @@ function attachEvents() {
     el.squadToggleBtn.addEventListener("click", () => {
       state.squadOpen = !state.squadOpen;
       renderSquadPanel();
+    });
+  }
+
+  if (el.higherLowerStartBtn) {
+    el.higherLowerStartBtn.addEventListener("click", async () => {
+      await startHigherLowerGame(true);
     });
   }
 

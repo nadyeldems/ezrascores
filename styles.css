@@ -2151,6 +2151,97 @@ body.league-member-overlay-open::before {
   line-height: 1.05;
 }
 
+.higher-lower-body {
+  margin-top: 0.35rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.higher-lower-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.higher-lower-player {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.7rem;
+  background: rgba(255, 153, 32, 0.04);
+  display: grid;
+  justify-items: center;
+  gap: 0.26rem;
+  padding: 0.4rem;
+  text-align: center;
+}
+
+.higher-lower-player.top {
+  box-shadow: inset 0 0 0 1px rgba(255, 153, 32, 0.12);
+}
+
+.higher-lower-player.bottom {
+  box-shadow: inset 0 0 0 1px rgba(102, 160, 255, 0.12);
+}
+
+.higher-lower-cutout {
+  width: 3.6rem;
+  height: 3.6rem;
+  object-fit: contain;
+  border-radius: 50%;
+  border: 1px solid var(--line-soft);
+  background: rgba(8, 5, 3, 0.76);
+}
+
+.higher-lower-meta {
+  display: grid;
+  gap: 0.06rem;
+}
+
+.higher-lower-meta strong {
+  line-height: 1;
+}
+
+.higher-lower-meta span {
+  color: var(--text-soft);
+  line-height: 1;
+}
+
+.higher-lower-controls {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.higher-lower-arrow {
+  min-width: 3rem;
+  min-height: 2.2rem;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.higher-lower-arrow.up {
+  border-color: #2e9850;
+  color: #d7ffe2;
+  background: linear-gradient(180deg, rgba(58, 158, 86, 0.3), rgba(22, 88, 42, 0.28));
+}
+
+.higher-lower-arrow.down {
+  border-color: #af4545;
+  color: #ffd4d4;
+  background: linear-gradient(180deg, rgba(178, 63, 63, 0.3), rgba(94, 26, 26, 0.28));
+}
+
+.hl-correct {
+  border-color: #2f8f44;
+  color: #d7ffe0;
+  background: rgba(60, 140, 76, 0.22);
+}
+
+.hl-wrong {
+  border-color: #a03f3f;
+  color: #ffd3d3;
+  background: rgba(138, 50, 50, 0.2);
+}
+
 .fixture-predict {
   border: 1px solid var(--line-soft);
   border-radius: 0.7rem;
