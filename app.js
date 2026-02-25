@@ -1,10 +1,12 @@
 const API_PROXY_BASE = "/api";
-const POLL_LIVE_MS = 20000;
-const POLL_MATCHDAY_MS = 60000;
-const POLL_IDLE_MS = 300000;
-const LIVE_PROBE_MATCHDAY_MS = 60000;
-const LIVE_PROBE_IDLE_MS = 600000;
-const STATIC_REFRESH_MS = 1800000;
+const ONE_MINUTE_MS = 60 * 1000;
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+const POLL_LIVE_MS = ONE_MINUTE_MS;
+const POLL_MATCHDAY_MS = THREE_HOURS_MS;
+const POLL_IDLE_MS = THREE_HOURS_MS;
+const LIVE_PROBE_MATCHDAY_MS = THREE_HOURS_MS;
+const LIVE_PROBE_IDLE_MS = THREE_HOURS_MS;
+const STATIC_REFRESH_MS = THREE_HOURS_MS;
 
 const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
@@ -190,6 +192,9 @@ const state = {
   openFixtureKey: "",
   eventDetailCache: {},
   fixtureScoreSnapshot: new Map(),
+  selectedDateLoadSeq: 0,
+  selectedDateTimer: null,
+  liveStream: { es: null, reconnectTimer: null, lastVersion: "", connected: false },
   playerPop: {
     rafId: null,
     running: false,
@@ -4958,7 +4963,15 @@ function setDateButtonState() {
   });
 }
 
-async function refreshSelectedDateFixtures() {
+function normalizeDateIsoInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return toISODate(new Date());
+  const parsed = new Date(`${raw}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return toISODate(new Date());
+  return toISODate(parsed);
+}
+
+async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = state.selectedDateLoadSeq) {
   const now = new Date();
   const prev = new Date(now);
   prev.setDate(now.getDate() - 1);
@@ -4969,30 +4982,35 @@ async function refreshSelectedDateFixtures() {
   const todayIso = toISODate(now);
   const nextIso = toISODate(next);
 
-  if (state.selectedDate === todayIso) {
+  if (dateIso === todayIso) {
+    if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
     state.selectedDateFixtures.EPL = [...state.fixtures.today.EPL];
     state.selectedDateFixtures.CHAMP = [...state.fixtures.today.CHAMP];
-    return;
+    return true;
   }
 
-  if (state.selectedDate === prevIso) {
+  if (dateIso === prevIso) {
+    if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
     state.selectedDateFixtures.EPL = [...state.fixtures.previous.EPL];
     state.selectedDateFixtures.CHAMP = [...state.fixtures.previous.CHAMP];
-    return;
+    return true;
   }
 
-  if (state.selectedDate === nextIso) {
+  if (dateIso === nextIso) {
+    if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
     state.selectedDateFixtures.EPL = [...state.fixtures.next.EPL];
     state.selectedDateFixtures.CHAMP = [...state.fixtures.next.CHAMP];
-    return;
+    return true;
   }
 
   const [epl, champ] = await Promise.all([
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, state.selectedDate), []),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, state.selectedDate), []),
+    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dateIso), []),
+    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dateIso), []),
   ]);
+  if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
   state.selectedDateFixtures.EPL = epl.sort(fixtureSort);
   state.selectedDateFixtures.CHAMP = champ.sort(fixtureSort);
+  return true;
 }
 
 function selectedDateLabel(dateIso) {
@@ -5008,9 +5026,25 @@ function selectedDateLabel(dateIso) {
 }
 
 async function setSelectedDate(dateIso) {
-  state.selectedDate = dateIso || toISODate(new Date());
-  await refreshSelectedDateFixtures();
+  const normalized = normalizeDateIsoInput(dateIso);
+  state.selectedDate = normalized;
+  const seq = ++state.selectedDateLoadSeq;
+  const applied = await refreshSelectedDateFixtures(normalized, seq);
+  if (!applied) return;
+  if (seq !== state.selectedDateLoadSeq || normalized !== state.selectedDate) return;
   renderFixtures();
+}
+
+function scheduleSelectedDateChange(dateIso, delayMs = 90) {
+  const nextIso = normalizeDateIsoInput(dateIso);
+  if (state.selectedDateTimer) {
+    clearTimeout(state.selectedDateTimer);
+    state.selectedDateTimer = null;
+  }
+  state.selectedDateTimer = setTimeout(() => {
+    state.selectedDateTimer = null;
+    setSelectedDate(nextIso);
+  }, delayMs);
 }
 
 function renderFixtures() {
@@ -5035,6 +5069,98 @@ function selectedEventsForCurrentView() {
   return state.selectedLeague === "ALL"
     ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
     : [...state.selectedDateFixtures[state.selectedLeague]];
+}
+
+function leagueCodeFromLeagueId(leagueId) {
+  if (String(leagueId) === String(LEAGUES.EPL.id)) return "EPL";
+  if (String(leagueId) === String(LEAGUES.CHAMP.id)) return "CHAMP";
+  return "";
+}
+
+function upsertEvents(target, updates) {
+  if (!Array.isArray(target) || !Array.isArray(updates) || !updates.length) return target || [];
+  const byKey = new Map((target || []).map((event) => [fixtureKey(event), event]));
+  updates.forEach((event) => {
+    if (!event || typeof event !== "object") return;
+    const key = fixtureKey(event);
+    if (!key) return;
+    const current = byKey.get(key);
+    byKey.set(key, current ? { ...current, ...event } : event);
+  });
+  return [...byKey.values()].sort(fixtureSort);
+}
+
+function applyLiveStreamUpdate(payload) {
+  if (!payload || typeof payload !== "object") return;
+  if (payload.version && payload.version === state.liveStream.lastVersion) return;
+  if (payload.version) state.liveStream.lastVersion = payload.version;
+
+  const leagues = payload.leagues && typeof payload.leagues === "object" ? payload.leagues : {};
+  Object.entries(leagues).forEach(([leagueId, events]) => {
+    const code = leagueCodeFromLeagueId(leagueId);
+    if (!code || !Array.isArray(events) || !events.length) return;
+    if (payload.full) {
+      state.fixtures.today[code] = events.sort(fixtureSort);
+    } else {
+      state.fixtures.today[code] = upsertEvents(state.fixtures.today[code], events);
+    }
+    state.fixtures.live[code] = state.fixtures.today[code].filter((event) => eventState(event).key === "live");
+    if (state.selectedDate === toISODate(new Date())) {
+      state.selectedDateFixtures[code] = [...state.fixtures.today[code]];
+    }
+  });
+
+  detectGoalFlashes();
+  const currentEvents = selectedEventsForCurrentView();
+  const canPatchLive =
+    state.selectedDate === toISODate(new Date()) &&
+    canPatchFixtureRows(currentEvents) &&
+    currentEvents.some((event) => eventState(event).key === "live");
+
+  if (canPatchLive) {
+    patchVisibleFixtureRows(currentEvents);
+  } else {
+    renderFixtures();
+  }
+  safeLoad(() => renderFavorite(), null);
+}
+
+function stopLiveStream() {
+  if (state.liveStream.reconnectTimer) {
+    clearTimeout(state.liveStream.reconnectTimer);
+    state.liveStream.reconnectTimer = null;
+  }
+  if (state.liveStream.es) {
+    state.liveStream.es.close();
+    state.liveStream.es = null;
+  }
+  state.liveStream.connected = false;
+}
+
+function startLiveStream() {
+  stopLiveStream();
+  if (typeof EventSource === "undefined") return;
+  const es = new EventSource(`${API_PROXY_BASE}/v1/ezra/live/stream`);
+  state.liveStream.es = es;
+  es.addEventListener("open", () => {
+    state.liveStream.connected = true;
+  });
+  es.addEventListener("update", (event) => {
+    try {
+      const payload = JSON.parse(event.data || "{}");
+      applyLiveStreamUpdate(payload);
+    } catch (err) {
+      console.error("Live stream payload parse failed", err);
+    }
+  });
+  es.addEventListener("error", () => {
+    state.liveStream.connected = false;
+    if (state.liveStream.reconnectTimer) return;
+    state.liveStream.reconnectTimer = setTimeout(() => {
+      state.liveStream.reconnectTimer = null;
+      startLiveStream();
+    }, 4000);
+  });
 }
 
 function setMobileTab(tab) {
@@ -5978,19 +6104,13 @@ function shouldFetchStaticData() {
 
 function shouldFetchTables(context) {
   if (!state.tables.EPL.length || !state.tables.CHAMP.length) return true;
-  const nearKickoff = Number.isFinite(Number(context?.minutesToNextKickoff)) && Number(context.minutesToNextKickoff) <= 90;
-  const hasMatchdayActivity = Boolean(context?.hasLive || context?.hasTodayFixtures || nearKickoff);
-  const intervalMs = context?.hasLive ? 60 * 1000 : hasMatchdayActivity ? 2 * 60 * 1000 : 15 * 60 * 1000;
+  const intervalMs = context?.hasLive ? ONE_MINUTE_MS : THREE_HOURS_MS;
   return Date.now() - state.lastTableRefreshAt >= intervalMs;
 }
 
 function shouldFetchLiveData(context) {
   const sinceLastLiveProbe = Date.now() - state.lastLiveProbeAt;
   if (context.hasLive) return true;
-  if (context.selectedDateIsToday || context.favoriteHasTodayFixture || context.hasTodayFixtures) {
-    if (context.minutesToNextKickoff !== null && context.minutesToNextKickoff <= 120) return true;
-    return sinceLastLiveProbe >= LIVE_PROBE_MATCHDAY_MS;
-  }
   return sinceLastLiveProbe >= LIVE_PROBE_IDLE_MS;
 }
 
@@ -6048,7 +6168,10 @@ async function fullRefresh() {
       !state.fixtures.next.CHAMP.length;
     await loadCoreData({ includeLive, includeStatic, includeTables, includeSurroundingDays });
     detectGoalFlashes();
-    await refreshSelectedDateFixtures();
+    const selectedDateForRefresh = normalizeDateIsoInput(state.selectedDate || todayIso);
+    state.selectedDate = selectedDateForRefresh;
+    const selectedSeq = ++state.selectedDateLoadSeq;
+    await refreshSelectedDateFixtures(selectedDateForRefresh, selectedSeq);
     if (accountSignedIn() && Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
       await safeLoad(() => refreshLeagueDirectory(), null);
     }
@@ -6377,50 +6500,50 @@ function attachEvents() {
   });
 
   if (el.datePicker) {
-    el.datePicker.addEventListener("change", async (e) => {
-      await setSelectedDate(e.target.value || toISODate(new Date()));
+    el.datePicker.addEventListener("change", (e) => {
+      scheduleSelectedDateChange(e.target.value || toISODate(new Date()));
     });
   }
 
   el.dateQuickButtons.forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
       const d = new Date();
       d.setDate(d.getDate() + Number(btn.dataset.offset || 0));
-      await setSelectedDate(toISODate(d));
+      scheduleSelectedDateChange(toISODate(d));
     });
   });
 
-  const shiftSelectedDate = async (delta) => {
+  const shiftSelectedDate = (delta) => {
     const base = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
     base.setDate(base.getDate() + delta);
-    await setSelectedDate(toISODate(base));
+    scheduleSelectedDateChange(toISODate(base));
   };
 
   if (el.datePrevBtn) {
-    el.datePrevBtn.addEventListener("click", async () => {
-      await shiftSelectedDate(-1);
+    el.datePrevBtn.addEventListener("click", () => {
+      shiftSelectedDate(-1);
     });
   }
 
   if (el.dateNextBtn) {
-    el.dateNextBtn.addEventListener("click", async () => {
-      await shiftSelectedDate(1);
+    el.dateNextBtn.addEventListener("click", () => {
+      shiftSelectedDate(1);
     });
   }
 
   if (el.stickyDatePrev) {
-    el.stickyDatePrev.addEventListener("click", async () => {
-      await shiftSelectedDate(-1);
+    el.stickyDatePrev.addEventListener("click", () => {
+      shiftSelectedDate(-1);
     });
   }
   if (el.stickyDateNext) {
-    el.stickyDateNext.addEventListener("click", async () => {
-      await shiftSelectedDate(1);
+    el.stickyDateNext.addEventListener("click", () => {
+      shiftSelectedDate(1);
     });
   }
   if (el.stickyDateToday) {
-    el.stickyDateToday.addEventListener("click", async () => {
-      await setSelectedDate(toISODate(new Date()));
+    el.stickyDateToday.addEventListener("click", () => {
+      scheduleSelectedDateChange(toISODate(new Date()));
     });
   }
 
@@ -6432,6 +6555,9 @@ function attachEvents() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
     ensurePlayerPopContinuity();
+    if (!state.liveStream.connected) {
+      startLiveStream();
+    }
   });
 }
 
@@ -6455,6 +6581,7 @@ renderMobileSectionLayout();
 if (state.playerPopEnabled) {
   showRandomPlayerPop();
 }
+startLiveStream();
 initAccountSession().finally(() => {
   fullRefresh();
 });

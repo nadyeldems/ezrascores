@@ -954,6 +954,9 @@ const TABLE_LEAGUE_IDS = ["4328", "4329"];
 const TABLE_REFRESH_LIVE_MS = 60 * 1000;
 const TABLE_REFRESH_MATCHDAY_MS = 2 * 60 * 1000;
 const TABLE_REFRESH_IDLE_MS = 15 * 60 * 1000;
+const LIVE_SNAPSHOT_REFRESH_MS = 60 * 1000;
+const LIVE_STREAM_POLL_MS = 5000;
+const LIVE_STREAM_MAX_MS = 55 * 1000;
 
 function tableDataCacheKey(origin, leagueId) {
   return new Request(`${origin}/api/internal/tables/${leagueId}`);
@@ -961,6 +964,10 @@ function tableDataCacheKey(origin, leagueId) {
 
 function tableMetaCacheKey(origin) {
   return new Request(`${origin}/api/internal/tables/_meta`);
+}
+
+function liveSnapshotCacheKey(origin) {
+  return new Request(`${origin}/api/internal/live/_snapshot`);
 }
 
 async function fetchSportsDb(version, key, pathWithQuery) {
@@ -983,6 +990,207 @@ function firstArray(payload) {
     if (Array.isArray(value)) return value;
   }
   return [];
+}
+
+function canonicalEventHash(event) {
+  const parts = [
+    String(event?.idEvent || ""),
+    String(event?.dateEvent || ""),
+    String(event?.strTime || ""),
+    String(event?.strHomeTeam || ""),
+    String(event?.strAwayTeam || ""),
+    String(event?.intHomeScore ?? ""),
+    String(event?.intAwayScore ?? ""),
+    String(event?.strStatus || ""),
+    String(event?.strProgress || ""),
+    String(event?.strMinute || ""),
+  ];
+  return parts.join("|");
+}
+
+function eventKey(event) {
+  if (event?.idEvent) return `id:${event.idEvent}`;
+  return [
+    "m",
+    String(event?.dateEvent || ""),
+    String(event?.strHomeTeam || "").toLowerCase(),
+    String(event?.strAwayTeam || "").toLowerCase(),
+  ].join("|");
+}
+
+function mergeEvents(baseEvents, liveEvents) {
+  const byKey = new Map();
+  [...(baseEvents || []), ...(liveEvents || [])].forEach((event) => {
+    if (!event || typeof event !== "object") return;
+    const key = eventKey(event);
+    if (!key) return;
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? { ...existing, ...event } : event);
+  });
+  return [...byKey.values()];
+}
+
+function sortEvents(events) {
+  return [...(events || [])].sort((a, b) => {
+    const ta = `${a?.dateEvent || ""}T${String(a?.strTime || "00:00:00").slice(0, 8)}`;
+    const tb = `${b?.dateEvent || ""}T${String(b?.strTime || "00:00:00").slice(0, 8)}`;
+    return ta.localeCompare(tb);
+  });
+}
+
+function toClientEvent(event) {
+  if (!event || typeof event !== "object") return null;
+  return {
+    idEvent: event.idEvent || "",
+    dateEvent: event.dateEvent || "",
+    strTime: event.strTime || "",
+    strHomeTeam: event.strHomeTeam || "",
+    strAwayTeam: event.strAwayTeam || "",
+    idHomeTeam: event.idHomeTeam || "",
+    idAwayTeam: event.idAwayTeam || "",
+    intHomeScore: event.intHomeScore ?? null,
+    intAwayScore: event.intAwayScore ?? null,
+    strStatus: event.strStatus || "",
+    strProgress: event.strProgress || "",
+    strMinute: event.strMinute || "",
+    strVenue: event.strVenue || "",
+    strLeague: event.strLeague || "",
+    strTimestamp: event.strTimestamp || "",
+  };
+}
+
+function payloadVersion(payload) {
+  const src = JSON.stringify(payload || {});
+  let hash = 0;
+  for (let i = 0; i < src.length; i += 1) {
+    hash = (hash << 5) - hash + src.charCodeAt(i);
+    hash |= 0;
+  }
+  return `v${Math.abs(hash)}`;
+}
+
+async function buildLiveSnapshot(key) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const leaguePayload = {};
+
+  for (const leagueId of TABLE_LEAGUE_IDS) {
+    const [todayById, liveV2] = await Promise.all([
+      fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(todayIso)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
+      fetchSportsDb("v2", key, `livescore/${leagueId}`).catch(() => null),
+    ]);
+
+    const merged = mergeEvents(firstArray(todayById), firstArray(liveV2));
+    leaguePayload[leagueId] = sortEvents(merged).map(toClientEvent).filter(Boolean);
+  }
+
+  const output = {
+    updatedAt: Date.now(),
+    todayIso,
+    leagues: leaguePayload,
+  };
+  output.version = payloadVersion(output.leagues);
+  return output;
+}
+
+function diffLiveSnapshots(prev, next) {
+  const changed = {};
+  for (const leagueId of TABLE_LEAGUE_IDS) {
+    const prevMap = new Map((prev?.leagues?.[leagueId] || []).map((event) => [eventKey(event), canonicalEventHash(event)]));
+    const nextEvents = next?.leagues?.[leagueId] || [];
+    const leagueChanges = [];
+    nextEvents.forEach((event) => {
+      const key = eventKey(event);
+      const prevHash = prevMap.get(key);
+      const nextHash = canonicalEventHash(event);
+      if (prevHash !== nextHash) {
+        leagueChanges.push(event);
+      }
+    });
+    changed[leagueId] = leagueChanges;
+  }
+  return changed;
+}
+
+async function readLiveSnapshot(cache, origin) {
+  const cached = await cache.match(liveSnapshotCacheKey(origin));
+  if (!cached) return null;
+  try {
+    return await cached.json();
+  } catch {
+    return null;
+  }
+}
+
+async function ensureLiveSnapshot(cache, origin, key) {
+  const cached = await readLiveSnapshot(cache, origin);
+  const now = Date.now();
+  if (cached && now - Number(cached.updatedAt || 0) < LIVE_SNAPSHOT_REFRESH_MS) {
+    return { snapshot: cached, changedByLeague: {}, refreshed: false };
+  }
+
+  const next = await buildLiveSnapshot(key);
+  const changedByLeague = diffLiveSnapshots(cached || { leagues: {} }, next);
+  await cache.put(
+    liveSnapshotCacheKey(origin),
+    new Response(JSON.stringify(next), {
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "public, max-age=30, s-maxage=30",
+      },
+    })
+  );
+  return { snapshot: next, changedByLeague, refreshed: true };
+}
+
+function streamFrame(eventName, data) {
+  return `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+async function handleEzraLiveStreamRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const origin = `${url.protocol}//${url.host}`;
+  const cache = caches.default;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const startedAt = Date.now();
+      let lastVersion = "";
+      controller.enqueue(encoder.encode(`retry: 4000\n\n`));
+      while (Date.now() - startedAt < LIVE_STREAM_MAX_MS && !request.signal.aborted) {
+        try {
+          const { snapshot, changedByLeague, refreshed } = await ensureLiveSnapshot(cache, origin, key);
+          if (snapshot?.version && snapshot.version !== lastVersion) {
+            const isFirst = !lastVersion;
+            const payload = {
+              full: isFirst,
+              refreshed,
+              version: snapshot.version,
+              updatedAt: snapshot.updatedAt,
+              todayIso: snapshot.todayIso,
+              leagues: isFirst ? snapshot.leagues : changedByLeague,
+            };
+            controller.enqueue(encoder.encode(streamFrame("update", payload)));
+            lastVersion = snapshot.version;
+          }
+        } catch (err) {
+          controller.enqueue(encoder.encode(streamFrame("error", { message: String(err?.message || err) })));
+        }
+        await new Promise((resolve) => setTimeout(resolve, LIVE_STREAM_POLL_MS));
+      }
+      controller.close();
+    },
+    cancel() {},
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      Connection: "keep-alive",
+    },
+  });
 }
 
 async function hasLiveGamesNow(key) {
@@ -1205,6 +1413,9 @@ export async function onRequest(context) {
 
   if (version === "v1" && lowerPath === "ezra/tables") {
     return handleEzraTablesRoute(context, key);
+  }
+  if (version === "v1" && lowerPath === "ezra/live/stream") {
+    return handleEzraLiveStreamRoute(context, key);
   }
 
   const upstream = upstreamUrl(version, key, `${upstreamPath}${url.search}`);
