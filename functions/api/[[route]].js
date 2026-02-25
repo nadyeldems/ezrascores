@@ -1336,6 +1336,13 @@ async function handleEzraFixturesRoute(context, key) {
   if (!fromCache.length) {
     await ingestLeagueFixtureFeeds(db, key, leagueId, dateIso);
     fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
+    if (!fromCache.length) {
+      const seasons = seasonCandidatesForDate(dateIso, todayIso);
+      for (const season of seasons) {
+        await ingestLeagueSeasonFixtures(db, key, leagueId, season).catch(() => null);
+      }
+      fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
+    }
   }
 
   return json(
@@ -1354,7 +1361,7 @@ async function handleEzraFixturesRoute(context, key) {
   );
 }
 
-async function handleEzraTeamFormRoute(context) {
+async function handleEzraTeamFormRoute(context, key) {
   const { request, env } = context;
   const db = env.EZRA_DB;
   if (!db) {
@@ -1372,63 +1379,76 @@ async function handleEzraTeamFormRoute(context) {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const minIso = addDaysIso(todayIso, -FIXTURE_HISTORY_DAYS);
-  const rows = await db
-    .prepare(
-      `
-      SELECT payload_json
-      FROM ezra_fixtures_cache
-      WHERE league_id = ?1
-        AND date_event >= ?2
-        AND date_event <= ?3
-      ORDER BY date_event DESC, COALESCE(str_time, '') DESC
-      LIMIT 800
-      `
-    )
-    .bind(leagueId, minIso, todayIso)
-    .all();
-
   const teamToken = normalizeTeamToken(teamName);
-  const matched = [];
-  const seen = new Set();
-  const list = Array.isArray(rows?.results) ? rows.results : [];
-  for (const row of list) {
-    const event = safeParseJsonText(row?.payload_json);
-    if (!event || typeof event !== "object") continue;
-    const key = fixtureCacheKey(event);
-    if (!key || seen.has(key)) continue;
+  const readMatched = async () => {
+    const rows = await db
+      .prepare(
+        `
+        SELECT payload_json
+        FROM ezra_fixtures_cache
+        WHERE league_id = ?1
+          AND date_event >= ?2
+          AND date_event <= ?3
+        ORDER BY date_event DESC, COALESCE(str_time, '') DESC
+        LIMIT 1400
+        `
+      )
+      .bind(leagueId, minIso, todayIso)
+      .all();
 
-    const home = numericScore(event.intHomeScore);
-    const away = numericScore(event.intAwayScore);
-    if (home === null || away === null) continue;
+    const matched = [];
+    const seen = new Set();
+    const list = Array.isArray(rows?.results) ? rows.results : [];
+    for (const row of list) {
+      const event = safeParseJsonText(row?.payload_json);
+      if (!event || typeof event !== "object") continue;
+      const key = fixtureCacheKey(event);
+      if (!key || seen.has(key)) continue;
 
-    const homeId = String(event.idHomeTeam || "").trim();
-    const awayId = String(event.idAwayTeam || "").trim();
-    const byId = teamId && (homeId === teamId || awayId === teamId);
-    const byName =
-      !byId &&
-      teamToken &&
-      (normalizeTeamToken(event.strHomeTeam) === teamToken || normalizeTeamToken(event.strAwayTeam) === teamToken);
-    if (!byId && !byName) continue;
+      const home = numericScore(event.intHomeScore);
+      const away = numericScore(event.intAwayScore);
+      if (home === null || away === null) continue;
 
-    seen.add(key);
-    const isHome = byId ? homeId === teamId : normalizeTeamToken(event.strHomeTeam) === teamToken;
-    const teamScore = isHome ? home : away;
-    const oppScore = isHome ? away : home;
-    let result = "D";
-    if (teamScore > oppScore) result = "W";
-    else if (teamScore < oppScore) result = "L";
+      const homeId = String(event.idHomeTeam || "").trim();
+      const awayId = String(event.idAwayTeam || "").trim();
+      const byId = teamId && (homeId === teamId || awayId === teamId);
+      const byName =
+        !byId &&
+        teamToken &&
+        (normalizeTeamToken(event.strHomeTeam) === teamToken || normalizeTeamToken(event.strAwayTeam) === teamToken);
+      if (!byId && !byName) continue;
 
-    matched.push({
-      idEvent: String(event.idEvent || ""),
-      dateEvent: String(event.dateEvent || ""),
-      strTime: String(event.strTime || ""),
-      strHomeTeam: String(event.strHomeTeam || ""),
-      strAwayTeam: String(event.strAwayTeam || ""),
-      intHomeScore: home,
-      intAwayScore: away,
-      result,
-    });
-    if (matched.length >= maxGames) break;
+      seen.add(key);
+      const isHome = byId ? homeId === teamId : normalizeTeamToken(event.strHomeTeam) === teamToken;
+      const teamScore = isHome ? home : away;
+      const oppScore = isHome ? away : home;
+      let result = "D";
+      if (teamScore > oppScore) result = "W";
+      else if (teamScore < oppScore) result = "L";
+
+      matched.push({
+        idEvent: String(event.idEvent || ""),
+        dateEvent: String(event.dateEvent || ""),
+        strTime: String(event.strTime || ""),
+        strHomeTeam: String(event.strHomeTeam || ""),
+        strAwayTeam: String(event.strAwayTeam || ""),
+        intHomeScore: home,
+        intAwayScore: away,
+        result,
+      });
+      if (matched.length >= maxGames) break;
+    }
+    return matched;
+  };
+
+  let matched = await readMatched();
+  if (matched.length < maxGames) {
+    const seasons = seasonCandidatesForSweep(todayIso);
+    for (const season of seasons) {
+      await ingestLeagueSeasonFixtures(db, key, leagueId, season).catch(() => null);
+    }
+    await ingestLeagueFixtureFeeds(db, key, leagueId, todayIso).catch(() => null);
+    matched = await readMatched();
   }
 
   return json(
@@ -1871,7 +1891,7 @@ export async function onRequest(context) {
     return handleEzraFixturesRoute(context, key);
   }
   if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
-    return handleEzraTeamFormRoute(context);
+    return handleEzraTeamFormRoute(context, key);
   }
   if (version === "v1" && lowerPath === "ezra/live/stream") {
     return handleEzraLiveStreamRoute(context, key);
