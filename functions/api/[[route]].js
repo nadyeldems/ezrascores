@@ -1165,7 +1165,6 @@ function sanitizeStateInput(input) {
   const next = {
     favoriteTeamId: String(input.favoriteTeamId || ""),
     uiTheme: input.uiTheme === "club" ? "club" : "classic",
-    motionLevel: ["minimal", "standard", "arcade"].includes(input.motionLevel) ? input.motionLevel : "standard",
     playerPopEnabled: Boolean(input.playerPopEnabled),
     playerPopScope: input.playerPopScope === "favorite" ? "favorite" : "any",
     dreamTeam: input.dreamTeam && typeof input.dreamTeam === "object" ? input.dreamTeam : null,
@@ -1391,6 +1390,57 @@ async function handleLeagueRename(db, request) {
   return json({ ok: true, code, name: nextName }, 200);
 }
 
+async function handleLeagueLeave(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const code = normalizeLeagueCode(body?.code);
+  if (!code) return json({ error: "Invalid league code." }, 400);
+
+  const league = await db
+    .prepare("SELECT code, owner_user_id FROM ezra_leagues WHERE code = ?1 LIMIT 1")
+    .bind(code)
+    .first();
+  if (!league) return json({ error: "League code not found." }, 404);
+  if (String(league.owner_user_id || "") === String(session.user_id || "")) {
+    return json({ error: "League owner cannot leave. Delete the league instead." }, 403);
+  }
+
+  await db
+    .prepare("DELETE FROM ezra_league_members WHERE league_code = ?1 AND user_id = ?2")
+    .bind(code, session.user_id)
+    .run();
+
+  await ensureDefaultLeagueForUser(db, session.user_id);
+  return json({ ok: true, code }, 200);
+}
+
+async function handleLeagueDelete(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const code = normalizeLeagueCode(body?.code);
+  if (!code) return json({ error: "Invalid league code." }, 400);
+
+  const league = await db
+    .prepare("SELECT code, owner_user_id FROM ezra_leagues WHERE code = ?1 LIMIT 1")
+    .bind(code)
+    .first();
+  if (!league) return json({ error: "League code not found." }, 404);
+  if (String(league.owner_user_id || "") !== String(session.user_id || "")) {
+    return json({ error: "Only league owner can delete this league." }, 403);
+  }
+
+  await db.prepare("DELETE FROM ezra_league_season_points WHERE league_code = ?1").bind(code).run();
+  await db.prepare("DELETE FROM ezra_points_ledger WHERE league_code = ?1").bind(code).run();
+  await db.prepare("DELETE FROM ezra_league_seasons WHERE league_code = ?1").bind(code).run();
+  await db.prepare("DELETE FROM ezra_league_members WHERE league_code = ?1").bind(code).run();
+  await db.prepare("DELETE FROM ezra_leagues WHERE code = ?1").bind(code).run();
+
+  await ensureDefaultLeagueForUser(db, session.user_id);
+  return json({ ok: true, code }, 200);
+}
+
 async function isLeagueMember(db, leagueCode, userId) {
   if (!leagueCode || !userId) return false;
   const row = await db
@@ -1598,6 +1648,12 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "league/name" && (request.method === "PUT" || request.method === "PATCH")) {
       return handleLeagueRename(db, request);
+    }
+    if (route === "league/leave" && request.method === "POST") {
+      return handleLeagueLeave(db, request);
+    }
+    if (route === "league/delete" && request.method === "POST") {
+      return handleLeagueDelete(db, request);
     }
     if (route === "league/member" && request.method === "GET") {
       return handleLeagueMemberView(db, request, key);

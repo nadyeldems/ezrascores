@@ -99,7 +99,14 @@ function defaultHigherLowerState() {
 }
 
 function defaultFamilyLeagueState() {
-  return { leagueCode: "", joinedLeagueCodes: [], currentLeagueIndex: 0, personalPoints: 0, predictions: {}, questBonusByDate: {} };
+  return {
+    leagueCode: "",
+    joinedLeagueCodes: [],
+    currentLeagueIndex: 0,
+    personalPoints: 0,
+    predictions: {},
+    questBonusByDate: {},
+  };
 }
 
 function loadDreamTeamState() {
@@ -170,7 +177,7 @@ const state = {
   teamsByLeague: { EPL: [], CHAMP: [] },
   favoriteTeamId: STORED_FAVORITE_TEAM,
   uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
-  motionLevel: localStorage.getItem("ezra_motion_level") || "standard",
+  motionLevel: "standard",
   playerPopEnabled: localStorage.getItem("ezra_player_pop_enabled") === "1",
   playerPopScope: STORED_PLAYER_SCOPE ? (STORED_PLAYER_SCOPE === "favorite" ? "favorite" : "any") : STORED_FAVORITE_TEAM ? "favorite" : "any",
   teamPlayersCache: {},
@@ -228,6 +235,7 @@ const state = {
   pollMode: "idle",
   settingsOpen: false,
   accountMenuOpen: false,
+  familyOptionsOpen: false,
   focusedFixtureKey: "",
   openFixtureKey: "",
   eventDetailCache: {},
@@ -347,17 +355,20 @@ const el = {
   challengeAchievements: document.getElementById("challenge-achievements"),
   familyPrevLeagueBtn: document.getElementById("family-prev-league-btn"),
   familyNextLeagueBtn: document.getElementById("family-next-league-btn"),
+  familyOptionsBtn: document.getElementById("family-options-btn"),
+  familyOptionsPanel: document.getElementById("family-options-panel"),
   familyCreateCodeBtn: document.getElementById("family-create-code-btn"),
   familyLeagueNameInput: document.getElementById("family-league-name-input"),
   familyLeagueNameSaveBtn: document.getElementById("family-league-name-save-btn"),
   familyJoinCodeInput: document.getElementById("family-join-code-input"),
   familyJoinCodeBtn: document.getElementById("family-join-code-btn"),
+  familyLeaveCodeBtn: document.getElementById("family-leave-code-btn"),
+  familyDeleteCodeBtn: document.getElementById("family-delete-code-btn"),
   familyCodeLabel: document.getElementById("family-code-label"),
   familyMembers: document.getElementById("family-members"),
   funZoneBody: document.getElementById("fun-zone-body"),
   mobileTabsPanel: document.getElementById("mobile-tabs-panel"),
   mobileTabButtons: [...document.querySelectorAll(".mobile-tab-btn")],
-  motionButtons: [...document.querySelectorAll(".motion-btn")],
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
   playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
@@ -407,19 +418,11 @@ function setThemeButtonState() {
   });
 }
 
-function setMotionButtonState() {
-  el.motionButtons.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.motion === state.motionLevel);
-  });
-}
-
 function applyMotionSetting(level) {
   const safeLevel = ["minimal", "standard", "arcade"].includes(level) ? level : "standard";
   state.motionLevel = safeLevel;
   document.body.setAttribute("data-motion", safeLevel);
   localStorage.setItem("ezra_motion_level", safeLevel);
-  setMotionButtonState();
-  scheduleCloudStateSync();
 }
 
 function applyUiTheme(theme) {
@@ -495,24 +498,43 @@ function updateFamilyControlsState() {
   const signedIn = accountSignedIn();
   const prevBtn = el.familyPrevLeagueBtn;
   const nextBtn = el.familyNextLeagueBtn;
+  const optionsBtn = el.familyOptionsBtn;
   const codeBtn = el.familyCreateCodeBtn;
   const nameInput = el.familyLeagueNameInput;
   const nameSaveBtn = el.familyLeagueNameSaveBtn;
   const joinInput = el.familyJoinCodeInput;
   const joinBtn = el.familyJoinCodeBtn;
+  const leaveBtn = el.familyLeaveCodeBtn;
+  const deleteBtn = el.familyDeleteCodeBtn;
+  const currentLeague = currentSelectedLeagueRecord();
+  const hasLeague = Boolean(currentLeague?.code);
+  const isOwner = Boolean(currentLeague?.isOwner);
   if (joinInput) {
     joinInput.disabled = !signedIn;
     joinInput.placeholder = signedIn ? "Enter league code" : "Sign in to join a league";
   }
   if (prevBtn) prevBtn.disabled = !signedIn;
   if (nextBtn) nextBtn.disabled = !signedIn;
+  if (optionsBtn) optionsBtn.disabled = !signedIn;
   if (codeBtn) codeBtn.disabled = !signedIn;
   if (nameInput) {
-    nameInput.disabled = !signedIn;
+    nameInput.disabled = !signedIn || !hasLeague || !isOwner;
     nameInput.placeholder = signedIn ? "League name (owner only)" : "Sign in to name your league";
   }
-  if (nameSaveBtn) nameSaveBtn.disabled = !signedIn;
+  if (nameSaveBtn) nameSaveBtn.disabled = !signedIn || !hasLeague || !isOwner;
   if (joinBtn) joinBtn.disabled = !signedIn;
+  if (leaveBtn) leaveBtn.disabled = !signedIn || !hasLeague || isOwner;
+  if (deleteBtn) deleteBtn.disabled = !signedIn || !hasLeague || !isOwner;
+}
+
+function setFamilyOptionsOpen(open) {
+  state.familyOptionsOpen = Boolean(open);
+  if (el.familyOptionsPanel) {
+    el.familyOptionsPanel.classList.toggle("hidden", !state.familyOptionsOpen);
+  }
+  if (el.familyOptionsBtn) {
+    el.familyOptionsBtn.setAttribute("aria-expanded", String(state.familyOptionsOpen));
+  }
 }
 
 function ensureSignedInUserInFamilyLeague() {
@@ -1055,6 +1077,38 @@ async function createFamilyLeagueCode() {
   setAccountStatus(`League created: ${code}${data?.name ? ` (${data.name})` : ""}`);
 }
 
+async function leaveFamilyLeagueCode() {
+  ensureFamilyLeagueState();
+  if (!accountSignedIn()) {
+    setAccountStatus("Sign in to leave a league.", true);
+    return;
+  }
+  const currentLeague = currentSelectedLeagueRecord();
+  const code = String(currentLeague?.code || state.familyLeague.leagueCode || "").toUpperCase();
+  if (!code) return;
+  await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/leave`, { code }, state.account.token);
+  await refreshLeagueDirectory();
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  setAccountStatus(`Left league ${code}.`);
+}
+
+async function deleteFamilyLeagueCode() {
+  ensureFamilyLeagueState();
+  if (!accountSignedIn()) {
+    setAccountStatus("Sign in to delete a league.", true);
+    return;
+  }
+  const currentLeague = currentSelectedLeagueRecord();
+  const code = String(currentLeague?.code || state.familyLeague.leagueCode || "").toUpperCase();
+  if (!code) return;
+  await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/delete`, { code }, state.account.token);
+  await refreshLeagueDirectory();
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  setAccountStatus(`Deleted league ${code}.`);
+}
+
 async function refreshLeagueDirectory() {
   ensureFamilyLeagueState();
   state.leagueDirectory.loading = true;
@@ -1545,6 +1599,9 @@ async function updateFamilyLeagueName(nextName) {
 function renderFamilyLeaguePanel() {
   if (!el.familyMembers || !el.familyCodeLabel) return;
   ensureFamilyLeagueState();
+  if (!accountSignedIn() && state.familyOptionsOpen) {
+    setFamilyOptionsOpen(false);
+  }
   updateFamilyControlsState();
   if (accountSignedIn()) {
     ensureSignedInUserInFamilyLeague();
@@ -1570,6 +1627,16 @@ function renderFamilyLeaguePanel() {
   }
   if (el.familyPrevLeagueBtn) el.familyPrevLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   if (el.familyNextLeagueBtn) el.familyNextLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
+  if (el.familyDeleteCodeBtn) {
+    const canDelete = Boolean(accountSignedIn() && currentLeague?.isOwner && currentLeague?.code);
+    el.familyDeleteCodeBtn.disabled = !canDelete;
+    el.familyDeleteCodeBtn.title = canDelete ? "Delete this league (owner only)" : "Only owner can delete this league";
+  }
+  if (el.familyLeaveCodeBtn) {
+    const canLeave = Boolean(accountSignedIn() && currentLeague?.code && !currentLeague?.isOwner);
+    el.familyLeaveCodeBtn.disabled = !canLeave;
+    el.familyLeaveCodeBtn.title = canLeave ? "Leave this league" : "Owner cannot leave. Delete the league instead.";
+  }
   el.familyMembers.innerHTML = "";
   const standings = Array.isArray(currentLeague?.standings) ? currentLeague.standings : [];
   if (state.leagueDirectory.loading) {
@@ -1665,6 +1732,15 @@ function renderChallengeDashboardPanels() {
   const bestStreak = Number(progress.bestStreak || 0);
   const comboCount = Number(progress.comboCount || 0);
   const bestCombo = Math.max(1, Number(progress.bestCombo || 1));
+  const exactTotal = mastery.reduce((sum, row) => sum + Number(row?.exact_correct || 0), 0);
+  const masteryBestPredCount = mastery.reduce((max, row) => Math.max(max, Number(row?.pred_count || 0)), 0);
+  const achievementProgress = {
+    streak_3: { current: Math.min(3, currentStreak), target: 3 },
+    streak_7: { current: Math.min(7, currentStreak), target: 7 },
+    combo_3: { current: Math.min(3, bestCombo), target: 3 },
+    exact_10: { current: Math.min(10, exactTotal), target: 10 },
+    mastery_25: { current: Math.min(25, masteryBestPredCount), target: 25 },
+  };
 
   el.challengeStreak.innerHTML = `
     <div class="challenge-stat-row">
@@ -1688,7 +1764,15 @@ function renderChallengeDashboardPanels() {
     <p class="challenge-footnote">Combo boosts prediction points on active runs.</p>
   `;
 
-  const topMastery = mastery.slice(0, 4);
+  const topMastery = [...mastery]
+    .sort((a, b) => {
+      const pointsDelta = Number(b?.points_earned || 0) - Number(a?.points_earned || 0);
+      if (pointsDelta !== 0) return pointsDelta;
+      const exactDelta = Number(b?.exact_correct || 0) - Number(a?.exact_correct || 0);
+      if (exactDelta !== 0) return exactDelta;
+      return Number(b?.pred_count || 0) - Number(a?.pred_count || 0);
+    })
+    .slice(0, 4);
   if (!topMastery.length) {
     el.challengeMastery.innerHTML = `<p class="muted">No mastery data yet. Make score predictions to populate this card.</p>`;
   } else {
@@ -1699,11 +1783,12 @@ function renderChallengeDashboardPanels() {
             const played = Number(row.pred_count || 0);
             const exact = Number(row.exact_correct || 0);
             const result = Number(row.result_correct || 0);
-            return `<li><span>${escapeHtml(row.team_name || "Team")}</span><span>${exact}/${result}/${played}</span></li>`;
+            const points = Number(row.points_earned || 0);
+            return `<li><span>${escapeHtml(row.team_name || "Team")}</span><span>${points} pts • ${exact}/${result}/${played}</span></li>`;
           })
           .join("")}
       </ul>
-      <p class="challenge-footnote">Format: exact/result/played</p>
+      <p class="challenge-footnote">Sorted by points earned • then exact/result/played</p>
     `;
   }
 
@@ -1735,6 +1820,9 @@ function renderChallengeDashboardPanels() {
               <span class="challenge-achievement-text">
                 <strong>${escapeHtml(item.name || "Achievement")} (locked)</strong>
                 <small>${escapeHtml(item.description || "")}</small>
+                <small class="challenge-achievement-progress">
+                  Progress: ${Number(achievementProgress[item.code]?.current || 0)}/${Number(achievementProgress[item.code]?.target || 0)}
+                </small>
               </span>
             </li>
           `
@@ -2088,6 +2176,8 @@ function normalizeSquadPlayer(raw, team) {
     nationality: raw.strNationality || "Unknown",
     position: raw.strPosition || "Unknown",
     image: raw.strCutout || "",
+    goals: extractPlayerGoals(raw),
+    appearances: extractPlayerAppearances(raw),
     teamId: team?.idTeam || "",
     teamName: team?.strTeam || raw.strTeam || "",
     teamBadge: team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || "",
@@ -2112,13 +2202,33 @@ function extractPlayerGoals(raw = {}) {
   return null;
 }
 
+function extractPlayerAppearances(raw = {}) {
+  const candidates = [
+    raw.intAppearances,
+    raw.strAppearances,
+    raw.intApps,
+    raw.strApps,
+    raw.intApp,
+    raw.strApp,
+    raw.intSoccerXMLTeamApperance,
+    raw.intSoccerXMLTeamAppearance,
+    raw.intSoccerXMLAppearances,
+    raw.strSoccerXMLAppearances,
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
 function normalizeHigherLowerPlayer(raw, team) {
   if (!raw) return null;
   const base = normalizeSquadPlayer(raw, team);
   if (!base || !base.name) return null;
   return {
     ...base,
-    image: base.image || raw.strThumb || "",
+    image: base.image || raw.strThumb || team?.strBadge || "",
     goals: extractPlayerGoals(raw),
   };
 }
@@ -2131,15 +2241,15 @@ function higherLowerPoolKey() {
 
 async function buildHigherLowerPool() {
   const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
-  const teams = favorite ? [favorite] : shuffleList(allLeagueTeams()).slice(0, 6);
+  const teams = favorite ? [favorite] : shuffleList(allLeagueTeams()).slice(0, 10);
   const poolByKey = new Map();
   const hydrateFromTeams = async (teamsToUse) => {
     for (const team of teamsToUse) {
       const rows = await fetchPlayersForTeam(team);
       const normalized = rows
         .map((raw) => normalizeHigherLowerPlayer(raw, team))
-        .filter((player) => player && player.name && player.image);
-      const unresolved = normalized.filter((player) => player.goals === null && player.idPlayer).slice(0, 8);
+        .filter((player) => player && player.name);
+      const unresolved = normalized.filter((player) => player.goals === null && player.idPlayer).slice(0, 20);
       if (unresolved.length) {
         const profiles = await Promise.all(
           unresolved.map((player) => safeLoad(() => fetchPlayerProfile(player.idPlayer), null))
@@ -2154,14 +2264,14 @@ async function buildHigherLowerPool() {
         .forEach((player) => {
           if (!poolByKey.has(player.key)) poolByKey.set(player.key, player);
         });
-      if (poolByKey.size >= 36) break;
+      if (poolByKey.size >= 70) break;
     }
   };
 
   await hydrateFromTeams(teams);
 
-  if (poolByKey.size < 2 && favorite) {
-    await hydrateFromTeams(shuffleList(allLeagueTeams()).slice(0, 6));
+  if (poolByKey.size < 12 && favorite) {
+    await hydrateFromTeams(shuffleList(allLeagueTeams()).slice(0, 18));
   }
 
   return shuffleList([...poolByKey.values()]);
@@ -2169,9 +2279,9 @@ async function buildHigherLowerPool() {
 
 function pickHigherLowerCandidate(topPlayer, pool, usedKeys = []) {
   const used = new Set((usedKeys || []).filter(Boolean));
-  const unused = pool.filter((p) => p && p.key !== topPlayer?.key && !used.has(p.key) && p.goals !== topPlayer?.goals);
+  const unused = pool.filter((p) => p && p.key !== topPlayer?.key && !used.has(p.key));
   if (unused.length) return randomFrom(unused);
-  const fallback = pool.filter((p) => p && p.key !== topPlayer?.key && p.goals !== topPlayer?.goals);
+  const fallback = pool.filter((p) => p && p.key !== topPlayer?.key);
   return randomFrom(fallback);
 }
 
@@ -2191,7 +2301,7 @@ async function startHigherLowerGame(forceRebuild = false) {
       game.poolKey = key;
     }
     if (!Array.isArray(game.pool) || game.pool.length < 2) {
-      throw new Error("Not enough player goal data yet. Try again in a moment.");
+      throw new Error("Not enough player data yet. Try again in a moment.");
     }
     game.total = 10;
     game.asked = 0;
@@ -2202,7 +2312,7 @@ async function startHigherLowerGame(forceRebuild = false) {
     game.usedKeys = game.top?.key ? [game.top.key] : [];
     game.bottom = pickHigherLowerCandidate(game.top, game.pool, game.usedKeys);
     if (!game.bottom) {
-      throw new Error("Not enough unique player goals available.");
+      throw new Error("Not enough players available for this round.");
     }
     game.usedKeys.push(game.bottom.key);
   } catch (err) {
@@ -2223,10 +2333,10 @@ function handleHigherLowerAnswer(direction) {
   const topGoals = Number(game.top.goals || 0);
   const bottomGoals = Number(game.bottom.goals || 0);
   const relation = bottomGoals > topGoals ? "up" : bottomGoals < topGoals ? "down" : "same";
-  const correct = relation === direction;
+  const correct = relation === direction || relation === "same";
   game.asked += 1;
   if (correct) game.correct += 1;
-  game.feedback = correct ? "Correct" : relation === "same" ? "Same goals" : "Wrong";
+  game.feedback = relation === "same" ? "Same goals" : correct ? "Correct" : "Wrong";
   game.feedbackMode = correct ? "correct" : "wrong";
 
   if (game.asked >= game.total) {
@@ -2906,6 +3016,10 @@ function renderSquadPanel() {
     item.className = `squad-item ${state.selectedSquadPlayerKey === player.key ? "open" : ""}`;
     const row = document.createElement("div");
     row.className = "squad-row";
+    const cache = player.idPlayer ? state.playerProfileCache[player.idPlayer] : null;
+    const profile = cache?.profile || null;
+    const goals = player.goals ?? extractPlayerGoals(profile || {}) ?? null;
+    const appearances = player.appearances ?? extractPlayerAppearances(profile || {}) ?? null;
     const starOn = isDreamPlayer(player.key);
     const shirtNo = player.number ? player.number : "—";
     row.innerHTML = `
@@ -2915,7 +3029,7 @@ function renderSquadPanel() {
           <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
           <span class="squad-name">${player.name}</span>
         </div>
-        <span class="squad-meta">${nationalityWithFlag(player.nationality)} • ${player.position}</span>
+        <span class="squad-meta">${nationalityWithFlag(player.nationality)} • ${player.position} • G ${goals ?? "--"} • APP ${appearances ?? "--"}</span>
       </div>
       <button class="btn squad-star ${starOn ? "active" : ""}" type="button" aria-label="Toggle Dream Team player">${starOn ? "★" : "☆"}</button>
     `;
@@ -2959,11 +3073,9 @@ function renderSquadPanel() {
     if (state.selectedSquadPlayerKey === player.key) {
       const detail = document.createElement("div");
       detail.className = "squad-detail";
-      const cache = player.idPlayer ? state.playerProfileCache[player.idPlayer] : null;
       if (cache?.loading) {
         detail.innerHTML = `<p class="muted">Loading player details...</p>`;
       } else {
-        const profile = cache?.profile || null;
         const age = formatAgeFromBirthDate(profile?.dateBorn);
         const ageLine = age ? `${age}` : "--";
         const height = profile?.strHeight || "--";
@@ -2977,6 +3089,8 @@ function renderSquadPanel() {
             <div><span class="label">Name</span><span class="value">${player.name}</span></div>
             <div><span class="label">Nationality</span><span class="value">${nationalityWithFlag(profile?.strNationality || player.nationality)}</span></div>
             <div><span class="label">Position</span><span class="value">${role}</span></div>
+            <div><span class="label">Goals</span><span class="value">${goals ?? "--"}</span></div>
+            <div><span class="label">Appearances</span><span class="value">${appearances ?? "--"}</span></div>
             <div><span class="label">Age</span><span class="value">${ageLine}</span></div>
             <div><span class="label">Height</span><span class="value">${height}</span></div>
             <div><span class="label">Weight</span><span class="value">${weight}</span></div>
@@ -4396,7 +4510,6 @@ function buildCloudStatePayload() {
   return {
     favoriteTeamId: state.favoriteTeamId || "",
     uiTheme: state.uiTheme,
-    motionLevel: state.motionLevel,
     playerPopEnabled: state.playerPopEnabled,
     playerPopScope: state.playerPopScope,
     dreamTeam: state.dreamTeam,
@@ -4431,9 +4544,6 @@ function applyCloudState(cloudState, options = {}) {
   }
   if (typeof cloudState.uiTheme === "string") {
     applyUiTheme(cloudState.uiTheme);
-  }
-  if (typeof cloudState.motionLevel === "string") {
-    applyMotionSetting(cloudState.motionLevel);
   }
   if (typeof cloudState.playerPopScope === "string") {
     setPlayerPopScope(cloudState.playerPopScope);
@@ -7143,6 +7253,43 @@ function attachEvents() {
     });
   }
 
+  if (el.familyOptionsBtn) {
+    el.familyOptionsBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setFamilyOptionsOpen(!state.familyOptionsOpen);
+    });
+  }
+
+  if (el.familyLeaveCodeBtn) {
+    el.familyLeaveCodeBtn.addEventListener("click", async () => {
+      const currentLeague = currentSelectedLeagueRecord();
+      if (!currentLeague?.code) return;
+      const confirmed = window.confirm(`Leave league ${currentLeague.code}?`);
+      if (!confirmed) return;
+      try {
+        await leaveFamilyLeagueCode();
+        renderFamilyLeaguePanel();
+      } catch (err) {
+        setAccountStatus(`Leave league failed: ${err.message}`, true);
+      }
+    });
+  }
+
+  if (el.familyDeleteCodeBtn) {
+    el.familyDeleteCodeBtn.addEventListener("click", async () => {
+      const currentLeague = currentSelectedLeagueRecord();
+      if (!currentLeague?.code) return;
+      const confirmed = window.confirm(`Delete league ${currentLeague.code}? This cannot be undone.`);
+      if (!confirmed) return;
+      try {
+        await deleteFamilyLeagueCode();
+        renderFamilyLeaguePanel();
+      } catch (err) {
+        setAccountStatus(`Delete league failed: ${err.message}`, true);
+      }
+    });
+  }
+
   el.mobileTabButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       setMobileTab(btn.dataset.mobileTab || "fixtures");
@@ -7170,12 +7317,6 @@ function attachEvents() {
   el.themeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       applyUiTheme(btn.dataset.theme);
-    });
-  });
-
-  el.motionButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      applyMotionSetting(btn.dataset.motion);
     });
   });
 
@@ -7308,6 +7449,11 @@ function attachEvents() {
     if (!el.favoritePicker.contains(e.target)) {
       closeFavoritePickerMenu();
     }
+    if (el.familyOptionsPanel && el.familyOptionsBtn) {
+      const insideOptions =
+        el.familyOptionsPanel.contains(e.target) || el.familyOptionsBtn.contains(e.target);
+      if (!insideOptions) setFamilyOptionsOpen(false);
+    }
   });
 
   document.addEventListener("keydown", (event) => {
@@ -7397,7 +7543,7 @@ function attachEvents() {
 
 attachEvents();
 applyUiTheme(state.uiTheme);
-applyMotionSetting(state.motionLevel);
+applyMotionSetting("standard");
 setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
 hydrateCachedBootstrapData();
@@ -7408,6 +7554,7 @@ renderDreamTeamNavState();
 requestDreamTeamRender();
 setSettingsMenuOpen(false);
 setAccountMenuOpen(false);
+setFamilyOptionsOpen(false);
 initRevealOnScroll();
 updateStickyDateBarVisibility();
 persistLocalMetaState();
