@@ -117,6 +117,11 @@ function defaultNotificationsState() {
   };
 }
 
+function currentUtcDateKey() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+}
+
 function loadDreamTeamState() {
   const base = defaultDreamTeamState();
   try {
@@ -218,7 +223,7 @@ const state = {
   challengeDashboardAt: 0,
   notificationsOpen: false,
   notifications: parseStoredJson("ezra_notifications", defaultNotificationsState()),
-  lastQuestNotificationDate: localStorage.getItem("ezra_last_quest_notification_date") || missionDateKey(),
+  lastQuestNotificationDate: localStorage.getItem("ezra_last_quest_notification_date") || currentUtcDateKey(),
   favoriteDataLoading: false,
   mobileTab: "fixtures",
   account: {
