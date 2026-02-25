@@ -2921,10 +2921,6 @@ body[data-theme="t90"] .status-pill.final {
   margin-bottom: 0;
 }
 
-.controls-panel-secondary {
-  margin-top: 0.15rem;
-}
-
 .panel {
   border-radius: 1.05rem;
   padding: 0.7rem;
@@ -2974,16 +2970,6 @@ main {
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
-}
-
-.date-label-secondary {
-  min-width: 9.8rem;
-  text-align: center;
-  border: 1px solid var(--line-soft);
-  border-radius: 0.6rem;
-  padding: 0.32rem 0.55rem;
-  color: var(--text);
-  background: rgba(255, 153, 32, 0.06);
 }
 
 .date-arrow-btn {

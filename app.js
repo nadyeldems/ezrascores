@@ -359,15 +359,11 @@ const el = {
   playerQuizOptions: document.getElementById("player-quiz-options"),
   playerQuizFeedback: document.getElementById("player-quiz-feedback"),
   controlsPanel: document.querySelector(".controls-panel"),
-  controlsPanelSecondary: document.getElementById("controls-panel-secondary"),
   stickyDateBar: document.getElementById("sticky-date-bar"),
   stickyDateLabel: document.getElementById("sticky-date-label"),
   stickyDatePrev: document.getElementById("sticky-date-prev"),
   stickyDateToday: document.getElementById("sticky-date-today"),
   stickyDateNext: document.getElementById("sticky-date-next"),
-  datePrevBtnSecondary: document.getElementById("date-prev-btn-secondary"),
-  dateNextBtnSecondary: document.getElementById("date-next-btn-secondary"),
-  dateLabelSecondary: document.getElementById("date-label-secondary"),
 };
 
 function clearGameDayCountdownTimer() {
@@ -5363,10 +5359,6 @@ function renderFixtures() {
     const d = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
     el.stickyDateLabel.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   }
-  if (el.dateLabelSecondary) {
-    const d = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
-    el.dateLabelSecondary.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-  }
   setDateButtonState();
   renderMobileSectionLayout();
 }
@@ -5478,7 +5470,6 @@ function setMobileTab(tab) {
 function renderMobileSectionLayout() {
   const mobile = isMobileViewport();
   const controls = el.controlsPanel;
-  const controlsSecondary = el.controlsPanelSecondary;
   const fixtures = document.getElementById("fixtures-panel");
   const tables = document.getElementById("table-panel");
   const fun = document.getElementById("fun-zone-panel");
@@ -5487,7 +5478,6 @@ function renderMobileSectionLayout() {
   if (!mobile) {
     el.mobileTabsPanel?.classList.add("hidden");
     controls.classList.remove("hidden");
-    controlsSecondary?.classList.remove("hidden");
     fixtures.classList.remove("hidden");
     tables.classList.remove("hidden");
     fun.classList.remove("hidden");
@@ -5501,8 +5491,7 @@ function renderMobileSectionLayout() {
     btn.setAttribute("aria-selected", String(active));
   });
 
-  controls.classList.toggle("hidden", state.mobileTab === "fun");
-  controlsSecondary?.classList.toggle("hidden", state.mobileTab === "table");
+  controls.classList.toggle("hidden", state.mobileTab === "table");
   fixtures.classList.toggle("hidden", state.mobileTab !== "fixtures");
   tables.classList.toggle("hidden", state.mobileTab !== "table");
   fun.classList.toggle("hidden", state.mobileTab !== "fun");
@@ -6905,18 +6894,6 @@ function attachEvents() {
 
   if (el.dateNextBtn) {
     el.dateNextBtn.addEventListener("click", () => {
-      shiftSelectedDate(1);
-    });
-  }
-
-  if (el.datePrevBtnSecondary) {
-    el.datePrevBtnSecondary.addEventListener("click", () => {
-      shiftSelectedDate(-1);
-    });
-  }
-
-  if (el.dateNextBtnSecondary) {
-    el.dateNextBtnSecondary.addEventListener("click", () => {
       shiftSelectedDate(1);
     });
   }
