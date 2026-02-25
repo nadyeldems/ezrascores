@@ -950,6 +950,20 @@ function storyCardData() {
 
 function renderStoryCardsPanel() {
   if (!el.storyList) return;
+  if (state.favoriteDataLoading) {
+    el.storyList.innerHTML = "";
+    for (let i = 0; i < 3; i += 1) {
+      const item = document.createElement("article");
+      item.className = "story-item story-skeleton";
+      item.innerHTML = `
+        <span class="skeleton-line w-40"></span>
+        <span class="skeleton-line w-90"></span>
+        <span class="skeleton-line w-65"></span>
+      `;
+      el.storyList.appendChild(item);
+    }
+    return;
+  }
   const cards = storyCardData();
   el.storyList.innerHTML = "";
   if (!cards.length) {
@@ -958,7 +972,7 @@ function renderStoryCardsPanel() {
   }
   cards.forEach((card) => {
     const item = document.createElement("article");
-    item.className = `story-item ${state.favoriteDataLoading ? "loading" : ""}`;
+    item.className = "story-item";
     item.innerHTML = `<h5>${escapeHtml(card.title)}</h5><p>${escapeHtml(card.text)}</p>`;
     el.storyList.appendChild(item);
   });
@@ -3659,6 +3673,15 @@ function toISODate(date) {
   return `${y}-${m}-${d}`;
 }
 
+function addDaysIso(dateIso, deltaDays) {
+  const base = String(dateIso || "").trim();
+  if (!base) return toISODate(new Date());
+  const dt = new Date(`${base}T00:00:00Z`);
+  if (Number.isNaN(dt.getTime())) return toISODate(new Date());
+  dt.setUTCDate(dt.getUTCDate() + Number(deltaDays || 0));
+  return dt.toISOString().slice(0, 10);
+}
+
 function fixtureWindowBounds(baseDate = new Date()) {
   const min = new Date(baseDate);
   min.setDate(min.getDate() - RESULTS_HISTORY_DAYS);
@@ -5936,14 +5959,26 @@ function showFavoriteLoadingState() {
     el.favoriteStatus.classList.remove("gameday", "live", "final");
     el.favoriteStatus.textContent = "Loading";
   }
+  if (el.favoriteFixtureLine) {
+    el.favoriteFixtureLine.innerHTML = `
+      <span class="skeleton-line w-65"></span>
+    `;
+  }
+  if (el.favoriteFixtureDetail) {
+    el.favoriteFixtureDetail.innerHTML = `
+      <span class="skeleton-line w-45"></span>
+    `;
+  }
   const fixtureBlock = document.querySelector(".favorite-fixture-block");
   if (fixtureBlock) fixtureBlock.classList.add("loading");
-  if (el.favoriteFixtureLine) el.favoriteFixtureLine.textContent = "Loading match centre...";
-  if (el.favoriteFixtureDetail) el.favoriteFixtureDetail.textContent = "Fetching latest fixtures and results";
   if (el.favoriteLiveStrip) {
     el.favoriteLiveStrip.classList.remove("hidden");
     el.favoriteLiveStrip.classList.add("ticker-static");
-    el.favoriteLiveStrip.innerHTML = `<span class="ticker-content">Loading team schedule...</span>`;
+    el.favoriteLiveStrip.innerHTML = `
+      <span class="ticker-content ticker-loading">
+        <span class="skeleton-line w-90"></span>
+      </span>
+    `;
   }
 }
 
@@ -6091,9 +6126,11 @@ async function renderFavorite() {
   el.favoriteEmpty.classList.add("hidden");
   el.favoriteContent.classList.remove("hidden");
 
-  el.favoriteLogo.src = team.strBadge || "";
+  const badgeUrl = team.strBadge || state.teamBadgeMap[team.strTeam] || "";
+  el.favoriteLogo.src = badgeUrl;
   el.favoriteLogo.alt = `${team.strTeam} logo`;
-  await updateFavoriteThemeFromBadge(team.strBadge || "");
+  el.favoriteLogo.classList.toggle("hidden", !badgeUrl);
+  await updateFavoriteThemeFromBadge(badgeUrl || "");
   el.favoriteName.textContent = team.strTeam || "Team";
   const teamPos = getTeamTablePosition(team);
   el.favoriteLeague.textContent = teamPos ? `${team.strLeague || ""}  •  ${teamPos}` : team.strLeague || "";

@@ -1959,6 +1959,13 @@ body.league-member-overlay-open::before {
   background: rgba(255, 153, 32, 0.04);
 }
 
+.story-item.story-skeleton {
+  display: grid;
+  gap: 0.34rem;
+  min-height: 3.6rem;
+  padding-block: 0.52rem;
+}
+
 .story-item h5 {
   margin: 0 0 0.2rem;
   color: var(--text);
@@ -2519,6 +2526,20 @@ body[data-theme="club"] .btn:hover {
   justify-content: space-between;
   gap: 0.55rem;
   margin-bottom: 0.22rem;
+}
+
+.favorite-fixture-block .skeleton-line {
+  height: 0.62rem;
+}
+
+.ticker-loading {
+  display: block;
+  width: 100%;
+}
+
+.ticker-loading .skeleton-line {
+  display: block;
+  height: 0.56rem;
 }
 
 @keyframes story-loading-sweep {
