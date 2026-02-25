@@ -4142,8 +4142,23 @@ async function fetchTeamNextEvents(teamId) {
 }
 
 async function fetchTeamLastEvents(teamId) {
-  const data = await apiGetV1(`eventslast.php?id=${teamId}`);
-  return safeArray(data);
+  const base = await safeLoad(async () => {
+    const data = await apiGetV1(`eventslast.php?id=${teamId}`);
+    return safeArray(data);
+  }, []);
+  if (base.length >= 5) return base;
+
+  const v2Candidates = [];
+  const v2Paths = [`eventslast/${teamId}`, `eventslast.php?id=${teamId}`];
+  for (const path of v2Paths) {
+    const events = await safeLoad(async () => {
+      const payload = await apiGetV2(path);
+      return safeArray(payload).length ? safeArray(payload) : firstArrayValue(payload);
+    }, []);
+    if (events.length) v2Candidates.push(...events);
+  }
+
+  return mergeUniqueEvents([...base, ...v2Candidates]);
 }
 
 async function fetchEventById(eventId) {
@@ -4700,19 +4715,17 @@ function teamFormFromEvents(events, team) {
       const hs = numericScore(e.intHomeScore);
       const as = numericScore(e.intAwayScore);
       if (hs === null || as === null) return false;
-      return (
-        e.idHomeTeam === team.idTeam ||
-        e.idAwayTeam === team.idTeam ||
-        (e.strHomeTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase() ||
-        (e.strAwayTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase()
-      );
+      return isTeamMatch(e, team);
     })
     .sort((a, b) => `${b.dateEvent || ""}T${b.strTime || ""}`.localeCompare(`${a.dateEvent || ""}T${a.strTime || ""}`))
     .slice(0, 5)
     .map((e) => {
       const hs = Number(e.intHomeScore);
       const as = Number(e.intAwayScore);
-      const isHome = e.idHomeTeam === team.idTeam || (e.strHomeTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase();
+      const teamId = String(team.idTeam || "").trim();
+      const isHomeById = teamId && String(e.idHomeTeam || "").trim() === teamId;
+      const isHomeByName = normalizeTeamLabel(e.strHomeTeam) === normalizeTeamLabel(team.strTeam);
+      const isHome = Boolean(isHomeById || isHomeByName);
       const teamScore = isHome ? hs : as;
       const oppScore = isHome ? as : hs;
       if (teamScore > oppScore) return "W";
@@ -5355,12 +5368,7 @@ function findLastCompletedForTeam(events, team, todayIso, excludeEvent) {
   const filtered = (events || []).filter((e) => {
     if (!e?.dateEvent) return false;
     if (excludeEvent && isSameFixture(e, excludeEvent)) return false;
-    const isTeamEvent =
-      e.idHomeTeam === team.idTeam ||
-      e.idAwayTeam === team.idTeam ||
-      (e.strHomeTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase() ||
-      (e.strAwayTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase();
-    if (!isTeamEvent) return false;
+    if (!isTeamMatch(e, team)) return false;
     if (e.dateEvent > todayIso) return false;
     return hasScore(e) || eventState(e).key === "final";
   });
@@ -5375,10 +5383,15 @@ function scoreLine(event) {
 }
 
 function renderFavoriteFormBadges(form) {
-  if (!Array.isArray(form) || !form.length) return "";
-  return `<span class="form-label">Last 5</span>${form
-    .slice(0, 5)
-    .map((r) => `<span class="form-pill ${r === "W" ? "win" : r === "L" ? "loss" : "draw"}">${r}</span>`)
+  const values = Array.isArray(form) ? form.slice(0, 5) : [];
+  while (values.length < 5) values.push("-");
+  return `<span class="form-label">Last 5</span>${values
+    .map((r) => {
+      if (r === "W") return `<span class="form-pill win">W</span>`;
+      if (r === "L") return `<span class="form-pill loss">L</span>`;
+      if (r === "D") return `<span class="form-pill draw">D</span>`;
+      return `<span class="form-pill neutral">-</span>`;
+    })
     .join("")}`;
 }
 
@@ -5399,6 +5412,26 @@ function fixtureKey(event) {
   const home = (event.strHomeTeam || "").toLowerCase().trim();
   const away = (event.strAwayTeam || "").toLowerCase().trim();
   return `m:${event.dateEvent || ""}|${home}|${away}`;
+}
+
+function normalizeTeamLabel(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function isTeamMatch(event, team) {
+  if (!event || !team) return false;
+  const teamId = String(team.idTeam || "").trim();
+  const homeId = String(event.idHomeTeam || "").trim();
+  const awayId = String(event.idAwayTeam || "").trim();
+  if (teamId && (homeId === teamId || awayId === teamId)) return true;
+  const target = normalizeTeamLabel(team.strTeam);
+  if (!target) return false;
+  const home = normalizeTeamLabel(event.strHomeTeam);
+  const away = normalizeTeamLabel(event.strAwayTeam);
+  return home === target || away === target;
 }
 
 function numericScore(value) {

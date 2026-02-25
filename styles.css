@@ -2423,6 +2423,12 @@ body[data-theme="club"] .btn:hover {
   color: #dceaff;
 }
 
+.form-pill.neutral {
+  border-color: rgba(140, 100, 46, 0.7);
+  background: rgba(115, 78, 26, 0.26);
+  color: #d8b98c;
+}
+
 .favorite-logo {
   width: 56px;
   height: 56px;
