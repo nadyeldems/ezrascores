@@ -1,0 +1,24 @@
+{
+  "items": [
+    {"id":"chip_spice","name":"Chip Spice","kind":"heal","value":20,"description":"Restores 20 HP with a pepper kick."},
+    {"id":"pattie_bun","name":"Pattie Bun","kind":"heal","value":35,"description":"Restores 35 HP and warms morale."},
+    {"id":"fog_lantern","name":"Fog Lantern","kind":"utility","value":1,"description":"Raises encounter clarity; boosts run chance once."},
+    {"id":"dock_rope","name":"Dock Rope","kind":"utility","value":1,"description":"Secures one guaranteed capture in future versions."},
+    {"id":"fair_token","name":"Fair Token","kind":"battle","value":10,"description":"Deal 10 flat damage in battle."},
+    {"id":"marina_pass","name":"Marina Pass","kind":"key","value":0,"description":"Allows gate access near marina route."},
+    {"id":"founders_key","name":"Founders Key","kind":"key","value":0,"description":"Opens a Founders District lock."},
+    {"id":"silt_vial","name":"Silt Vial","kind":"battle","value":0,"description":"Lowers opponent speed in future versions."},
+    {"id":"traffic_cone","name":"Traffic Cone","kind":"battle","value":7,"description":"Throw for 7 damage and comic relief."},
+    {"id":"hull_fc_scarf","name":"Hull FC Scarf","kind":"buff","value":2,"description":"Raises defense by 2 for current battle."},
+    {"id":"hull_kr_badge","name":"Hull KR Badge","kind":"buff","value":2,"description":"Raises attack by 2 for current battle."},
+    {"id":"quay_map","name":"Quay Map","kind":"key","value":0,"description":"Marks routes through Princes Quay."},
+    {"id":"tram_ticket","name":"Tram Ticket","kind":"key","value":0,"description":"Old souvenir accepted by one collector NPC."},
+    {"id":"bridge_pin","name":"Bridge Pin","kind":"buff","value":1,"description":"Raises speed by 1 in battle."},
+    {"id":"seaglass","name":"Seaglass","kind":"heal","value":10,"description":"Small restore crafted from shore finds."},
+    {"id":"market_tea","name":"Market Tea","kind":"heal","value":15,"description":"Restores 15 HP."},
+    {"id":"dock_battery","name":"Dock Battery","kind":"battle","value":12,"description":"Electric burst for 12 damage."},
+    {"id":"canal_chalk","name":"Canal Chalk","kind":"utility","value":1,"description":"Flags one hidden clue on signage."},
+    {"id":"cinema_stub","name":"Cinema Stub","kind":"key","value":0,"description":"A ticket from the top deck cinema."},
+    {"id":"meeting_token","name":"Meeting Token","kind":"key","value":0,"description":"Used for crowd-side rendezvous quests."}
+  ]
+}

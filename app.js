@@ -250,6 +250,13 @@ const state = {
   lastStaticRefreshAt: 0,
   lastTableRefreshAt: 0,
   pollMode: "idle",
+  boot: {
+    firstRefreshDone: false,
+    splashHidden: false,
+    splashHardTimeoutMs: 3500,
+    splashMinVisibleMs: 500,
+    startedAt: Date.now(),
+  },
   settingsOpen: false,
   accountMenuOpen: false,
   familyOptionsOpen: false,
@@ -311,6 +318,7 @@ function persistCachedBootstrapData() {
 }
 
 const el = {
+  appSplash: document.getElementById("app-splash"),
   gameDayMessage: document.getElementById("game-day-message"),
   favoriteBanner: document.getElementById("favorite-banner"),
   fixturesList: document.getElementById("fixtures-list"),
@@ -429,6 +437,24 @@ const el = {
   stickyDateToday: document.getElementById("sticky-date-today"),
   stickyDateNext: document.getElementById("sticky-date-next"),
 };
+
+function hideAppSplash(force = false) {
+  if (!el.appSplash || state.boot.splashHidden) return;
+  const elapsed = Date.now() - Number(state.boot.startedAt || Date.now());
+  const waitMs = force ? 0 : Math.max(0, Number(state.boot.splashMinVisibleMs || 0) - elapsed);
+  setTimeout(() => {
+    if (!el.appSplash || state.boot.splashHidden) return;
+    el.appSplash.classList.add("hidden");
+    state.boot.splashHidden = true;
+  }, waitMs);
+}
+
+function setupAppSplashTimeout() {
+  const timeoutMs = Math.max(1200, Number(state.boot.splashHardTimeoutMs || 3500));
+  setTimeout(() => {
+    hideAppSplash(true);
+  }, timeoutMs);
+}
 
 function clearGameDayCountdownTimer() {
   if (state.gameDayCountdownTimer) {
@@ -7388,6 +7414,10 @@ async function fullRefresh() {
   } finally {
     state.refreshInFlight = false;
     persistCachedBootstrapData();
+    if (!state.boot.firstRefreshDone) {
+      state.boot.firstRefreshDone = true;
+      hideAppSplash(false);
+    }
     scheduleNextRefresh(nextContext);
   }
 }
@@ -7844,6 +7874,7 @@ function initFunGuideToggles() {
 
 attachEvents();
 initFunGuideToggles();
+setupAppSplashTimeout();
 applyUiTheme(state.uiTheme);
 applyMotionSetting("standard");
 setPlayerPopScope(state.playerPopScope);

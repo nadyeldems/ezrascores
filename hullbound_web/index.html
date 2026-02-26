@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hullbound: Tidal Creatures (Web)</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1>Hullbound: Tidal Creatures</h1>
+      <div class="hud">
+        <span id="hud-scene">Scene: StartTown_West</span>
+        <span id="hud-clock">08:00</span>
+        <span id="hud-steps">Steps: 0</span>
+      </div>
+    </header>
+
+    <main class="game-wrap">
+      <canvas id="game" width="960" height="640" aria-label="Game canvas"></canvas>
+
+      <div id="dialogue" class="panel hidden" role="dialog" aria-live="polite">
+        <p id="dialogue-text"></p>
+        <div id="choice-list" class="choices"></div>
+        <p class="hint">Press E/Enter to continue</p>
+      </div>
+
+      <div id="battle" class="panel hidden" role="dialog" aria-live="polite">
+        <p id="battle-log"></p>
+        <div class="battle-buttons">
+          <button id="btn-fight">Fight</button>
+          <button id="btn-item">Item</button>
+          <button id="btn-run">Run</button>
+        </div>
+      </div>
+
+      <div id="menu" class="panel menu hidden">
+        <h2>Save / Load</h2>
+        <div class="menu-grid">
+          <button data-save="1">Save 1</button>
+          <button data-load="1">Load 1</button>
+          <button data-save="2">Save 2</button>
+          <button data-load="2">Load 2</button>
+          <button data-save="3">Save 3</button>
+          <button data-load="3">Load 3</button>
+          <button id="btn-autosave">Autosave</button>
+        </div>
+      </div>
+
+      <div class="touch-controls">
+        <button data-act="up">▲</button>
+        <button data-act="left">◀</button>
+        <button data-act="down">▼</button>
+        <button data-act="right">▶</button>
+        <button data-act="interact">A</button>
+        <button data-act="menu">☰</button>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="./scripts/game.js"></script>
+</body>
+</html>

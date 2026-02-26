@@ -1,0 +1,24 @@
+{
+  "moves": [
+    {"id":"splash_jab","name":"Splash Jab","type":"Water","power":8,"accuracy":1.0},
+    {"id":"mist_pulse","name":"Mist Pulse","type":"Water","power":11,"accuracy":0.95},
+    {"id":"tide_ram","name":"Tide Ram","type":"Water","power":15,"accuracy":0.9},
+    {"id":"anchor_crash","name":"Anchor Crash","type":"Steel","power":17,"accuracy":0.85},
+    {"id":"iron_gust","name":"Iron Gust","type":"Steel","power":12,"accuracy":0.95},
+    {"id":"leaf_flick","name":"Leaf Flick","type":"Grass","power":8,"accuracy":1.0},
+    {"id":"root_bind","name":"Root Bind","type":"Grass","power":10,"accuracy":0.95},
+    {"id":"peat_bash","name":"Peat Bash","type":"Earth","power":14,"accuracy":0.9},
+    {"id":"canopy_crush","name":"Canopy Crush","type":"Grass","power":17,"accuracy":0.85},
+    {"id":"green_quake","name":"Green Quake","type":"Earth","power":18,"accuracy":0.85},
+    {"id":"static_nip","name":"Static Nip","type":"Electric","power":9,"accuracy":1.0},
+    {"id":"neon_blink","name":"Neon Blink","type":"Light","power":11,"accuracy":0.95},
+    {"id":"grid_lunge","name":"Grid Lunge","type":"Electric","power":15,"accuracy":0.9},
+    {"id":"mind_arc","name":"Mind Arc","type":"Psychic","power":16,"accuracy":0.9},
+    {"id":"thunder_crown","name":"Thunder Crown","type":"Electric","power":19,"accuracy":0.8},
+    {"id":"gust_pin","name":"Gust Pin","type":"Air","power":10,"accuracy":1.0},
+    {"id":"pier_head","name":"Pier Head","type":"Air","power":12,"accuracy":0.95},
+    {"id":"cobble_drop","name":"Cobble Drop","type":"Earth","power":11,"accuracy":0.95},
+    {"id":"beacon_flash","name":"Beacon Flash","type":"Light","power":13,"accuracy":0.9},
+    {"id":"dock_scrape","name":"Dock Scrape","type":"Steel","power":11,"accuracy":1.0}
+  ]
+}

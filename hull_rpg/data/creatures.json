@@ -1,0 +1,22 @@
+{
+  "creatures": [
+    {"id":"spratlet","name":"Spratlet","types":["Water"],"base_hp":24,"base_attack":12,"base_defense":10,"base_speed":14,"evolves_to":"dockfin","evolve_level":12,"moves":["splash_jab","mist_pulse"]},
+    {"id":"dockfin","name":"Dockfin","types":["Water"],"base_hp":34,"base_attack":18,"base_defense":16,"base_speed":19,"evolves_to":"harborrex","evolve_level":24,"moves":["splash_jab","mist_pulse","tide_ram"]},
+    {"id":"harborrex","name":"Harborrex","types":["Water","Steel"],"base_hp":48,"base_attack":27,"base_defense":24,"base_speed":22,"evolves_to":"","evolve_level":0,"moves":["tide_ram","anchor_crash","iron_gust"]},
+
+    {"id":"mosskit","name":"Mosskit","types":["Grass"],"base_hp":22,"base_attack":11,"base_defense":12,"base_speed":11,"evolves_to":"hollowbark","evolve_level":14,"moves":["leaf_flick","root_bind"]},
+    {"id":"hollowbark","name":"Hollowbark","types":["Grass","Earth"],"base_hp":33,"base_attack":17,"base_defense":18,"base_speed":14,"evolves_to":"grovelord","evolve_level":28,"moves":["leaf_flick","root_bind","peat_bash"]},
+    {"id":"grovelord","name":"Grovelord","types":["Grass","Earth"],"base_hp":49,"base_attack":26,"base_defense":26,"base_speed":17,"evolves_to":"","evolve_level":0,"moves":["peat_bash","canopy_crush","green_quake"]},
+
+    {"id":"sparkpup","name":"Sparkpup","types":["Electric"],"base_hp":23,"base_attack":13,"base_defense":10,"base_speed":15,"evolves_to":"voltmaw","evolve_level":13,"moves":["static_nip","neon_blink"]},
+    {"id":"voltmaw","name":"Voltmaw","types":["Electric"],"base_hp":32,"base_attack":19,"base_defense":14,"base_speed":22,"evolves_to":"stormhound","evolve_level":27,"moves":["static_nip","neon_blink","grid_lunge"]},
+    {"id":"stormhound","name":"Stormhound","types":["Electric","Psychic"],"base_hp":44,"base_attack":28,"base_defense":20,"base_speed":30,"evolves_to":"","evolve_level":0,"moves":["grid_lunge","mind_arc","thunder_crown"]},
+
+    {"id":"gullbit","name":"Gullbit","types":["Air"],"base_hp":20,"base_attack":12,"base_defense":9,"base_speed":17,"evolves_to":"","evolve_level":0,"moves":["gust_pin","pier_head"]},
+    {"id":"brickettle","name":"Brickettle","types":["Earth","Steel"],"base_hp":35,"base_attack":16,"base_defense":24,"base_speed":8,"evolves_to":"","evolve_level":0,"moves":["cobble_drop","iron_gust"]},
+    {"id":"quayshade","name":"Quayshade","types":["Water","Psychic"],"base_hp":30,"base_attack":14,"base_defense":14,"base_speed":18,"evolves_to":"","evolve_level":0,"moves":["mist_pulse","mind_arc"]},
+    {"id":"ferrylit","name":"Ferrylit","types":["Light"],"base_hp":21,"base_attack":9,"base_defense":11,"base_speed":13,"evolves_to":"","evolve_level":0,"moves":["beacon_flash","neon_blink"]},
+    {"id":"ragwyrm","name":"Ragwyrm","types":["Steel"],"base_hp":29,"base_attack":20,"base_defense":15,"base_speed":12,"evolves_to":"","evolve_level":0,"moves":["dock_scrape","anchor_crash"]},
+    {"id":"lumi","name":"Lumi","types":["Electric","Psychic"],"base_hp":52,"base_attack":29,"base_defense":23,"base_speed":27,"evolves_to":"","evolve_level":0,"moves":["mind_arc","thunder_crown","beacon_flash"]}
+  ]
+}
