@@ -6035,19 +6035,23 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
     return true;
   }
 
-  if (dateIso === prevIso) {
+  if (dateIso === prevIso || dateIso === nextIso) {
+    const cachedFast = getDateFixtureCache(dateIso);
+    const hasFast = Array.isArray(cachedFast?.EPL) && Array.isArray(cachedFast?.CHAMP);
+    if (hasFast) {
+      if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
+      state.selectedDateFixtures.EPL = [...(cachedFast?.EPL || [])].sort(fixtureSort);
+      state.selectedDateFixtures.CHAMP = [...(cachedFast?.CHAMP || [])].sort(fixtureSort);
+      return true;
+    }
+    const [quickEpl, quickChamp] = await Promise.all([
+      safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dateIso), []),
+      safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dateIso), []),
+    ]);
+    setDateFixtureCache(dateIso, { EPL: quickEpl, CHAMP: quickChamp });
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-    state.selectedDateFixtures.EPL = [...state.fixtures.previous.EPL];
-    state.selectedDateFixtures.CHAMP = [...state.fixtures.previous.CHAMP];
-    setDateFixtureCache(dateIso, { EPL: state.selectedDateFixtures.EPL, CHAMP: state.selectedDateFixtures.CHAMP });
-    return true;
-  }
-
-  if (dateIso === nextIso) {
-    if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-    state.selectedDateFixtures.EPL = [...state.fixtures.next.EPL];
-    state.selectedDateFixtures.CHAMP = [...state.fixtures.next.CHAMP];
-    setDateFixtureCache(dateIso, { EPL: state.selectedDateFixtures.EPL, CHAMP: state.selectedDateFixtures.CHAMP });
+    state.selectedDateFixtures.EPL = [...quickEpl].sort(fixtureSort);
+    state.selectedDateFixtures.CHAMP = [...quickChamp].sort(fixtureSort);
     return true;
   }
 
