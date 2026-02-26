@@ -243,6 +243,7 @@ const state = {
   liveScoreSnapshot: new Map(),
   goalFlashes: new Map(),
   refreshInFlight: false,
+  refreshStartedAt: 0,
   favoriteGoalAnimationToken: "",
   favoriteGoalAnimationTimer: null,
   refreshTimer: null,
@@ -494,6 +495,9 @@ function setPlayerPopButtonState() {
   if (!el.playerDvdToggleMain) return;
   el.playerDvdToggleMain.classList.toggle("active", state.playerPopEnabled);
   el.playerDvdToggleMain.setAttribute("aria-pressed", String(state.playerPopEnabled));
+  const badge = el.playerDvdToggleMain.querySelector("#player-pop-score-badge");
+  el.playerDvdToggleMain.textContent = state.playerPopEnabled ? "Stop Pop Quiz" : "Start Pop Quiz";
+  if (badge) el.playerDvdToggleMain.appendChild(badge);
 }
 
 function setPlayerSourceButtonState() {
@@ -2406,12 +2410,12 @@ function normalizeSquadPlayer(raw, team) {
     number,
     nationality: raw.strNationality || "Unknown",
     position: raw.strPosition || "Unknown",
-    image: raw.strCutout || "",
+    image: proxiedImageUrl(raw.strCutout || ""),
     goals: extractPlayerGoals(raw),
     appearances: extractPlayerAppearances(raw),
     teamId: team?.idTeam || "",
     teamName: team?.strTeam || raw.strTeam || "",
-    teamBadge: team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || "",
+    teamBadge: proxiedImageUrl(team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || ""),
   };
 }
 
@@ -2459,7 +2463,7 @@ function normalizeHigherLowerPlayer(raw, team) {
   if (!base || !base.name) return null;
   return {
     ...base,
-    image: base.image || raw.strThumb || team?.strBadge || "",
+    image: base.image || proxiedImageUrl(raw.strThumb || team?.strBadge || ""),
     goals: extractPlayerGoals(raw),
   };
 }
@@ -2728,6 +2732,15 @@ async function randomLeaguePlayerWithCutout() {
       })
     );
     state.playerQuiz.pool = playersByTeam.flat();
+  }
+
+  if (!state.playerQuiz.pool.length) {
+    const fallbackPool = Object.values(state.squadByTeamId || {})
+      .flat()
+      .filter((player) => player?.image);
+    if (fallbackPool.length) {
+      state.playerQuiz.pool = fallbackPool;
+    }
   }
 
   if (!state.playerQuiz.pool.length) return null;
@@ -3838,7 +3851,7 @@ function drawWrappedText(ctx, text, x, startY, maxWidth, lineHeight = 22, maxLin
 }
 
 function loadCanvasImage(url) {
-  const proxyUrl = url ? `/api/image?url=${encodeURIComponent(url)}` : "";
+  const proxyUrl = proxiedImageUrl(url);
   return new Promise((resolve) => {
     if (!proxyUrl) {
       resolve(null);
@@ -3861,6 +3874,34 @@ function loadCanvasImage(url) {
     };
     img.src = proxyUrl;
   });
+}
+
+function proxiedImageUrl(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/api/image?url=")) return raw;
+  if (/^https?:\/\//i.test(raw)) {
+    return `/api/image?url=${encodeURIComponent(raw)}`;
+  }
+  return raw;
+}
+
+function setImgSrc(imgEl, url, alt = "", allowDirectFallback = false) {
+  if (!imgEl) return;
+  const raw = String(url || "").trim();
+  const proxied = proxiedImageUrl(raw);
+  imgEl.alt = alt || "";
+  imgEl.src = proxied;
+  imgEl.onerror = () => {
+    if (allowDirectFallback && raw && raw !== proxied) {
+      imgEl.onerror = () => {
+        imgEl.classList.add("hidden");
+      };
+      imgEl.src = raw;
+      return;
+    }
+    imgEl.classList.add("hidden");
+  };
 }
 
 function clipRoundedRect(ctx, x, y, w, h, r) {
@@ -4404,7 +4445,7 @@ async function dominantColorFromImage(url) {
       }
     };
     img.onerror = () => resolve(null);
-    img.src = url;
+    img.src = proxiedImageUrl(url);
   });
 }
 
@@ -4685,7 +4726,13 @@ async function apiGetJson(version, path) {
     if (!res.ok) {
       throw new Error(`API call failed (${res.status}) for ${path}`);
     }
-    return res.json();
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`Invalid JSON payload for ${path}`);
+    }
   })();
   inflightApiGets.set(key, promise);
   try {
@@ -4993,81 +5040,16 @@ async function fetchLeagueDayFixtures(leagueId, dateIso) {
   if (Array.isArray(fromCache)) {
     return fromCache;
   }
-
-  const league = Object.values(LEAGUES).find((l) => l.id === leagueId);
-  const leagueName = league?.name || leagueId;
-  const today = toISODate(new Date());
-  const dateQueryPaths = [
-    `eventsday.php?d=${encodeURIComponent(dateIso)}&l=${encodeURIComponent(leagueId)}`,
-    `eventsday.php?d=${encodeURIComponent(dateIso)}&l=${encodeURIComponent(leagueName)}`,
-  ];
-  const dateFeeds = await Promise.all(
-    dateQueryPaths.map((path) => safeLoad(async () => safeArray(await apiGetV1(path)), []))
-  );
-
-  const feedKeys = new Set();
-  const base = [];
-  dateFeeds.flat().forEach((event) => {
-    const key = fixtureKey(event);
-    if (!key || feedKeys.has(key)) return;
-    feedKeys.add(key);
-    base.push(event);
-  });
-
-  const sideFeedPaths = [];
-  if (dateIso <= today) {
-    sideFeedPaths.push(`eventspastleague.php?id=${leagueId}`);
-  }
-  if (dateIso >= today) {
-    sideFeedPaths.push(`eventsnextleague.php?id=${leagueId}`);
-  }
-  const sideFeeds = await Promise.all(
-    sideFeedPaths.map((path) => safeLoad(async () => safeArray(await apiGetV1(path)), []))
-  );
-  const extras = sideFeeds.flat().filter((event) => event?.dateEvent === dateIso);
-
-  const combined = [...base];
-  const byKey = new Map(combined.map((event) => [fixtureKey(event), event]));
-  extras.forEach((event) => {
-    const key = fixtureKey(event);
-    if (!key) return;
-    const existing = byKey.get(key);
-    byKey.set(key, existing ? { ...existing, ...event } : event);
-  });
-
-  return [...byKey.values()];
+  return [];
 }
 
 async function fetchLiveByLeague(leagueId) {
-  const league = Object.values(LEAGUES).find((l) => l.id === leagueId);
-  const leagueName = league?.name || leagueId;
-
-  const v2Paths = [`livescore/${leagueId}`, `livescore.php?l=${encodeURIComponent(leagueId)}`];
-  for (const path of v2Paths) {
-    try {
-      const data = await apiGetV2(path);
-      const events = safeArray(data).length ? safeArray(data) : firstArrayValue(data);
-      if (events.length) return events;
-    } catch (err) {
-      console.error(err);
-    }
+  try {
+    const data = await apiGetV2(`livescore/${leagueId}`);
+    return safeArray(data).length ? safeArray(data) : firstArrayValue(data);
+  } catch {
+    return [];
   }
-
-  const v1Paths = [
-    `livescore.php?l=${encodeURIComponent(leagueName)}`,
-    `livescore.php?l=${encodeURIComponent(leagueId)}`,
-  ];
-  for (const path of v1Paths) {
-    try {
-      const data = await apiGetV1(path);
-      const events = safeArray(data).length ? safeArray(data) : firstArrayValue(data);
-      if (events.length) return events;
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
-  return [];
 }
 
 async function fetchTable(leagueId) {
@@ -5101,17 +5083,22 @@ async function fetchAllTeams(leagueId) {
   const league = Object.values(LEAGUES).find((l) => l.id === leagueId);
   const leagueName = league?.name || leagueId;
 
-  const byId = await safeLoad(async () => {
+  try {
     const data = await apiGetV1(`lookup_all_teams.php?id=${leagueId}`);
-    return safeArray(data, "teams");
-  }, []);
+    const rows = safeArray(data, "teams");
+    if (rows.length) return rows;
+  } catch (err) {
+    if (String(err?.message || "").includes("(429)")) {
+      return [];
+    }
+  }
 
-  if (byId.length) return byId;
-
-  return safeLoad(async () => {
+  try {
     const data = await apiGetV1(`search_all_teams.php?l=${encodeURIComponent(leagueName)}`);
     return safeArray(data, "teams");
-  }, []);
+  } catch {
+    return [];
+  }
 }
 
 async function fetchTeamById(teamId) {
@@ -5130,8 +5117,12 @@ async function fetchTeamById(teamId) {
 }
 
 async function fetchTeamNextEvents(teamId) {
-  const data = await apiGetV1(`eventsnext.php?id=${teamId}`);
-  return safeArray(data);
+  try {
+    const data = await apiGetV1(`eventsnext.php?id=${teamId}`);
+    return safeArray(data);
+  } catch {
+    return [];
+  }
 }
 
 async function fetchTeamWindowFixturesFromCache(team, fromIso, toIso, limit = 240) {
@@ -5148,23 +5139,12 @@ async function fetchTeamWindowFixturesFromCache(team, fromIso, toIso, limit = 24
 }
 
 async function fetchTeamLastEvents(teamId) {
-  const base = await safeLoad(async () => {
+  try {
     const data = await apiGetV1(`eventslast.php?id=${teamId}`);
     return safeArray(data);
-  }, []);
-  if (base.length >= 5) return base;
-
-  const v2Candidates = [];
-  const v2Paths = [`eventslast/${teamId}`, `eventslast.php?id=${teamId}`];
-  for (const path of v2Paths) {
-    const events = await safeLoad(async () => {
-      const payload = await apiGetV2(path);
-      return safeArray(payload).length ? safeArray(payload) : firstArrayValue(payload);
-    }, []);
-    if (events.length) v2Candidates.push(...events);
+  } catch {
+    return [];
   }
-
-  return mergeUniqueEvents([...base, ...v2Candidates]);
 }
 
 async function fetchEventById(eventId) {
@@ -5216,9 +5196,12 @@ function setFavoritePickerDisplay(team) {
     el.favoritePickerText.textContent = "Select favourite team";
     return;
   }
-  el.favoritePickerLogo.classList.remove("hidden");
-  el.favoritePickerLogo.src = team.strBadge || "";
-  el.favoritePickerLogo.alt = `${team.strTeam} badge`;
+  const badge = team.strBadge || state.teamBadgeMap[team.strTeam || ""] || "";
+  el.favoritePickerLogo.classList.toggle("hidden", !badge);
+  if (badge) {
+    setImgSrc(el.favoritePickerLogo, badge, `${team.strTeam} badge`);
+    el.favoritePickerLogo.classList.remove("hidden");
+  }
   el.favoritePickerText.textContent = `${team.strTeam} (${team.strLeague || "League"})`;
 }
 
@@ -5764,7 +5747,8 @@ function renderFixtureList(target, events, mode) {
   target.innerHTML = "";
   const sortedEvents = sortEventsForColumn(events, mode);
   if (!sortedEvents.length) {
-    if (state.refreshInFlight) {
+    const refreshingForAWhile = state.refreshInFlight && Date.now() - Number(state.refreshStartedAt || 0) > 9000;
+    if (state.refreshInFlight && !refreshingForAWhile) {
       const div = document.createElement("div");
       div.className = "empty";
       div.textContent = "Updating fixtures...";
@@ -5806,16 +5790,22 @@ function renderFixtureList(target, events, mode) {
     const awayInlineScoreEl = node.querySelector(".away-inline-score");
     const homeBadgeUrl = state.teamBadgeMap[homeName] || "";
     const awayBadgeUrl = state.teamBadgeMap[awayName] || "";
-    homeBadge.src = homeBadgeUrl;
-    homeBadge.alt = `${homeName} badge`;
-    awayBadge.src = awayBadgeUrl;
-    awayBadge.alt = `${awayName} badge`;
+    if (homeBadgeUrl) {
+      setImgSrc(homeBadge, homeBadgeUrl, `${homeName} badge`);
+      homeBadge.classList.remove("hidden");
+    } else {
+      homeBadge.classList.add("hidden");
+    }
+    if (awayBadgeUrl) {
+      setImgSrc(awayBadge, awayBadgeUrl, `${awayName} badge`);
+      awayBadge.classList.remove("hidden");
+    } else {
+      awayBadge.classList.add("hidden");
+    }
     homeScoreEl.textContent = homeScoreText;
     awayScoreEl.textContent = awayScoreText;
     homeInlineScoreEl.textContent = homeScoreText;
     awayInlineScoreEl.textContent = awayScoreText;
-    if (!homeBadgeUrl) homeBadge.classList.add("hidden");
-    if (!awayBadgeUrl) awayBadge.classList.add("hidden");
     if (hasScores) {
       const prev = state.fixtureScoreSnapshot.get(key);
       const homeChanged = prev && prev.home !== Number(home);
@@ -5948,8 +5938,8 @@ function renderTables() {
     const logoEl = card.querySelector(".league-logo");
     card.querySelector("h4").textContent = LEAGUES[key].name;
     if (state.leagueBadges[key]) {
-      logoEl.src = state.leagueBadges[key];
-      logoEl.alt = `${LEAGUES[key].name} logo`;
+      setImgSrc(logoEl, state.leagueBadges[key], `${LEAGUES[key].name} logo`);
+      logoEl.classList.remove("hidden");
     } else {
       logoEl.classList.add("hidden");
     }
@@ -6532,12 +6522,18 @@ function buildFavoriteOptions() {
     btn.className = "favorite-option";
     btn.dataset.teamId = team.idTeam;
     btn.innerHTML = `
-      <img class="option-logo ${team.strBadge ? "" : "hidden"}" src="${team.strBadge || ""}" alt="${team.strTeam} badge" />
+      <img class="option-logo ${team.strBadge ? "" : "hidden"}" src="" alt="${team.strTeam} badge" />
       <span class="option-text">
         <span class="option-team">${team.strTeam}</span>
         <span class="option-league">${team.strLeague || "League"}</span>
       </span>
     `;
+    const optionLogo = btn.querySelector(".option-logo");
+    const optionBadge = team.strBadge || state.teamBadgeMap[team.strTeam || ""] || "";
+    if (optionLogo && optionBadge) {
+      setImgSrc(optionLogo, optionBadge, `${team.strTeam} badge`);
+      optionLogo.classList.remove("hidden");
+    }
     btn.addEventListener("click", async () => {
       state.favoriteTeamId = team.idTeam;
       state.favoriteTeam = team;
@@ -6958,9 +6954,11 @@ async function renderFavorite() {
   if (cachedTeam) {
     state.favoriteTeam = cachedTeam;
     const cachedBadge = cachedTeam.strBadge || state.teamBadgeMap[cachedTeam.strTeam] || "";
-    el.favoriteLogo.src = cachedBadge;
-    el.favoriteLogo.alt = `${cachedTeam.strTeam} logo`;
     el.favoriteLogo.classList.toggle("hidden", !cachedBadge);
+    if (cachedBadge) {
+      setImgSrc(el.favoriteLogo, cachedBadge, `${cachedTeam.strTeam} logo`);
+      el.favoriteLogo.classList.remove("hidden");
+    }
     el.favoriteName.textContent = cachedTeam.strTeam || "Team";
     const cachedPos = getTeamTablePosition(cachedTeam);
     el.favoriteLeague.textContent = cachedPos ? `${cachedTeam.strLeague || ""}  •  ${cachedPos}` : cachedTeam.strLeague || "";
@@ -7014,12 +7012,12 @@ async function renderFavorite() {
   renderDreamTeamNavState();
   requestDreamTeamRender();
   const todayIso = toISODate(new Date());
-  const [lastEvents, nextEvents, cachedWindow, d1Form] = await Promise.all([
-    safeLoad(() => fetchTeamLastEvents(team.idTeam), []),
-    safeLoad(() => fetchTeamNextEvents(team.idTeam), []),
-    safeLoad(() => fetchTeamWindowFixturesFromCache(team, addDaysIso(todayIso, -7), addDaysIso(todayIso, FIXTURES_FUTURE_DAYS)), []),
+  const [cachedWindow, d1Form] = await Promise.all([
+    safeLoad(() => fetchTeamWindowFixturesFromCache(team, addDaysIso(todayIso, -90), addDaysIso(todayIso, FIXTURES_FUTURE_DAYS)), []),
     safeLoad(() => fetchTeamFormFromCache(team, 5), []),
   ]);
+  const lastEvents = cachedWindow.filter((event) => String(event?.dateEvent || "") <= todayIso);
+  const nextEvents = cachedWindow.filter((event) => String(event?.dateEvent || "") >= todayIso);
   const liveEvent = findLiveForFavorite(team.strTeam);
   const todayEvent = findTodayEventForFavorite(team.idTeam, team.strTeam);
   const [todayEventDetailedRes, liveEventDetailedRes] = await Promise.all([
@@ -7060,13 +7058,11 @@ async function renderFavorite() {
     }
   }
   const chosenTodayState = chosenToday ? eventState(chosenToday).key : "";
-  const leagueCode = teamLeagueCode(team);
-  const leagueId = LEAGUES[leagueCode]?.id;
   let pastLeague = [];
   let lastCompleted = findLastCompletedForTeam(lastEvents, team, todayIso, chosenToday);
   const needLeaguePastForSummaryOrForm = !lastCompleted || teamFormFromEvents(lastEvents, team).length < 5;
-  if (leagueId && needLeaguePastForSummaryOrForm) {
-    pastLeague = await safeLoad(() => fetchPastLeagueEvents(leagueId), []);
+  if (needLeaguePastForSummaryOrForm) {
+    pastLeague = cachedWindow;
     if (!lastCompleted) {
       lastCompleted = findLastCompletedForTeam(pastLeague, team, todayIso, chosenToday);
     }
@@ -7079,9 +7075,11 @@ async function renderFavorite() {
   el.favoriteContent.classList.remove("hidden");
 
   const badgeUrl = team.strBadge || state.teamBadgeMap[team.strTeam] || "";
-  el.favoriteLogo.src = badgeUrl;
-  el.favoriteLogo.alt = `${team.strTeam} logo`;
   el.favoriteLogo.classList.toggle("hidden", !badgeUrl);
+  if (badgeUrl) {
+    setImgSrc(el.favoriteLogo, badgeUrl, `${team.strTeam} logo`);
+    el.favoriteLogo.classList.remove("hidden");
+  }
   await updateFavoriteThemeFromBadge(badgeUrl || "");
   el.favoriteName.textContent = team.strTeam || "Team";
   const teamPos = getTeamTablePosition(team);
@@ -7216,14 +7214,14 @@ async function loadCoreData(options = {}) {
     leagueMetaEpl,
     leagueMetaChamp,
   ] = await Promise.all([
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.today), []),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.today), []),
-    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.EPL.id), []) : Promise.resolve([]),
-    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.CHAMP.id), []) : Promise.resolve([]),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.prev), []) : Promise.resolve(state.fixtures.previous.EPL || []),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.prev), []) : Promise.resolve(state.fixtures.previous.CHAMP || []),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.next), []) : Promise.resolve(state.fixtures.next.EPL || []),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.next), []) : Promise.resolve(state.fixtures.next.CHAMP || []),
+    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.today), null),
+    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.today), null),
+    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.EPL.id), null) : Promise.resolve([]),
+    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.CHAMP.id), null) : Promise.resolve([]),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.prev), null) : Promise.resolve(state.fixtures.previous.EPL || []),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.prev), null) : Promise.resolve(state.fixtures.previous.CHAMP || []),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.next), null) : Promise.resolve(state.fixtures.next.EPL || []),
+    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.next), null) : Promise.resolve(state.fixtures.next.CHAMP || []),
     includeTables ? safeLoad(() => fetchTable(LEAGUES.EPL.id), []) : Promise.resolve(state.tables.EPL || []),
     includeTables ? safeLoad(() => fetchTable(LEAGUES.CHAMP.id), []) : Promise.resolve(state.tables.CHAMP || []),
     includeStatic ? safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []) : Promise.resolve(state.teamsByLeague.EPL || []),
@@ -7232,14 +7230,23 @@ async function loadCoreData(options = {}) {
     includeStatic ? safeLoad(() => fetchLeagueMeta(LEAGUES.CHAMP.id), null) : Promise.resolve(null),
   ]);
 
-  state.fixtures.today.EPL = mergeTodayWithLive(todayEpl, liveEpl).sort(fixtureSort);
-  state.fixtures.today.CHAMP = mergeTodayWithLive(todayChamp, liveChamp).sort(fixtureSort);
-  state.fixtures.live.EPL = liveEpl.sort(fixtureSort);
-  state.fixtures.live.CHAMP = liveChamp.sort(fixtureSort);
-  state.fixtures.previous.EPL = prevEpl.sort(fixtureSort);
-  state.fixtures.previous.CHAMP = prevChamp.sort(fixtureSort);
-  state.fixtures.next.EPL = nextEpl.sort(fixtureSort);
-  state.fixtures.next.CHAMP = nextChamp.sort(fixtureSort);
+  const resolvedTodayEpl = Array.isArray(todayEpl) ? todayEpl : state.fixtures.today.EPL || [];
+  const resolvedTodayChamp = Array.isArray(todayChamp) ? todayChamp : state.fixtures.today.CHAMP || [];
+  const resolvedLiveEpl = Array.isArray(liveEpl) ? liveEpl : state.fixtures.live.EPL || [];
+  const resolvedLiveChamp = Array.isArray(liveChamp) ? liveChamp : state.fixtures.live.CHAMP || [];
+  const resolvedPrevEpl = Array.isArray(prevEpl) ? prevEpl : state.fixtures.previous.EPL || [];
+  const resolvedPrevChamp = Array.isArray(prevChamp) ? prevChamp : state.fixtures.previous.CHAMP || [];
+  const resolvedNextEpl = Array.isArray(nextEpl) ? nextEpl : state.fixtures.next.EPL || [];
+  const resolvedNextChamp = Array.isArray(nextChamp) ? nextChamp : state.fixtures.next.CHAMP || [];
+
+  state.fixtures.today.EPL = mergeTodayWithLive(resolvedTodayEpl, resolvedLiveEpl).sort(fixtureSort);
+  state.fixtures.today.CHAMP = mergeTodayWithLive(resolvedTodayChamp, resolvedLiveChamp).sort(fixtureSort);
+  state.fixtures.live.EPL = resolvedLiveEpl.sort(fixtureSort);
+  state.fixtures.live.CHAMP = resolvedLiveChamp.sort(fixtureSort);
+  state.fixtures.previous.EPL = resolvedPrevEpl.sort(fixtureSort);
+  state.fixtures.previous.CHAMP = resolvedPrevChamp.sort(fixtureSort);
+  state.fixtures.next.EPL = resolvedNextEpl.sort(fixtureSort);
+  state.fixtures.next.CHAMP = resolvedNextChamp.sort(fixtureSort);
   setDateFixtureCache(dates.today, { EPL: state.fixtures.today.EPL, CHAMP: state.fixtures.today.CHAMP });
   setDateFixtureCache(dates.prev, { EPL: state.fixtures.previous.EPL, CHAMP: state.fixtures.previous.CHAMP });
   setDateFixtureCache(dates.next, { EPL: state.fixtures.next.EPL, CHAMP: state.fixtures.next.CHAMP });
@@ -7365,6 +7372,7 @@ async function fullRefresh() {
   if (state.refreshInFlight) return;
   const perfStart = performance.now();
   state.refreshInFlight = true;
+  state.refreshStartedAt = Date.now();
   let nextContext = currentPollContext();
   try {
     maybeNotifyDailyQuestReset();
@@ -7459,6 +7467,7 @@ async function fullRefresh() {
     }
   } finally {
     state.refreshInFlight = false;
+    state.refreshStartedAt = 0;
     persistCachedBootstrapData();
     if (!state.boot.firstRefreshDone) {
       state.boot.firstRefreshDone = true;
@@ -7657,8 +7666,17 @@ function attachEvents() {
   });
 
   if (el.playerDvdToggleMain) {
-    el.playerDvdToggleMain.addEventListener("click", () => {
-      setPlayerPopEnabled(!state.playerPopEnabled);
+    el.playerDvdToggleMain.addEventListener("click", async () => {
+      if (!state.playerPopEnabled) {
+        setPlayerPopEnabled(true);
+        return;
+      }
+      const isVisible = Boolean(el.playerDvdLayer && !el.playerDvdLayer.classList.contains("hidden"));
+      if (!isVisible) {
+        await showRandomPlayerPop(true);
+        return;
+      }
+      setPlayerPopEnabled(false);
     });
   }
 
