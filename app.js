@@ -4688,11 +4688,11 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = API_FETCH_TIMEOUT
   }
 }
 
-async function fetchWithRetry(url, options = {}) {
+async function fetchWithRetry(url, options = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
   let lastErr = null;
   for (let attempt = 0; attempt <= API_FETCH_RETRIES; attempt += 1) {
     try {
-      const res = await fetchWithTimeout(url, options);
+      const res = await fetchWithTimeout(url, options, timeoutMs);
       if (!shouldRetryResponseStatus(res.status) || attempt >= API_FETCH_RETRIES) {
         return res;
       }
@@ -4715,9 +4715,10 @@ async function apiGetJson(version, path) {
   }
   const promise = (async () => {
     const url = `${API_PROXY_BASE}/${version}/${path}`;
+    const timeoutMs = path.startsWith("ezra/fixtures") ? 20000 : API_FETCH_TIMEOUT_MS;
     let res;
     try {
-      res = await fetchWithRetry(url);
+      res = await fetchWithRetry(url, {}, timeoutMs);
     } catch (err) {
       const isTimeout = String(err?.name || "").toLowerCase() === "aborterror" || String(err?.message || "").includes("timeout");
       throw new Error(isTimeout ? `Request timed out for ${path}` : `Request failed for ${path}`);
@@ -5044,12 +5045,8 @@ async function fetchLeagueDayFixtures(leagueId, dateIso) {
 }
 
 async function fetchLiveByLeague(leagueId) {
-  try {
-    const data = await apiGetV2(`livescore/${leagueId}`);
-    return safeArray(data).length ? safeArray(data) : firstArrayValue(data);
-  } catch {
-    return [];
-  }
+  // Avoid direct live-score endpoint hits from client: server cache + stream handles live updates.
+  return [];
 }
 
 async function fetchTable(leagueId) {
@@ -6576,14 +6573,52 @@ function rebuildTeamBadgeMap() {
   });
 }
 
+function hydrateTeamsFromTablesIfNeeded() {
+  const fromTableRows = (leagueCode) => {
+    const existing = state.teamsByLeague[leagueCode] || [];
+    const byId = new Map(existing.map((team) => [String(team?.idTeam || ""), team]));
+    const rows = state.tables[leagueCode] || [];
+    const leagueName = LEAGUES[leagueCode]?.name || "";
+    rows.forEach((row) => {
+      const id = String(row?.idTeam || "").trim();
+      const name = String(row?.strTeam || "").trim();
+      if (!name) return;
+      const current = byId.get(id) || null;
+      byId.set(id, {
+        idTeam: id || current?.idTeam || `fallback:${leagueCode}:${name}`,
+        strTeam: name,
+        strLeague: leagueName,
+        strBadge: current?.strBadge || row?.strTeamBadge || row?.strBadge || state.teamBadgeMap[name] || "",
+      });
+    });
+    return [...byId.values()].filter((team) => team?.strTeam);
+  };
+
+  if (!state.teamsByLeague.EPL.length && state.tables.EPL.length) {
+    state.teamsByLeague.EPL = fromTableRows("EPL");
+  }
+  if (!state.teamsByLeague.CHAMP.length && state.tables.CHAMP.length) {
+    state.teamsByLeague.CHAMP = fromTableRows("CHAMP");
+  }
+  rebuildTeamBadgeMap();
+}
+
 async function ensureFavoritePickerDataLoaded() {
   if (state.teamsByLeague.EPL.length || state.teamsByLeague.CHAMP.length) return;
+  hydrateTeamsFromTablesIfNeeded();
+  if (state.teamsByLeague.EPL.length || state.teamsByLeague.CHAMP.length) {
+    ensureDefaultFavoriteTeam();
+    return;
+  }
   const [teamsEpl, teamsChamp] = await Promise.all([
     safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []),
     safeLoad(() => fetchAllTeams(LEAGUES.CHAMP.id), []),
   ]);
   state.teamsByLeague.EPL = Array.isArray(teamsEpl) ? teamsEpl : [];
   state.teamsByLeague.CHAMP = Array.isArray(teamsChamp) ? teamsChamp : [];
+  if (!state.teamsByLeague.EPL.length || !state.teamsByLeague.CHAMP.length) {
+    hydrateTeamsFromTablesIfNeeded();
+  }
   rebuildTeamBadgeMap();
   ensureDefaultFavoriteTeam();
 }
@@ -7254,6 +7289,9 @@ async function loadCoreData(options = {}) {
   state.tables.CHAMP = includeTables ? (tableChamp.length ? tableChamp : prevTablesChamp) : prevTablesChamp;
   state.teamsByLeague.EPL = includeStatic ? (teamsEpl.length ? teamsEpl : prevTeamsEpl) : prevTeamsEpl;
   state.teamsByLeague.CHAMP = includeStatic ? (teamsChamp.length ? teamsChamp : prevTeamsChamp) : prevTeamsChamp;
+  if (!state.teamsByLeague.EPL.length || !state.teamsByLeague.CHAMP.length) {
+    hydrateTeamsFromTablesIfNeeded();
+  }
   state.teamBadgeMap = {};
   [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].forEach((team) => {
     if (team?.strTeam && team?.strBadge) {
@@ -7328,7 +7366,6 @@ function currentPollContext() {
 
 function shouldFetchStaticData() {
   if (!state.tables.EPL.length || !state.tables.CHAMP.length) return true;
-  if (!state.teamsByLeague.EPL.length || !state.teamsByLeague.CHAMP.length) return true;
   return Date.now() - state.lastStaticRefreshAt >= STATIC_REFRESH_MS;
 }
 
@@ -7395,13 +7432,7 @@ async function fullRefresh() {
     const includeStatic = shouldFetchStaticData();
     const includeTables = shouldFetchTables(nextContext);
     const todayIso = toISODate(new Date());
-    const includeSurroundingDays =
-      includeStatic ||
-      state.selectedDate !== todayIso ||
-      !state.fixtures.previous.EPL.length ||
-      !state.fixtures.previous.CHAMP.length ||
-      !state.fixtures.next.EPL.length ||
-      !state.fixtures.next.CHAMP.length;
+    const includeSurroundingDays = false;
     await loadCoreData({ includeLive, includeStatic, includeTables, includeSurroundingDays });
     detectGoalFlashes();
     const selectedDateForRefresh = normalizeDateIsoInput(state.selectedDate || todayIso);
