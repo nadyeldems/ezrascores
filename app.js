@@ -266,6 +266,7 @@ const state = {
   eventDetailCache: {},
   fixtureScoreSnapshot: new Map(),
   dateFixturesCache: {},
+  fixtureFetchBackoffUntil: {},
   selectedDateLoadSeq: 0,
   selectedDateTimer: null,
   liveStream: { es: null, reconnectTimer: null, lastVersion: "", connected: false },
@@ -5034,13 +5035,24 @@ async function logoutAccount() {
 }
 
 async function fetchLeagueDayFixtures(leagueId, dateIso) {
+  const key = `${leagueId}:${dateIso}`;
+  const backoffUntil = Number(state.fixtureFetchBackoffUntil?.[key] || 0);
+  if (backoffUntil && Date.now() < backoffUntil) {
+    const cached = getDateFixtureCache(dateIso);
+    if (cached && Array.isArray(cached.EPL) && Array.isArray(cached.CHAMP)) {
+      return leagueId === LEAGUES.EPL.id ? cached.EPL : cached.CHAMP;
+    }
+    return [];
+  }
   const fromCache = await safeLoad(async () => {
     const payload = await apiGetV1(`ezra/fixtures?l=${encodeURIComponent(leagueId)}&d=${encodeURIComponent(dateIso)}`);
     return safeArray(payload, "events");
   }, null);
   if (Array.isArray(fromCache)) {
+    state.fixtureFetchBackoffUntil[key] = 0;
     return fromCache;
   }
+  state.fixtureFetchBackoffUntil[key] = Date.now() + 30 * 1000;
   return [];
 }
 
@@ -5077,25 +5089,20 @@ async function fetchTeamFormFromCache(team, n = 5) {
 }
 
 async function fetchAllTeams(leagueId) {
-  const league = Object.values(LEAGUES).find((l) => l.id === leagueId);
-  const leagueName = league?.name || leagueId;
-
-  try {
-    const data = await apiGetV1(`lookup_all_teams.php?id=${leagueId}`);
-    const rows = safeArray(data, "teams");
-    if (rows.length) return rows;
-  } catch (err) {
-    if (String(err?.message || "").includes("(429)")) {
-      return [];
-    }
-  }
-
-  try {
-    const data = await apiGetV1(`search_all_teams.php?l=${encodeURIComponent(leagueName)}`);
-    return safeArray(data, "teams");
-  } catch {
-    return [];
-  }
+  const leagueCode = Object.values(LEAGUES).find((l) => l.id === leagueId)?.code || "";
+  if (!leagueCode) return [];
+  const existing = state.teamsByLeague[leagueCode] || [];
+  if (existing.length) return existing;
+  const tableRows = state.tables[leagueCode] || [];
+  const leagueName = LEAGUES[leagueCode]?.name || "";
+  return tableRows
+    .map((row) => ({
+      idTeam: String(row?.idTeam || "").trim() || `fallback:${leagueCode}:${String(row?.strTeam || "").trim()}`,
+      strTeam: String(row?.strTeam || "").trim(),
+      strLeague: leagueName,
+      strBadge: row?.strTeamBadge || row?.strBadge || state.teamBadgeMap[String(row?.strTeam || "").trim()] || "",
+    }))
+    .filter((team) => team.strTeam);
 }
 
 async function fetchTeamById(teamId) {
@@ -7207,7 +7214,10 @@ async function safeLoad(loader, fallback) {
   try {
     return await loader();
   } catch (err) {
-    console.error(err);
+    const msg = String(err?.message || "");
+    if (!msg.includes("Request failed for ezra/fixtures")) {
+      console.error(err);
+    }
     return fallback;
   }
 }

@@ -1785,7 +1785,7 @@ function liveSnapshotCacheKey(origin) {
 async function fetchSportsDb(version, key, pathWithQuery) {
   const upstream = upstreamUrl(version, key, pathWithQuery);
   if (!upstream) throw new Error("Invalid API version");
-  const upstreamRes = await fetch(upstream, {
+  const upstreamRes = await fetchUpstreamWithRetry(upstream, {
     headers: version === "v2" ? { "X-API-KEY": key } : undefined,
   });
   if (!upstreamRes.ok) {
@@ -2054,15 +2054,38 @@ async function handleEzraFixturesRoute(context, key) {
 
   let fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
   if (!fromCache.length) {
-    await ingestLeagueFixtureFeeds(db, key, leagueId, dateIso);
-    fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
-    if (!fromCache.length) {
-      const seasons = seasonCandidatesForDate(dateIso, todayIso);
-      for (const season of seasons) {
-        await ingestLeagueSeasonFixtures(db, key, leagueId, season).catch(() => null);
-      }
-      fromCache = await readFixturesByLeagueDate(db, leagueId, dateIso);
-    }
+    // Respond fast and warm in the background to avoid request timeouts on user navigation.
+    context.waitUntil(
+      (async () => {
+        try {
+          await ingestLeagueFixtureFeeds(db, key, leagueId, dateIso);
+          const check = await readFixturesByLeagueDate(db, leagueId, dateIso);
+          if (check.length) return;
+          const seasons = seasonCandidatesForDate(dateIso, todayIso);
+          // Limit expensive season backfill during on-demand request warmup.
+          for (const season of seasons.slice(0, 1)) {
+            await ingestLeagueSeasonFixtures(db, key, leagueId, season).catch(() => null);
+          }
+        } catch {
+          // Swallow background warm failures.
+        }
+      })()
+    );
+    return json(
+      {
+        events: [],
+        leagueId,
+        date: dateIso,
+        source: "warming",
+        warming: true,
+        window: {
+          min: addDaysIso(todayIso, -FIXTURE_HISTORY_DAYS),
+          max: addDaysIso(todayIso, FIXTURE_FUTURE_DAYS),
+        },
+      },
+      200,
+      { "Cache-Control": "public, max-age=15, s-maxage=15" }
+    );
   }
 
   return json(
