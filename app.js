@@ -5764,6 +5764,13 @@ function renderFixtureList(target, events, mode) {
   target.innerHTML = "";
   const sortedEvents = sortEventsForColumn(events, mode);
   if (!sortedEvents.length) {
+    if (state.refreshInFlight) {
+      const div = document.createElement("div");
+      div.className = "empty";
+      div.textContent = "Updating fixtures...";
+      target.appendChild(div);
+      return;
+    }
     const div = document.createElement("div");
     div.className = "empty";
     div.textContent = "No fixtures found.";
@@ -6515,7 +6522,7 @@ function buildFavoriteOptions() {
       </span>
     `;
     el.favoritePickerMenu.appendChild(empty);
-    setFavoritePickerDisplay(null);
+    setFavoritePickerDisplay(state.favoriteTeam || null);
     return;
   }
 
@@ -6555,6 +6562,13 @@ function buildFavoriteOptions() {
     return;
   }
   setFavoritePickerDisplay(selected);
+}
+
+function findTeamByIdCached(teamId) {
+  const wanted = String(teamId || "").trim();
+  if (!wanted) return null;
+  const all = [...(state.teamsByLeague.EPL || []), ...(state.teamsByLeague.CHAMP || [])];
+  return all.find((team) => String(team?.idTeam || "") === wanted) || null;
 }
 
 function rebuildTeamBadgeMap() {
@@ -6905,6 +6919,7 @@ function clearFavoriteLoadingVisual() {
 }
 
 async function renderFavorite() {
+  const perfStart = performance.now();
   state.favoriteDataLoading = Boolean(state.favoriteTeamId);
   if (state.favoriteDataLoading) {
     showFavoriteLoadingState();
@@ -6939,7 +6954,20 @@ async function renderFavorite() {
     return;
   }
 
-  const team = await safeLoad(() => fetchTeamById(state.favoriteTeamId), null);
+  const cachedTeam = findTeamByIdCached(state.favoriteTeamId);
+  if (cachedTeam) {
+    state.favoriteTeam = cachedTeam;
+    const cachedBadge = cachedTeam.strBadge || state.teamBadgeMap[cachedTeam.strTeam] || "";
+    el.favoriteLogo.src = cachedBadge;
+    el.favoriteLogo.alt = `${cachedTeam.strTeam} logo`;
+    el.favoriteLogo.classList.toggle("hidden", !cachedBadge);
+    el.favoriteName.textContent = cachedTeam.strTeam || "Team";
+    const cachedPos = getTeamTablePosition(cachedTeam);
+    el.favoriteLeague.textContent = cachedPos ? `${cachedTeam.strLeague || ""}  •  ${cachedPos}` : cachedTeam.strLeague || "";
+    setFavoritePickerDisplay(cachedTeam);
+  }
+
+  const team = cachedTeam || (await safeLoad(() => fetchTeamById(state.favoriteTeamId), null));
   if (!team) {
     clearFavoriteLoadingVisual();
     state.favoriteDataLoading = false;
@@ -6975,25 +7003,32 @@ async function renderFavorite() {
   clearFavoriteLoadingVisual();
   applyClubThemeFromFavoriteTeam();
   if (team.idTeam && !state.squadByTeamId[team.idTeam]) {
-    const rawPlayers = await safeLoad(() => fetchPlayersForTeam(team), []);
-    state.squadByTeamId[team.idTeam] = rawPlayers
-      .map((player) => normalizeSquadPlayer(player, team))
-      .filter(Boolean);
+    safeLoad(() => fetchPlayersForTeam(team), []).then((rawPlayers) => {
+      state.squadByTeamId[team.idTeam] = (rawPlayers || [])
+        .map((player) => normalizeSquadPlayer(player, team))
+        .filter(Boolean);
+      renderSquadPanel();
+    });
   }
   renderSquadPanel();
   renderDreamTeamNavState();
   requestDreamTeamRender();
   const todayIso = toISODate(new Date());
-  const lastEvents = await safeLoad(() => fetchTeamLastEvents(team.idTeam), []);
+  const [lastEvents, nextEvents, cachedWindow, d1Form] = await Promise.all([
+    safeLoad(() => fetchTeamLastEvents(team.idTeam), []),
+    safeLoad(() => fetchTeamNextEvents(team.idTeam), []),
+    safeLoad(() => fetchTeamWindowFixturesFromCache(team, addDaysIso(todayIso, -7), addDaysIso(todayIso, FIXTURES_FUTURE_DAYS)), []),
+    safeLoad(() => fetchTeamFormFromCache(team, 5), []),
+  ]);
   const liveEvent = findLiveForFavorite(team.strTeam);
   const todayEvent = findTodayEventForFavorite(team.idTeam, team.strTeam);
-  const todayEventDetailed = todayEvent?.idEvent ? (await safeLoad(() => fetchEventById(todayEvent.idEvent), null)) || todayEvent : todayEvent;
-  const liveEventDetailed = liveEvent?.idEvent ? (await safeLoad(() => fetchEventById(liveEvent.idEvent), null)) || liveEvent : liveEvent;
+  const [todayEventDetailedRes, liveEventDetailedRes] = await Promise.all([
+    todayEvent?.idEvent ? safeLoad(() => fetchEventById(todayEvent.idEvent), null) : Promise.resolve(null),
+    liveEvent?.idEvent ? safeLoad(() => fetchEventById(liveEvent.idEvent), null) : Promise.resolve(null),
+  ]);
+  const todayEventDetailed = todayEventDetailedRes || todayEvent;
+  const liveEventDetailed = liveEventDetailedRes || liveEvent;
   const chosenToday = liveEventDetailed || todayEventDetailed;
-  const nextEvents = await safeLoad(() => fetchTeamNextEvents(team.idTeam), []);
-  const windowFrom = addDaysIso(todayIso, -7);
-  const windowTo = addDaysIso(todayIso, FIXTURES_FUTURE_DAYS);
-  const cachedWindow = await safeLoad(() => fetchTeamWindowFixturesFromCache(team, windowFrom, windowTo), []);
   const mergedNextEvents = mergeUniqueEvents([...nextEvents, ...cachedWindow]).sort(fixtureSort);
   const todayUpcomingFromNext = mergedNextEvents.find((event) => event.dateEvent === todayIso) || null;
   const todayPrimaryEvent =
@@ -7058,7 +7093,6 @@ async function renderFavorite() {
       ...cachedWindow,
       ...(chosenToday && eventState(chosenToday).key === "final" ? [chosenToday] : []),
     ]);
-    const d1Form = await safeLoad(() => fetchTeamFormFromCache(team, 5), []);
     const fallbackForm = teamFormFromEvents(formEvents, team);
     const form = d1Form.length ? d1Form : fallbackForm;
     const formHtml = renderFavoriteFormBadges(form);
@@ -7125,6 +7159,7 @@ async function renderFavorite() {
   el.favoriteLiveStrip.innerHTML = `<span class="ticker-content">${nextFixtureTickerText(team, nextEvent)}</span>`;
   state.favoriteDataLoading = false;
   renderFunZone();
+  console.debug(`[perf] renderFavorite ${Math.round(performance.now() - perfStart)}ms`);
 }
 
 function displayApiError(sectionEl, err) {
@@ -7328,11 +7363,15 @@ function scheduleNextRefresh(context) {
 
 async function fullRefresh() {
   if (state.refreshInFlight) return;
+  const perfStart = performance.now();
   state.refreshInFlight = true;
   let nextContext = currentPollContext();
   try {
     maybeNotifyDailyQuestReset();
-    if (state.lastRefresh && state.pollMode !== "live") {
+    if (el.fixturesTitle) {
+      el.fixturesTitle.textContent = "Fixtures (updating...)";
+    }
+    if (state.lastRefresh && state.pollMode !== "live" && !selectedEventsForCurrentView().length) {
       renderFixtureSkeletons(6);
       if (shouldFetchTables(nextContext) || shouldFetchStaticData()) {
         renderTableSkeletons(2);
@@ -7394,6 +7433,10 @@ async function fullRefresh() {
 
     state.lastRefresh = new Date();
     renderLastRefreshed();
+    if (el.fixturesTitle) {
+      el.fixturesTitle.textContent = selectedDateLabel(state.selectedDate);
+    }
+    console.debug(`[perf] fullRefresh ${Math.round(performance.now() - perfStart)}ms`);
     nextContext = currentPollContext();
   } catch (err) {
     console.error(err);
@@ -7410,6 +7453,9 @@ async function fullRefresh() {
     renderFunZone();
     if (el.lastRefreshed) {
       el.lastRefreshed.textContent = `Last refresh failed: ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+    }
+    if (el.fixturesTitle) {
+      el.fixturesTitle.textContent = selectedDateLabel(state.selectedDate || toISODate(new Date()));
     }
   } finally {
     state.refreshInFlight = false;
@@ -7725,9 +7771,14 @@ function attachEvents() {
       renderDreamTeamNavState();
       requestDreamTeamRender();
     }
-    await ensureFavoritePickerDataLoaded();
     buildFavoriteOptions();
     toggleFavoritePickerMenu();
+    const pickerOpenedAt = performance.now();
+    safeLoad(async () => {
+      await ensureFavoritePickerDataLoaded();
+      buildFavoriteOptions();
+      console.debug(`[perf] picker data ready ${Math.round(performance.now() - pickerOpenedAt)}ms`);
+    }, null);
   });
 
   document.addEventListener("click", (e) => {
