@@ -195,9 +195,14 @@ async function ensureAccountSchema(db) {
         league_code TEXT NOT NULL,
         user_id TEXT NOT NULL,
         joined_at TEXT NOT NULL,
+        joined_via_invite INTEGER NOT NULL DEFAULT 0,
+        invited_by_user_id TEXT,
+        invite_source TEXT,
+        invite_referrer_name TEXT,
         PRIMARY KEY (league_code, user_id),
         FOREIGN KEY (league_code) REFERENCES ezra_leagues(code),
-        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id),
+        FOREIGN KEY (invited_by_user_id) REFERENCES ezra_users(id)
       )
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_league_members_user_id ON ezra_league_members(user_id)`,
@@ -385,7 +390,32 @@ async function ensureAccountSchema(db) {
     const msg = String(err?.message || err || "").toLowerCase();
     if (!msg.includes("duplicate column")) throw err;
   }
+  try {
+    await db.prepare("ALTER TABLE ezra_league_members ADD COLUMN joined_via_invite INTEGER NOT NULL DEFAULT 0").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
+  try {
+    await db.prepare("ALTER TABLE ezra_league_members ADD COLUMN invited_by_user_id TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
+  try {
+    await db.prepare("ALTER TABLE ezra_league_members ADD COLUMN invite_source TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
+  try {
+    await db.prepare("ALTER TABLE ezra_league_members ADD COLUMN invite_referrer_name TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_ezra_league_members_invited_by ON ezra_league_members(invited_by_user_id)").run();
   accountSchemaReady = true;
 }
 
@@ -1619,11 +1649,50 @@ async function handleLeagueJoin(db, request) {
   if (!code) return json({ error: "Invalid league code." }, 400);
   const league = await db.prepare("SELECT code FROM ezra_leagues WHERE code = ?1 LIMIT 1").bind(code).first();
   if (!league) return json({ error: "League code not found." }, 404);
-  await db
-    .prepare("INSERT OR IGNORE INTO ezra_league_members (league_code, user_id, joined_at) VALUES (?1, ?2, ?3)")
-    .bind(code, session.user_id, new Date().toISOString())
-    .run();
-  return json({ ok: true, code }, 200);
+  const existingMember = await db
+    .prepare("SELECT 1 AS ok FROM ezra_league_members WHERE league_code = ?1 AND user_id = ?2 LIMIT 1")
+    .bind(code, session.user_id)
+    .first();
+  const source = String(body?.source || "").trim().slice(0, 32);
+  const referrerName = normalizeName(body?.referrerName || "");
+  const referrerNameKey = referrerName.toLowerCase();
+  let referrerUserId = "";
+  if (referrerNameKey) {
+    const refUser = await db
+      .prepare("SELECT id FROM ezra_users WHERE name_key = ?1 LIMIT 1")
+      .bind(referrerNameKey)
+      .first();
+    const refId = String(refUser?.id || "");
+    if (refId && refId !== session.user_id) {
+      const refInLeague = await db
+        .prepare("SELECT 1 AS ok FROM ezra_league_members WHERE league_code = ?1 AND user_id = ?2 LIMIT 1")
+        .bind(code, refId)
+        .first();
+      if (refInLeague?.ok) {
+        referrerUserId = refId;
+      }
+    }
+  }
+  if (!existingMember) {
+    const nowIso = new Date().toISOString();
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO ezra_league_members
+          (league_code, user_id, joined_at, joined_via_invite, invited_by_user_id, invite_source, invite_referrer_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+      )
+      .bind(
+        code,
+        session.user_id,
+        nowIso,
+        referrerUserId ? 1 : 0,
+        referrerUserId || null,
+        source || null,
+        referrerName || null
+      )
+      .run();
+  }
+  return json({ ok: true, code, alreadyMember: Boolean(existingMember), referralTracked: Boolean(referrerUserId) }, 200);
 }
 
 async function handleLeagueList(db, request, key) {

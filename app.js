@@ -232,6 +232,7 @@ const state = {
           code: String(STORED_PENDING_LEAGUE_INVITE.code || "").toUpperCase(),
           leagueName: String(STORED_PENDING_LEAGUE_INVITE.leagueName || "").trim(),
           source: String(STORED_PENDING_LEAGUE_INVITE.source || "stored"),
+          referrerName: String(STORED_PENDING_LEAGUE_INVITE.referrerName || "").trim(),
         }
       : null,
   leagueInviteModalOpen: false,
@@ -1671,6 +1672,7 @@ function persistPendingLeagueInvite() {
       code: state.pendingLeagueInvite.code,
       leagueName: state.pendingLeagueInvite.leagueName || "",
       source: state.pendingLeagueInvite.source || "stored",
+      referrerName: state.pendingLeagueInvite.referrerName || "",
     })
   );
 }
@@ -1685,6 +1687,7 @@ function setPendingLeagueInvite(invite) {
     code: normalizeLeagueCodeClient(invite.code),
     leagueName: String(invite.leagueName || "").trim(),
     source: String(invite.source || "stored"),
+    referrerName: String(invite.referrerName || "").trim(),
   };
   persistPendingLeagueInvite();
 }
@@ -1699,7 +1702,10 @@ function closeLeagueInviteModal() {
 function openLeagueInviteModal(leagueName, code) {
   if (!el.leagueInviteModal || !el.leagueInviteText) return;
   const prettyName = String(leagueName || "").trim() || `League ${code}`;
-  el.leagueInviteText.textContent = `You've been invited to ${prettyName}. Would you like to join?`;
+  const byLine = state.pendingLeagueInvite?.referrerName
+    ? ` by ${state.pendingLeagueInvite.referrerName}`
+    : "";
+  el.leagueInviteText.textContent = `You've been invited to ${prettyName}${byLine}. Would you like to join?`;
   state.leagueInviteModalOpen = true;
   el.leagueInviteModal.classList.remove("hidden");
 }
@@ -1711,11 +1717,18 @@ function resumePendingLeagueInvitePrompt() {
   openLeagueInviteModal(state.pendingLeagueInvite?.leagueName || `League ${code}`, code);
 }
 
-function buildLeagueInviteUrl(code) {
+function buildLeagueInviteUrl(code, referrerName = "") {
   const clean = normalizeLeagueCodeClient(code);
   if (!clean) return "";
   const url = new URL(window.location.href);
   url.searchParams.set("invite", clean);
+  const ref = String(referrerName || "").trim();
+  if (ref) {
+    url.searchParams.set("ref", ref);
+  } else {
+    url.searchParams.delete("ref");
+  }
+  url.searchParams.set("src", "share");
   return url.toString();
 }
 
@@ -1733,11 +1746,11 @@ async function fetchLeagueInviteMeta(code) {
   };
 }
 
-async function promptLeagueInvite(code, source = "link") {
+async function promptLeagueInvite(code, source = "link", referrerName = "") {
   const clean = normalizeLeagueCodeClient(code);
   if (!clean) return;
   const meta = (await fetchLeagueInviteMeta(clean)) || { code: clean, leagueName: `League ${clean}` };
-  setPendingLeagueInvite({ code: meta.code, leagueName: meta.leagueName, source });
+  setPendingLeagueInvite({ code: meta.code, leagueName: meta.leagueName, source, referrerName });
   openLeagueInviteModal(meta.leagueName, meta.code);
 }
 
@@ -1748,23 +1761,24 @@ async function processPendingLeagueInviteAfterAuth() {
     setPendingLeagueInvite(null);
     return false;
   }
-  await joinFamilyLeagueCode(code);
-  setAccountStatus(`Joined ${state.pendingLeagueInvite.leagueName || `League ${code}`} from invite.`);
-  setPendingLeagueInvite(null);
-  closeLeagueInviteModal();
+  openLeagueInviteModal(state.pendingLeagueInvite.leagueName || `League ${code}`, code);
   return true;
 }
 
 async function handleInviteUrlOnLoad() {
   const url = new URL(window.location.href);
   const inviteCode = normalizeLeagueCodeClient(url.searchParams.get("invite") || "");
+  const referrerName = String(url.searchParams.get("ref") || "").trim();
+  const source = String(url.searchParams.get("src") || "link").trim() || "link";
   if (!inviteCode) return;
   url.searchParams.delete("invite");
+  url.searchParams.delete("ref");
+  url.searchParams.delete("src");
   window.history.replaceState({}, "", url.toString());
-  await promptLeagueInvite(inviteCode, "link");
+  await promptLeagueInvite(inviteCode, source, referrerName);
 }
 
-async function joinFamilyLeagueCode(code) {
+async function joinFamilyLeagueCode(code, options = {}) {
   ensureFamilyLeagueState();
   if (!accountSignedIn()) {
     setAccountStatus("Sign in to join a family league code.", true);
@@ -1772,7 +1786,14 @@ async function joinFamilyLeagueCode(code) {
   }
   const clean = String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
   if (!clean) return;
-  await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/join`, { code: clean }, state.account.token);
+  const referrerName = String(options.referrerName || "").trim();
+  const source = String(options.source || "").trim();
+  await apiRequest(
+    "POST",
+    `${API_PROXY_BASE}/v1/ezra/account/league/join`,
+    { code: clean, referrerName, source },
+    state.account.token
+  );
   state.familyLeague.leagueCode = clean;
   if (!state.familyLeague.joinedLeagueCodes.includes(clean)) {
     state.familyLeague.joinedLeagueCodes.push(clean);
@@ -8485,7 +8506,7 @@ function attachEvents() {
         return;
       }
       const leagueName = String(currentLeague?.name || "").trim() || `League ${code}`;
-      const url = buildLeagueInviteUrl(code);
+      const url = buildLeagueInviteUrl(code, state.account.user?.name || "");
       if (!url) {
         setAccountStatus("Unable to build invite link.", true);
         return;
@@ -8614,12 +8635,15 @@ function attachEvents() {
       }
       if (!accountSignedIn()) {
         setAccountMenuOpen(true);
-        setAccountStatus("Sign in or create an account to accept this league invite.");
+        setAccountStatus("Sign in or create an account first. We'll ask again after you sign in.");
         closeLeagueInviteModal();
         return;
       }
       try {
-        await joinFamilyLeagueCode(code);
+        await joinFamilyLeagueCode(code, {
+          referrerName: state.pendingLeagueInvite?.referrerName || "",
+          source: state.pendingLeagueInvite?.source || "link",
+        });
         setPendingLeagueInvite(null);
         closeLeagueInviteModal();
         showRewardToast("Joined league invite", "success");
