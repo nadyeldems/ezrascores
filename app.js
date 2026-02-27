@@ -1827,6 +1827,11 @@ async function updateFamilyLeagueName(nextName) {
 
 function renderFamilyLeaguePanel() {
   if (!el.familyMembers || !el.familyCodeLabel) return;
+  const familyPanel = document.getElementById("family-league-panel");
+  const compactHomeMode = !isMobileViewport() && state.mainTab === "home";
+  familyPanel?.classList.toggle("compact-home", compactHomeMode);
+  const familyTitle = familyPanel?.querySelector("h4");
+  if (familyTitle) familyTitle.textContent = compactHomeMode ? "Mini-League Snapshot" : "Family Mini-League";
   ensureFamilyLeagueState();
   if (!accountSignedIn() && state.familyOptionsOpen) {
     setFamilyOptionsOpen(false);
@@ -1885,7 +1890,21 @@ function renderFamilyLeaguePanel() {
     el.familyMembers.innerHTML = `<div class="empty">No members found for this league yet.</div>`;
     return;
   }
-  standings.forEach((member, index) => {
+  let displayStandings = standings.slice();
+  if (compactHomeMode) {
+    const signedInId = String(state.account.user?.id || "");
+    const top = standings.slice(0, 3);
+    const hasMe = top.some((m) => String(m.user_id || "") === signedInId);
+    if (!hasMe && signedInId) {
+      const me = standings.find((m) => String(m.user_id || "") === signedInId);
+      displayStandings = me ? [...top, me] : top;
+    } else {
+      displayStandings = top;
+    }
+  }
+  displayStandings.forEach((member) => {
+    const index = standings.findIndex((m) => String(m.user_id || "") === String(member.user_id || ""));
+    const rank = index >= 0 ? index + 1 : displayStandings.indexOf(member) + 1;
     const isSignedInMember = String(member.user_id || "") === String(state.account.user?.id || "");
     const row = document.createElement("div");
     row.className = `family-row ${isSignedInMember ? "active" : ""}`;
@@ -1893,8 +1912,8 @@ function renderFamilyLeaguePanel() {
     row.tabIndex = 0;
     row.innerHTML = `
       <div class="mission-text">
-        <div class="mission-title">#${index + 1} ${escapeHtml(member.name || "User")}</div>
-        <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""} • Tap to view profile</div>
+        <div class="mission-title">#${rank} ${escapeHtml(member.name || "User")}</div>
+        <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""}${compactHomeMode ? "" : " • Tap to view profile"}</div>
       </div>
       <div class="account-actions">
         <span class="family-points">${Number(member.points || 0)}</span>
@@ -6381,6 +6400,18 @@ function renderMainTabButtons() {
   });
 }
 
+function setPanelVisible(panel, visible) {
+  if (!panel) return;
+  const shouldHide = !visible;
+  const wasHidden = panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", shouldHide);
+  if (!shouldHide && wasHidden) {
+    panel.classList.remove("panel-enter");
+    requestAnimationFrame(() => panel.classList.add("panel-enter"));
+    setTimeout(() => panel.classList.remove("panel-enter"), 220);
+  }
+}
+
 function renderMobileSectionLayout() {
   const mobile = isMobileViewport();
   const controls = el.controlsPanel;
@@ -6401,11 +6432,11 @@ function renderMobileSectionLayout() {
     const squadTab = state.mainTab === "squad";
     const tablesTab = state.mainTab === "tables";
 
-    controls.classList.toggle("hidden", !(predict || tablesTab));
-    fixtures.classList.toggle("hidden", !(home || predict));
-    tables.classList.toggle("hidden", !tablesTab);
-    fun.classList.toggle("hidden", !(home || play));
-    if (squad) squad.classList.toggle("hidden", !squadTab);
+    setPanelVisible(controls, predict || tablesTab);
+    setPanelVisible(fixtures, home || predict);
+    setPanelVisible(tables, tablesTab);
+    setPanelVisible(fun, home || play);
+    if (squad) setPanelVisible(squad, squadTab);
     fun.classList.toggle("home-focus", home);
     return;
   }
@@ -6418,11 +6449,11 @@ function renderMobileSectionLayout() {
     btn.setAttribute("aria-selected", String(active));
   });
 
-  controls.classList.toggle("hidden", state.mobileTab === "table");
-  fixtures.classList.toggle("hidden", state.mobileTab !== "fixtures");
-  tables.classList.toggle("hidden", state.mobileTab !== "table");
-  fun.classList.toggle("hidden", state.mobileTab !== "fun");
-  if (squad) squad.classList.remove("hidden");
+  setPanelVisible(controls, state.mobileTab !== "table");
+  setPanelVisible(fixtures, state.mobileTab === "fixtures");
+  setPanelVisible(tables, state.mobileTab === "table");
+  setPanelVisible(fun, state.mobileTab === "fun");
+  if (squad) setPanelVisible(squad, true);
   fun.classList.remove("home-focus");
 }
 
