@@ -355,7 +355,6 @@ async function ensureAccountSchema(db) {
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_user ON ezra_auth_codes(user_id, purpose, expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_email ON ezra_auth_codes(email_key, purpose, expires_at)`,
-    `CREATE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key)`,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -386,6 +385,7 @@ async function ensureAccountSchema(db) {
     const msg = String(err?.message || err || "").toLowerCase();
     if (!msg.includes("duplicate column")) throw err;
   }
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key)").run();
   accountSchemaReady = true;
 }
 
