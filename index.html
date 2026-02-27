@@ -320,6 +320,7 @@
                 <div id="family-options-panel" class="family-options-panel hidden">
                   <div class="account-actions">
                     <button id="family-create-code-btn" class="btn" type="button">Create League</button>
+                    <button id="family-share-code-btn" class="btn" type="button">Share League</button>
                     <button id="family-league-name-save-btn" class="btn" type="button">Rename League</button>
                     <button id="family-leave-code-btn" class="btn" type="button">Leave League</button>
                     <button id="family-delete-code-btn" class="btn danger" type="button">Delete League</button>
@@ -437,6 +438,16 @@
     </div>
 
     <div id="reward-toast" class="reward-toast hidden" aria-live="polite" role="status"></div>
+    <div id="league-invite-modal" class="league-invite-modal hidden" role="dialog" aria-modal="true" aria-labelledby="league-invite-title">
+      <div class="league-invite-card">
+        <h3 id="league-invite-title">League Invite</h3>
+        <p id="league-invite-text" class="muted">You've been invited to a league. Would you like to join?</p>
+        <div class="account-actions">
+          <button id="league-invite-yes-btn" class="btn" type="button">Yes, Join</button>
+          <button id="league-invite-no-btn" class="btn" type="button">No Thanks</button>
+        </div>
+      </div>
+    </div>
 
     <template id="fixture-template">
       <details class="fixture-item">

@@ -20,6 +20,7 @@ const inflightApiGets = new Map();
 const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
 const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
 const STORED_ACCOUNT_TOKEN = localStorage.getItem("ezra_account_token") || "";
+const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
 const DREAM_TEAM_FORMATIONS = {
   "4-3-3": { DEF: 4, MID: 3, FWD: 3 },
   "4-4-2": { DEF: 4, MID: 4, FWD: 2 },
@@ -225,6 +226,15 @@ const state = {
   clubQuizUi: defaultClubQuizUiState(),
   higherLower: defaultHigherLowerState(),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
+  pendingLeagueInvite:
+    STORED_PENDING_LEAGUE_INVITE && typeof STORED_PENDING_LEAGUE_INVITE === "object"
+      ? {
+          code: String(STORED_PENDING_LEAGUE_INVITE.code || "").toUpperCase(),
+          leagueName: String(STORED_PENDING_LEAGUE_INVITE.leagueName || "").trim(),
+          source: String(STORED_PENDING_LEAGUE_INVITE.source || "stored"),
+        }
+      : null,
+  leagueInviteModalOpen: false,
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
@@ -422,6 +432,7 @@ const el = {
   familyOptionsBtn: document.getElementById("family-options-btn"),
   familyOptionsPanel: document.getElementById("family-options-panel"),
   familyCreateCodeBtn: document.getElementById("family-create-code-btn"),
+  familyShareCodeBtn: document.getElementById("family-share-code-btn"),
   familyLeagueNameInput: document.getElementById("family-league-name-input"),
   familyLeagueNameSaveBtn: document.getElementById("family-league-name-save-btn"),
   familyJoinCodeInput: document.getElementById("family-join-code-input"),
@@ -470,6 +481,10 @@ const el = {
   fixturesPanel: document.getElementById("fixtures-panel"),
   tablePanel: document.getElementById("table-panel"),
   rewardToast: document.getElementById("reward-toast"),
+  leagueInviteModal: document.getElementById("league-invite-modal"),
+  leagueInviteText: document.getElementById("league-invite-text"),
+  leagueInviteYesBtn: document.getElementById("league-invite-yes-btn"),
+  leagueInviteNoBtn: document.getElementById("league-invite-no-btn"),
 };
 
 function hideAppSplash(force = false) {
@@ -856,6 +871,7 @@ function updateFamilyControlsState() {
   const nextBtn = el.familyNextLeagueBtn;
   const optionsBtn = el.familyOptionsBtn;
   const codeBtn = el.familyCreateCodeBtn;
+  const shareBtn = el.familyShareCodeBtn;
   const nameInput = el.familyLeagueNameInput;
   const nameSaveBtn = el.familyLeagueNameSaveBtn;
   const joinInput = el.familyJoinCodeInput;
@@ -872,6 +888,7 @@ function updateFamilyControlsState() {
   if (nextBtn) nextBtn.disabled = !signedIn;
   if (optionsBtn) optionsBtn.disabled = !signedIn;
   if (codeBtn) codeBtn.disabled = !signedIn;
+  if (shareBtn) shareBtn.disabled = !signedIn || !hasLeague;
   if (nameInput) {
     nameInput.disabled = !signedIn;
     nameInput.placeholder = signedIn ? "League name (owner only)" : "Sign in to name your league";
@@ -1635,6 +1652,118 @@ function renderStoryCardsPanel() {
   });
 }
 
+function normalizeLeagueCodeClient(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 12);
+}
+
+function persistPendingLeagueInvite() {
+  if (!state.pendingLeagueInvite?.code) {
+    localStorage.removeItem("ezra_pending_league_invite");
+    return;
+  }
+  localStorage.setItem(
+    "ezra_pending_league_invite",
+    JSON.stringify({
+      code: state.pendingLeagueInvite.code,
+      leagueName: state.pendingLeagueInvite.leagueName || "",
+      source: state.pendingLeagueInvite.source || "stored",
+    })
+  );
+}
+
+function setPendingLeagueInvite(invite) {
+  if (!invite?.code) {
+    state.pendingLeagueInvite = null;
+    persistPendingLeagueInvite();
+    return;
+  }
+  state.pendingLeagueInvite = {
+    code: normalizeLeagueCodeClient(invite.code),
+    leagueName: String(invite.leagueName || "").trim(),
+    source: String(invite.source || "stored"),
+  };
+  persistPendingLeagueInvite();
+}
+
+function closeLeagueInviteModal() {
+  state.leagueInviteModalOpen = false;
+  if (el.leagueInviteModal) {
+    el.leagueInviteModal.classList.add("hidden");
+  }
+}
+
+function openLeagueInviteModal(leagueName, code) {
+  if (!el.leagueInviteModal || !el.leagueInviteText) return;
+  const prettyName = String(leagueName || "").trim() || `League ${code}`;
+  el.leagueInviteText.textContent = `You've been invited to ${prettyName}. Would you like to join?`;
+  state.leagueInviteModalOpen = true;
+  el.leagueInviteModal.classList.remove("hidden");
+}
+
+function resumePendingLeagueInvitePrompt() {
+  const code = normalizeLeagueCodeClient(state.pendingLeagueInvite?.code || "");
+  if (!code) return;
+  if (state.leagueInviteModalOpen) return;
+  openLeagueInviteModal(state.pendingLeagueInvite?.leagueName || `League ${code}`, code);
+}
+
+function buildLeagueInviteUrl(code) {
+  const clean = normalizeLeagueCodeClient(code);
+  if (!clean) return "";
+  const url = new URL(window.location.href);
+  url.searchParams.set("invite", clean);
+  return url.toString();
+}
+
+async function fetchLeagueInviteMeta(code) {
+  const clean = normalizeLeagueCodeClient(code);
+  if (!clean) return null;
+  const payload = await safeLoad(
+    () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/standings?code=${encodeURIComponent(clean)}`),
+    null
+  );
+  if (!payload?.league?.code) return null;
+  return {
+    code: normalizeLeagueCodeClient(payload.league.code),
+    leagueName: String(payload?.league?.name || "").trim() || `League ${clean}`,
+  };
+}
+
+async function promptLeagueInvite(code, source = "link") {
+  const clean = normalizeLeagueCodeClient(code);
+  if (!clean) return;
+  const meta = (await fetchLeagueInviteMeta(clean)) || { code: clean, leagueName: `League ${clean}` };
+  setPendingLeagueInvite({ code: meta.code, leagueName: meta.leagueName, source });
+  openLeagueInviteModal(meta.leagueName, meta.code);
+}
+
+async function processPendingLeagueInviteAfterAuth() {
+  if (!accountSignedIn() || !state.pendingLeagueInvite?.code) return false;
+  const code = normalizeLeagueCodeClient(state.pendingLeagueInvite.code);
+  if (!code) {
+    setPendingLeagueInvite(null);
+    return false;
+  }
+  await joinFamilyLeagueCode(code);
+  setAccountStatus(`Joined ${state.pendingLeagueInvite.leagueName || `League ${code}`} from invite.`);
+  setPendingLeagueInvite(null);
+  closeLeagueInviteModal();
+  return true;
+}
+
+async function handleInviteUrlOnLoad() {
+  const url = new URL(window.location.href);
+  const inviteCode = normalizeLeagueCodeClient(url.searchParams.get("invite") || "");
+  if (!inviteCode) return;
+  url.searchParams.delete("invite");
+  window.history.replaceState({}, "", url.toString());
+  await promptLeagueInvite(inviteCode, "link");
+}
+
 async function joinFamilyLeagueCode(code) {
   ensureFamilyLeagueState();
   if (!accountSignedIn()) {
@@ -2318,6 +2447,11 @@ function renderFamilyLeaguePanel() {
     const canDelete = Boolean(accountSignedIn() && currentLeague?.code);
     el.familyDeleteCodeBtn.disabled = !canDelete;
     el.familyDeleteCodeBtn.title = canDelete ? "Delete this league (owner only)" : "Select a league first";
+  }
+  if (el.familyShareCodeBtn) {
+    const canShare = Boolean(accountSignedIn() && currentLeague?.code);
+    el.familyShareCodeBtn.disabled = !canShare;
+    el.familyShareCodeBtn.title = canShare ? "Share league invite link" : "Select a league first";
   }
   if (el.familyLeaveCodeBtn) {
     const canLeave = Boolean(accountSignedIn() && currentLeague?.code);
@@ -5442,6 +5576,7 @@ async function initAccountSession() {
     state.challengeDashboardAt = 0;
     await safeLoad(() => refreshLeagueDirectory(), null);
     setAccountStatus("Logged out. Existing features still work locally.");
+    resumePendingLeagueInvitePrompt();
     renderFamilyLeaguePanel();
     return;
   }
@@ -5454,11 +5589,13 @@ async function initAccountSession() {
     await safeLoad(() => refreshChallengeDashboard(true), null);
     ensureSignedInUserInFamilyLeague();
     await refreshLeagueDirectory();
+    await processPendingLeagueInviteAfterAuth();
     persistLocalMetaState();
     renderAccountUI();
     renderFamilyLeaguePanel();
     refreshVisibleFixturePredictionBadges();
     setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
+    resumePendingLeagueInvitePrompt();
   } catch (err) {
     state.account.token = "";
     state.account.user = null;
@@ -5469,6 +5606,7 @@ async function initAccountSession() {
     state.challengeDashboard = null;
     state.challengeDashboardAt = 0;
     setAccountStatus(`Logged out. ${err.message}`, true);
+    resumePendingLeagueInvitePrompt();
   }
 }
 
@@ -5491,6 +5629,10 @@ async function registerAccount() {
     return true;
   }, false);
   if (!leaguesOk) partialWarning = true;
+  const inviteJoined = await safeLoad(() => processPendingLeagueInviteAfterAuth(), false);
+  if (inviteJoined === false && state.pendingLeagueInvite?.code && accountSignedIn()) {
+    partialWarning = true;
+  }
   persistLocalMetaState();
   const synced = await safeLoad(() => syncCloudStateNow(), null);
   if (synced === null) partialWarning = true;
@@ -5544,6 +5686,10 @@ async function loginAccount() {
     return true;
   }, false);
   if (!leaguesOk) partialWarning = true;
+  const inviteJoined = await safeLoad(() => processPendingLeagueInviteAfterAuth(), false);
+  if (inviteJoined === false && state.pendingLeagueInvite?.code && accountSignedIn()) {
+    partialWarning = true;
+  }
   persistLocalMetaState();
   scheduleCloudStateSync();
   renderAccountUI();
@@ -8326,6 +8472,52 @@ function attachEvents() {
     });
   }
 
+  if (el.familyShareCodeBtn) {
+    el.familyShareCodeBtn.addEventListener("click", async () => {
+      const currentLeague = currentSelectedLeagueRecord();
+      const code = normalizeLeagueCodeClient(currentLeague?.code || state.familyLeague.leagueCode || "");
+      if (!accountSignedIn()) {
+        setAccountStatus("Sign in to share a league invite.", true);
+        return;
+      }
+      if (!code) {
+        setAccountStatus("Choose a league first, then share.", true);
+        return;
+      }
+      const leagueName = String(currentLeague?.name || "").trim() || `League ${code}`;
+      const url = buildLeagueInviteUrl(code);
+      if (!url) {
+        setAccountStatus("Unable to build invite link.", true);
+        return;
+      }
+      const shareText = `Join my EZRASCORES league: ${leagueName}`;
+      try {
+        if (navigator.share) {
+          await navigator.share({
+            title: "EZRASCORES League Invite",
+            text: shareText,
+            url,
+          });
+          setAccountStatus("League invite shared.");
+          return;
+        }
+      } catch (err) {
+        if (String(err?.name || "") === "AbortError") return;
+      }
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          setAccountStatus("Invite link copied to clipboard.");
+          showRewardToast("Invite link copied", "neutral");
+          return;
+        }
+      } catch {
+        // fallthrough
+      }
+      setAccountStatus(`Share this league link: ${url}`);
+    });
+  }
+
   if (el.familyJoinCodeBtn) {
     el.familyJoinCodeBtn.addEventListener("click", async () => {
       if (!accountSignedIn()) {
@@ -8410,6 +8602,45 @@ function attachEvents() {
       } catch (err) {
         setAccountStatus(`Delete league failed: ${err.message}`, true);
       }
+    });
+  }
+
+  if (el.leagueInviteYesBtn) {
+    el.leagueInviteYesBtn.addEventListener("click", async () => {
+      const code = normalizeLeagueCodeClient(state.pendingLeagueInvite?.code || "");
+      if (!code) {
+        closeLeagueInviteModal();
+        return;
+      }
+      if (!accountSignedIn()) {
+        setAccountMenuOpen(true);
+        setAccountStatus("Sign in or create an account to accept this league invite.");
+        closeLeagueInviteModal();
+        return;
+      }
+      try {
+        await joinFamilyLeagueCode(code);
+        setPendingLeagueInvite(null);
+        closeLeagueInviteModal();
+        showRewardToast("Joined league invite", "success");
+        renderFamilyLeaguePanel();
+      } catch (err) {
+        setAccountStatus(`Invite join failed: ${err.message || "Please try again."}`, true);
+      }
+    });
+  }
+
+  if (el.leagueInviteNoBtn) {
+    el.leagueInviteNoBtn.addEventListener("click", () => {
+      setPendingLeagueInvite(null);
+      closeLeagueInviteModal();
+    });
+  }
+
+  if (el.leagueInviteModal) {
+    el.leagueInviteModal.addEventListener("click", (event) => {
+      if (event.target !== el.leagueInviteModal) return;
+      closeLeagueInviteModal();
     });
   }
 
@@ -8618,6 +8849,10 @@ function attachEvents() {
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (state.leagueInviteModalOpen) {
+      closeLeagueInviteModal();
+      return;
+    }
     if (state.dreamTeamOpen) {
       state.dreamTeamOpen = false;
       state.dreamSwapActiveKey = "";
@@ -8754,6 +8989,8 @@ if (state.playerPopEnabled) {
   showRandomPlayerPop();
 }
 startLiveStream();
-initAccountSession().finally(() => {
-  fullRefresh();
+safeLoad(() => handleInviteUrlOnLoad(), null).finally(() => {
+  initAccountSession().finally(() => {
+    fullRefresh();
+  });
 });
