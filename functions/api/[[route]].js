@@ -13,7 +13,8 @@ function upstreamUrl(version, key, pathWithQuery) {
     return `https://www.thesportsdb.com/api/v1/json/${key}/${pathWithQuery}`;
   }
   if (version === "v2") {
-    return `https://www.thesportsdb.com/api/v2/json/${key}/${pathWithQuery}`;
+    // v2 uses API key in the X-API-KEY header, not in the URL path.
+    return `https://www.thesportsdb.com/api/v2/json/${pathWithQuery}`;
   }
   return "";
 }

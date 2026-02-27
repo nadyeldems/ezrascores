@@ -21,6 +21,8 @@ const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
 const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
 const STORED_ACCOUNT_TOKEN = localStorage.getItem("ezra_account_token") || "";
 const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
+const STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
+const STORED_MOBILE_TAB = localStorage.getItem("ezra_mobile_tab") || "fixtures";
 const DREAM_TEAM_FORMATIONS = {
   "4-3-3": { DEF: 4, MID: 3, FWD: 3 },
   "4-4-2": { DEF: 4, MID: 4, FWD: 2 },
@@ -186,7 +188,7 @@ function loadDreamTeamState() {
 
 const state = {
   selectedLeague: "ALL",
-  mainTab: "home",
+  mainTab: ["home", "play", "predict", "squad", "tables"].includes(STORED_MAIN_TAB) ? STORED_MAIN_TAB : "home",
   serverTimeOffsetMs: 0,
   selectedDate: "",
   selectedDateFixtures: { EPL: [], CHAMP: [] },
@@ -251,7 +253,7 @@ const state = {
   notifications: parseStoredJson("ezra_notifications", defaultNotificationsState()),
   lastQuestNotificationDate: localStorage.getItem("ezra_last_quest_notification_date") || currentUtcDateKey(),
   favoriteDataLoading: false,
-  mobileTab: "fixtures",
+  mobileTab: ["fixtures", "table", "fun"].includes(STORED_MOBILE_TAB) ? STORED_MOBILE_TAB : "fixtures",
   account: {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
@@ -5447,24 +5449,39 @@ function isDeferredEvent(event) {
   return /\b(postponed|suspended|abandoned|cancelled|canceled|delay)\b/.test(s);
 }
 
+function isNotStartedEvent(event) {
+  const s = parseStatusText(event);
+  if (!s) return false;
+  return /\b(not started|ns|scheduled|fixture)\b/.test(s);
+}
+
 function eventState(event) {
   const today = toISODate(new Date());
   const date = event?.dateEvent;
-  if (isLiveEvent(event)) {
+  const hasLiveStatus = isLiveEvent(event);
+  const hasFinalStatus = isFinalEvent(event);
+  const hasDeferredStatus = isDeferredEvent(event);
+  const hasNotStartedStatus = isNotStartedEvent(event);
+  const scored = hasScore(event);
+
+  if (hasNotStartedStatus) {
+    return { key: "upcoming", label: "upcoming" };
+  }
+  if (hasLiveStatus) {
     const progress = liveProgressLabel(event);
     const label = progress === "LIVE" ? "live" : `live ${progress}`;
     return { key: "live", label };
   }
-  if (isFinalEvent(event)) {
+  if (hasFinalStatus) {
     return { key: "final", label: "final score" };
   }
-  if (isDeferredEvent(event)) {
+  if (hasDeferredStatus) {
     return { key: "upcoming", label: "upcoming" };
   }
-  if (hasScore(event) && date && date < today) {
+  if (scored && date && date < today) {
     return { key: "final", label: "final score" };
   }
-  if (hasScore(event) && date === today) {
+  if (scored && date === today) {
     const kickoff = fixtureKickoffDate(event);
     if (kickoff && !Number.isNaN(kickoff.getTime())) {
       const elapsedMs = Date.now() - kickoff.getTime();
@@ -5474,16 +5491,13 @@ function eventState(event) {
     }
     return { key: "live", label: "live" };
   }
-  if (date === today) {
+  if (date === today && !scored && !hasNotStartedStatus && !hasFinalStatus) {
     const kickoff = fixtureKickoffDate(event);
     if (kickoff && !Number.isNaN(kickoff.getTime())) {
       const elapsedMs = Date.now() - kickoff.getTime();
-      if (elapsedMs >= 0 && elapsedMs <= 150 * 60 * 1000) {
-        return { key: "live", label: "live" };
-      }
-      if (elapsedMs > 150 * 60 * 1000) {
-        return { key: "final", label: "final score" };
-      }
+      if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
+      // Without live/final status and without scores, keep as upcoming to avoid false "live" dashes.
+      if (elapsedMs >= 0) return { key: "upcoming", label: "upcoming" };
     }
   }
   return { key: "upcoming", label: "upcoming" };
@@ -7370,6 +7384,7 @@ function startLiveStream() {
 function setMobileTab(tab) {
   const safe = ["fixtures", "table", "fun"].includes(tab) ? tab : "fixtures";
   state.mobileTab = safe;
+  localStorage.setItem("ezra_mobile_tab", safe);
   closeFavoritePickerMenu();
   setSettingsMenuOpen(false);
   setAccountMenuOpen(false);
@@ -7380,6 +7395,7 @@ function setMobileTab(tab) {
 function setMainTab(tab) {
   const safe = ["home", "play", "predict", "squad", "tables"].includes(tab) ? tab : "home";
   state.mainTab = safe;
+  localStorage.setItem("ezra_main_tab", safe);
   closeFavoritePickerMenu();
   setSettingsMenuOpen(false);
   setAccountMenuOpen(false);
