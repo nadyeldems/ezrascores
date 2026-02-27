@@ -79,6 +79,15 @@ function defaultStoryCardState() {
   return { density: "standard", focusTeamIds: [] };
 }
 
+function defaultClubQuizUiState() {
+  return {
+    loading: false,
+    error: "",
+    feedback: "",
+    feedbackMode: "",
+  };
+}
+
 function defaultHigherLowerState() {
   return {
     loading: false,
@@ -106,6 +115,7 @@ function defaultFamilyLeagueState() {
     personalPoints: 0,
     predictions: {},
     questBonusByDate: {},
+    homeExpanded: false,
   };
 }
 
@@ -212,6 +222,7 @@ const state = {
   dreamManualLayout: false,
   missions: parseStoredJson("ezra_missions", defaultMissionState()),
   storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
+  clubQuizUi: defaultClubQuizUiState(),
   higherLower: defaultHigherLowerState(),
   familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
   missionFx: { questId: "", until: 0, timer: null },
@@ -382,6 +393,7 @@ const el = {
   lifetimePointsPill: document.getElementById("lifetime-points-pill"),
   missionsMeta: document.getElementById("missions-meta"),
   missionsList: document.getElementById("missions-list"),
+  clubQuizBody: document.getElementById("club-quiz-body"),
   storyList: document.getElementById("story-list"),
   higherLowerBody: document.getElementById("higher-lower-body"),
   higherLowerStartBtn: document.getElementById("higher-lower-start-btn"),
@@ -764,6 +776,14 @@ function ensureMissionState() {
         popCorrect: 0,
         randomTarget: null,
         randomExplored: false,
+        clubQuiz: {
+          questions: [],
+          current: 0,
+          answered: 0,
+          correct: 0,
+          started: false,
+          completed: false,
+        },
         completed: [
           list.includes("missions-watch-live") ? "quest-pop-5" : null,
           list.includes("missions-favourite") ? "quest-random-player" : null,
@@ -803,6 +823,9 @@ function ensureFamilyLeagueState() {
   if (!state.familyLeague.questBonusByDate || typeof state.familyLeague.questBonusByDate !== "object") {
     state.familyLeague.questBonusByDate = {};
   }
+  if (typeof state.familyLeague.homeExpanded !== "boolean") {
+    state.familyLeague.homeExpanded = false;
+  }
   state.familyLeague.personalPoints = Math.max(0, Number(state.familyLeague.personalPoints || 0));
   state.familyLeague.joinedLeagueCodes = state.familyLeague.joinedLeagueCodes
     .map((code) => String(code || "").trim().toUpperCase())
@@ -829,6 +852,14 @@ function todayQuestState() {
       popCorrect: 0,
       randomTarget: null,
       randomExplored: false,
+      clubQuiz: {
+        questions: [],
+        current: 0,
+        answered: 0,
+        correct: 0,
+        started: false,
+        completed: false,
+      },
       completed: [],
     };
   }
@@ -837,6 +868,22 @@ function todayQuestState() {
   if (!Array.isArray(entry.completed)) entry.completed = [];
   if (typeof entry.randomExplored !== "boolean") entry.randomExplored = false;
   if (!entry.randomTarget || typeof entry.randomTarget !== "object") entry.randomTarget = null;
+  if (!entry.clubQuiz || typeof entry.clubQuiz !== "object") {
+    entry.clubQuiz = {
+      questions: [],
+      current: 0,
+      answered: 0,
+      correct: 0,
+      started: false,
+      completed: false,
+    };
+  }
+  if (!Array.isArray(entry.clubQuiz.questions)) entry.clubQuiz.questions = [];
+  if (!Number.isFinite(Number(entry.clubQuiz.current))) entry.clubQuiz.current = 0;
+  if (!Number.isFinite(Number(entry.clubQuiz.answered))) entry.clubQuiz.answered = 0;
+  if (!Number.isFinite(Number(entry.clubQuiz.correct))) entry.clubQuiz.correct = 0;
+  if (typeof entry.clubQuiz.started !== "boolean") entry.clubQuiz.started = false;
+  if (typeof entry.clubQuiz.completed !== "boolean") entry.clubQuiz.completed = false;
   return entry;
 }
 
@@ -1039,14 +1086,194 @@ function triggerMissionGoalFx(questId, durationMs = 4200) {
   }, durationMs + 120);
 }
 
+function clubQuizDailyState() {
+  const daily = todayQuestState();
+  return daily.clubQuiz;
+}
+
+function currentClubQuizQuestion() {
+  const quiz = clubQuizDailyState();
+  if (!Array.isArray(quiz.questions) || !quiz.questions.length) return null;
+  const idx = Math.max(0, Math.min(Number(quiz.current || 0), quiz.questions.length - 1));
+  return quiz.questions[idx] || null;
+}
+
+async function loadClubQuizQuestions(force = false) {
+  const quiz = clubQuizDailyState();
+  const today = missionDateKey();
+  if (!force && Array.isArray(quiz.questions) && quiz.questions.length >= 3) return quiz.questions;
+  state.clubQuizUi.loading = true;
+  state.clubQuizUi.error = "";
+  renderClubQuizPanel();
+  const payload = await safeLoad(() => apiGetV1(`ezra/clubquiz?d=${encodeURIComponent(today)}`), null);
+  const raw = Array.isArray(payload?.questions) ? payload.questions : [];
+  const questions = raw
+    .map((q) => ({
+      id: String(q?.id || ""),
+      type: String(q?.type || "club"),
+      prompt: String(q?.prompt || "").trim(),
+      imageUrl: String(q?.imageUrl || "").trim(),
+      imageAlt: String(q?.imageAlt || "").trim(),
+      options: Array.isArray(q?.options) ? q.options.map((opt) => String(opt || "").trim()).filter(Boolean).slice(0, 4) : [],
+      answerIndex: Number(q?.answerIndex),
+      teamId: String(q?.teamId || "").trim(),
+    }))
+    .filter((q) => q.id && q.prompt && q.options.length >= 2 && Number.isInteger(q.answerIndex) && q.answerIndex >= 0 && q.answerIndex < q.options.length)
+    .slice(0, 3);
+
+  state.clubQuizUi.loading = false;
+  if (questions.length < 3) {
+    state.clubQuizUi.error = "Daily club quiz is loading. Please try again in a moment.";
+    renderClubQuizPanel();
+    return [];
+  }
+  quiz.questions = questions;
+  quiz.current = 0;
+  quiz.answered = 0;
+  quiz.correct = 0;
+  quiz.started = true;
+  quiz.completed = false;
+  state.clubQuizUi.error = "";
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  renderClubQuizPanel();
+  renderMissionsPanel();
+  return questions;
+}
+
+async function startClubQuiz() {
+  const questions = await loadClubQuizQuestions(false);
+  if (!questions.length) return;
+  const quiz = clubQuizDailyState();
+  quiz.started = true;
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  renderClubQuizPanel();
+  renderMissionsPanel();
+}
+
+function answerClubQuiz(optionIndex) {
+  const quiz = clubQuizDailyState();
+  if (!quiz.started || quiz.completed) return;
+  const question = currentClubQuizQuestion();
+  if (!question) return;
+  const chosen = Number(optionIndex);
+  const correct = Number(question.answerIndex);
+  const isCorrect = chosen === correct;
+  quiz.answered = Math.min(3, Number(quiz.answered || 0) + 1);
+  if (isCorrect) quiz.correct = Number(quiz.correct || 0) + 1;
+  state.clubQuizUi.feedback = isCorrect ? "Correct!" : `Answer: ${question.options[correct] || "Unknown"}`;
+  state.clubQuizUi.feedbackMode = isCorrect ? "correct" : "wrong";
+  if (quiz.answered >= 3) {
+    quiz.completed = true;
+    completeQuest("quest-club-quiz-3");
+  } else {
+    quiz.current = Math.min(Number(quiz.current || 0) + 1, 2);
+  }
+  persistLocalMetaState();
+  scheduleCloudStateSync();
+  renderClubQuizPanel();
+  renderMissionsPanel();
+  renderFamilyLeaguePanel();
+}
+
+function renderClubQuizPanel() {
+  if (!el.clubQuizBody) return;
+  const quiz = clubQuizDailyState();
+  const ui = state.clubQuizUi || defaultClubQuizUiState();
+  if (ui.loading) {
+    el.clubQuizBody.innerHTML = `
+      <div class="challenge-skeleton">
+        <span class="skeleton-line w-40"></span>
+        <span class="skeleton-line w-90"></span>
+        <span class="skeleton-line w-65"></span>
+      </div>
+    `;
+    return;
+  }
+  if (ui.error) {
+    el.clubQuizBody.innerHTML = `<div class="empty">${escapeHtml(ui.error)}</div><button id="club-quiz-retry-btn" class="btn" type="button">Retry</button>`;
+    el.clubQuizBody.querySelector("#club-quiz-retry-btn")?.addEventListener("click", () => {
+      loadClubQuizQuestions(true);
+    });
+    return;
+  }
+  if (!quiz.started || !Array.isArray(quiz.questions) || !quiz.questions.length) {
+    el.clubQuizBody.innerHTML = `
+      <p class="muted">Answer 3 daily club questions (badge, stadium, league) to unlock +5 quest bonus points.</p>
+      <button id="club-quiz-start-btn" class="btn" type="button">Start Club Quiz</button>
+    `;
+    el.clubQuizBody.querySelector("#club-quiz-start-btn")?.addEventListener("click", () => {
+      startClubQuiz();
+    });
+    return;
+  }
+  if (quiz.completed) {
+    el.clubQuizBody.innerHTML = `
+      <div class="higher-lower-status">
+        <span class="family-points">Completed ${Number(quiz.correct || 0)}/3</span>
+        <span class="family-points">+5 awarded</span>
+      </div>
+      <p class="muted">Come back tomorrow for a new daily Club Quiz.</p>
+    `;
+    return;
+  }
+  const q = currentClubQuizQuestion();
+  if (!q) {
+    el.clubQuizBody.innerHTML = `<div class="empty">Question data unavailable.</div>`;
+    return;
+  }
+  const progress = `${Math.min(Number(quiz.answered || 0) + 1, 3)}/3`;
+  const feedback = ui.feedback
+    ? `<p class="club-quiz-feedback ${ui.feedbackMode === "correct" ? "correct" : "wrong"}">${escapeHtml(ui.feedback)}</p>`
+    : "";
+  el.clubQuizBody.innerHTML = `
+    <div class="higher-lower-status">
+      <span class="family-points">Question ${progress}</span>
+      <span class="family-points">Score ${Number(quiz.correct || 0)}</span>
+    </div>
+    <p class="mission-title">${escapeHtml(q.prompt)}</p>
+    ${q.imageUrl ? `<img id="club-quiz-image" class="club-quiz-image" alt="${escapeHtml(q.imageAlt || "Club quiz image")}" />` : ""}
+    <div class="club-quiz-options">
+      ${q.options
+        .map(
+          (opt, idx) =>
+            `<button class="btn club-quiz-option" type="button" data-club-quiz-option="${idx}">${escapeHtml(opt)}</button>`
+        )
+        .join("")}
+    </div>
+    ${feedback}
+  `;
+  if (q.imageUrl) {
+    const img = el.clubQuizBody.querySelector("#club-quiz-image");
+    setImgSrc(img, q.imageUrl, q.imageAlt || "Club quiz image", true);
+    img?.classList.remove("hidden");
+  }
+  [...el.clubQuizBody.querySelectorAll("[data-club-quiz-option]")].forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (state.clubQuizUi.feedback) return;
+      answerClubQuiz(Number(btn.getAttribute("data-club-quiz-option")));
+      setTimeout(() => {
+        state.clubQuizUi.feedback = "";
+        state.clubQuizUi.feedbackMode = "";
+        renderClubQuizPanel();
+      }, 900);
+    });
+  });
+}
+
 function dailyQuestList() {
   const daily = todayQuestState();
   const target = daily.randomTarget;
+  const clubQuiz = daily.clubQuiz || {};
   const popCorrect = Math.min(Number(daily.popCorrect || 0), 5);
   const popDone = isQuestDone("quest-pop-5");
   const popStarted = popCorrect > 0;
   const randomDone = isQuestDone("quest-random-player");
   const randomStarted = Boolean(target);
+  const clubDone = isQuestDone("quest-club-quiz-3");
+  const clubAnswered = Math.min(3, Number(clubQuiz.answered || 0));
+  const clubStarted = Boolean(clubQuiz.started) || clubAnswered > 0;
   return [
     {
       id: "quest-pop-5",
@@ -1073,6 +1300,21 @@ function dailyQuestList() {
       onClick: async () => {
         await startQuestRandomPlayer();
         renderMissionsPanel();
+      },
+    },
+    {
+      id: "quest-club-quiz-3",
+      title: "Complete The Club Quiz",
+      description: clubDone
+        ? "Quest complete. Bonus points awarded."
+        : clubStarted
+        ? `${clubAnswered}/3 questions answered`
+        : "Answer 3 daily club questions to earn bonus points.",
+      done: clubDone,
+      buttonLabel: !clubDone ? (clubStarted ? "Continue Quiz" : "Start Quiz") : null,
+      statusLabel: clubDone ? "Complete" : clubStarted ? `${clubAnswered}/3` : null,
+      onClick: async () => {
+        await startClubQuiz();
       },
     },
   ];
@@ -1891,7 +2133,7 @@ function renderFamilyLeaguePanel() {
     return;
   }
   let displayStandings = standings.slice();
-  if (compactHomeMode) {
+  if (compactHomeMode && !state.familyLeague.homeExpanded) {
     const signedInId = String(state.account.user?.id || "");
     const top = standings.slice(0, 3);
     const hasMe = top.some((m) => String(m.user_id || "") === signedInId);
@@ -1901,6 +2143,21 @@ function renderFamilyLeaguePanel() {
     } else {
       displayStandings = top;
     }
+  }
+  if (compactHomeMode) {
+    const controls = document.createElement("div");
+    controls.className = "family-home-controls";
+    controls.innerHTML = `
+      <button class="btn family-home-toggle-btn" type="button">
+        ${state.familyLeague.homeExpanded ? "Collapse Snapshot" : "Show Full League"}
+      </button>
+    `;
+    controls.querySelector("button")?.addEventListener("click", () => {
+      state.familyLeague.homeExpanded = !state.familyLeague.homeExpanded;
+      persistLocalMetaState();
+      renderFamilyLeaguePanel();
+    });
+    el.familyMembers.appendChild(controls);
   }
   displayStandings.forEach((member) => {
     const index = standings.findIndex((m) => String(m.user_id || "") === String(member.user_id || ""));
@@ -2183,6 +2440,7 @@ function renderFunZone() {
     el.funZoneBody.classList.remove("hidden");
   }
   renderMissionsPanel();
+  renderClubQuizPanel();
   renderStoryCardsPanel();
   renderFamilyLeaguePanel();
   renderChallengeDashboardPanels();

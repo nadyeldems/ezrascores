@@ -1782,6 +1782,229 @@ function liveSnapshotCacheKey(origin) {
   return new Request(`${origin}/api/internal/live/_snapshot`);
 }
 
+function clubQuizCacheKey(origin, dateIso) {
+  return new Request(`${origin}/api/internal/clubquiz/${dateIso}`);
+}
+
+function hashTextSeed(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function seededRng(seedText) {
+  let x = hashTextSeed(seedText) || 123456789;
+  return () => {
+    x += 0x6d2b79f5;
+    let t = x;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pickFromPoolDeterministic(pool, count, rng) {
+  const list = [...pool];
+  for (let i = list.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list.slice(0, Math.max(0, count));
+}
+
+async function handleEzraClubQuizRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const dateIso = normalizeEventDate(url.searchParams.get("d")) || new Date().toISOString().slice(0, 10);
+  const origin = `${url.protocol}//${url.host}`;
+  const cache = caches.default;
+  const cacheKey = clubQuizCacheKey(origin, dateIso);
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const leagueIds = TABLE_LEAGUE_IDS;
+  const leagueNames = {
+    "4328": "English Premier League",
+    "4329": "English League Championship",
+  };
+
+  const tablePayloads = await Promise.all(
+    leagueIds.map((leagueId) => fetchSportsDb("v1", key, `lookuptable.php?l=${encodeURIComponent(leagueId)}`).catch(() => null))
+  );
+  const baseTeams = [];
+  tablePayloads.forEach((payload, idx) => {
+    const leagueId = leagueIds[idx];
+    firstArray(payload).forEach((row) => {
+      const idTeam = String(row?.idTeam || "").trim();
+      const strTeam = String(row?.strTeam || "").trim();
+      if (!idTeam || !strTeam) return;
+      baseTeams.push({
+        idTeam,
+        strTeam,
+        strLeague: leagueNames[leagueId] || "",
+        strBadge: String(row?.strTeamBadge || row?.strBadge || "").trim(),
+      });
+    });
+  });
+  const uniqueTeams = [];
+  const seenTeamIds = new Set();
+  for (const team of baseTeams) {
+    if (seenTeamIds.has(team.idTeam)) continue;
+    seenTeamIds.add(team.idTeam);
+    uniqueTeams.push(team);
+  }
+  if (uniqueTeams.length < 8) {
+    return json({ date: dateIso, questions: [], error: "Insufficient team pool for club quiz." }, 200);
+  }
+
+  const rng = seededRng(`clubquiz:${dateIso}`);
+  const detailCandidates = pickFromPoolDeterministic(uniqueTeams, Math.min(18, uniqueTeams.length), rng);
+  const detailPayloads = await Promise.all(
+    detailCandidates.map((team) => fetchSportsDb("v1", key, `lookupteam.php?id=${encodeURIComponent(team.idTeam)}`).catch(() => null))
+  );
+  const detailedTeams = detailPayloads
+    .map((payload, idx) => {
+      const team = firstArray(payload)?.[0] || {};
+      const base = detailCandidates[idx];
+      return {
+        idTeam: base.idTeam,
+        strTeam: String(team?.strTeam || base.strTeam || "").trim(),
+        strLeague: String(team?.strLeague || base.strLeague || "").trim(),
+        strBadge: String(team?.strBadge || base.strBadge || "").trim(),
+        strStadium: String(team?.strStadium || "").trim(),
+        strStadiumThumb: String(team?.strStadiumThumb || "").trim(),
+      };
+    })
+    .filter((team) => team.idTeam && team.strTeam);
+
+  const poolByName = detailedTeams.filter((team) => team.strTeam);
+  const poolWithBadges = detailedTeams.filter((team) => team.strBadge);
+  const poolWithStadiumImage = detailedTeams.filter((team) => team.strStadium && team.strStadiumThumb);
+  const poolWithLeague = detailedTeams.filter((team) => team.strLeague);
+  const questions = [];
+
+  const makeOptions = (answer, optionsPool, optionLabelFn) => {
+    const distractors = pickFromPoolDeterministic(
+      optionsPool.filter((item) => optionLabelFn(item) !== answer),
+      3,
+      rng
+    )
+      .map(optionLabelFn)
+      .filter(Boolean);
+    const merged = [answer, ...distractors];
+    const shuffled = pickFromPoolDeterministic(merged, merged.length, rng);
+    const answerIndex = shuffled.findIndex((x) => x === answer);
+    return { options: shuffled, answerIndex };
+  };
+
+  if (poolWithBadges.length >= 4) {
+    const answer = poolWithBadges[Math.floor(rng() * poolWithBadges.length)];
+    const opt = makeOptions(answer.strTeam, poolByName, (team) => team.strTeam);
+    if (opt.options.length >= 2 && opt.answerIndex >= 0) {
+      questions.push({
+        id: `logo:${answer.idTeam}`,
+        type: "logo",
+        prompt: "Whose club logo is this?",
+        imageUrl: answer.strBadge,
+        imageAlt: `${answer.strTeam} badge`,
+        teamId: answer.idTeam,
+        options: opt.options,
+        answerIndex: opt.answerIndex,
+      });
+    }
+  }
+
+  if (poolWithStadiumImage.length >= 4) {
+    const answer = poolWithStadiumImage[Math.floor(rng() * poolWithStadiumImage.length)];
+    const opt = makeOptions(answer.strTeam, poolByName, (team) => team.strTeam);
+    if (opt.options.length >= 2 && opt.answerIndex >= 0) {
+      questions.push({
+        id: `stadium:${answer.idTeam}`,
+        type: "stadium",
+        prompt: "Whose stadium is this?",
+        imageUrl: answer.strStadiumThumb,
+        imageAlt: `${answer.strStadium} stadium`,
+        teamId: answer.idTeam,
+        options: opt.options,
+        answerIndex: opt.answerIndex,
+      });
+    }
+  }
+
+  if (poolWithLeague.length >= 4) {
+    const answer = poolWithLeague[Math.floor(rng() * poolWithLeague.length)];
+    const leagueOptionPool = [
+      "English Premier League",
+      "English League Championship",
+      "Spanish La Liga",
+      "Italian Serie A",
+    ];
+    const answerLeague = answer.strLeague || "English Premier League";
+    const leagueDistractors = pickFromPoolDeterministic(
+      leagueOptionPool.filter((name) => name !== answerLeague),
+      3,
+      rng
+    );
+    const options = pickFromPoolDeterministic([answerLeague, ...leagueDistractors], 4, rng);
+    const answerIndex = options.findIndex((x) => x === answerLeague);
+    questions.push({
+      id: `league:${answer.idTeam}`,
+      type: "league",
+      prompt: `Which league does ${answer.strTeam} play in?`,
+      imageUrl: answer.strBadge || "",
+      imageAlt: `${answer.strTeam} badge`,
+      teamId: answer.idTeam,
+      options,
+      answerIndex,
+    });
+  }
+
+  // Backfill with stadium-name question if one of the above is unavailable.
+  if (questions.length < 3) {
+    const poolWithStadium = detailedTeams.filter((team) => team.strStadium);
+    if (poolWithStadium.length >= 4) {
+      const answer = poolWithStadium[Math.floor(rng() * poolWithStadium.length)];
+      const options = pickFromPoolDeterministic(
+        [answer, ...pickFromPoolDeterministic(poolWithStadium.filter((team) => team.idTeam !== answer.idTeam), 3, rng)],
+        4,
+        rng
+      ).map((team) => team.strStadium);
+      const answerIndex = options.findIndex((name) => name === answer.strStadium);
+      if (answerIndex >= 0) {
+        questions.push({
+          id: `stadium-name:${answer.idTeam}`,
+          type: "stadium-name",
+          prompt: `What is the home stadium of ${answer.strTeam}?`,
+          imageUrl: answer.strBadge || "",
+          imageAlt: `${answer.strTeam} badge`,
+          teamId: answer.idTeam,
+          options,
+          answerIndex,
+        });
+      }
+    }
+  }
+
+  const finalQuestions = pickFromPoolDeterministic(questions, Math.min(3, questions.length), rng).map((q, idx) => ({
+    ...q,
+    order: idx + 1,
+  }));
+  const response = json(
+    {
+      date: dateIso,
+      questions: finalQuestions,
+      source: "server",
+    },
+    200,
+    { "Cache-Control": "public, max-age=3600, s-maxage=3600" }
+  );
+  await cache.put(cacheKey, response.clone());
+  return response;
+}
+
 async function fetchSportsDb(version, key, pathWithQuery) {
   const upstream = upstreamUrl(version, key, pathWithQuery);
   if (!upstream) throw new Error("Invalid API version");
@@ -2825,6 +3048,9 @@ export async function onRequest(context) {
     }
     if (version === "v1" && lowerPath === "ezra/teamfixtures" && request.method === "GET") {
       return handleEzraTeamFixturesRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/clubquiz" && request.method === "GET") {
+      return handleEzraClubQuizRoute(context, key);
     }
     if (version === "v1" && lowerPath === "ezra/league" && request.method === "GET") {
       return handleEzraLeagueRoute(context, key);

@@ -2000,6 +2000,16 @@ body.league-member-overlay-open::before {
   opacity: 0.92;
 }
 
+.family-home-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.28rem;
+}
+
+.family-home-toggle-btn {
+  min-height: 1.9rem;
+}
+
 .fun-card {
   border: 1px solid var(--line-soft);
   border-radius: 0.8rem;
@@ -2244,6 +2254,46 @@ body.league-member-overlay-open::before {
 #pop-quiz-panel .player-pop-main,
 #dream-team-card .dream-team-toggle {
   width: 100%;
+}
+
+.club-quiz-body {
+  margin-top: 0.35rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.club-quiz-image {
+  width: 100%;
+  max-height: 9.5rem;
+  object-fit: cover;
+  border-radius: 0.68rem;
+  border: 1px solid var(--line-soft);
+  background: rgba(8, 5, 3, 0.6);
+}
+
+.club-quiz-options {
+  display: grid;
+  gap: 0.34rem;
+}
+
+.club-quiz-option {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  padding-inline: 0.56rem;
+}
+
+.club-quiz-feedback {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.club-quiz-feedback.correct {
+  color: #9ff5a8;
+}
+
+.club-quiz-feedback.wrong {
+  color: #ffc2c2;
 }
 
 .challenge-block {
