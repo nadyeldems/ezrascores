@@ -237,6 +237,7 @@ const state = {
         }
       : null,
   leagueInviteModalOpen: false,
+  pendingInviteJoinIntent: false,
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
@@ -1683,6 +1684,7 @@ function persistPendingLeagueInvite() {
 function setPendingLeagueInvite(invite) {
   if (!invite?.code) {
     state.pendingLeagueInvite = null;
+    state.pendingInviteJoinIntent = false;
     persistPendingLeagueInvite();
     return;
   }
@@ -1770,6 +1772,30 @@ async function processPendingLeagueInviteAfterAuth() {
   if (!code) {
     setPendingLeagueInvite(null);
     return false;
+  }
+  const token = String(state.pendingLeagueInvite?.token || "").trim();
+  if (state.pendingInviteJoinIntent && token) {
+    try {
+      await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/invite/join`, { token }, state.account.token);
+      state.familyLeague.leagueCode = code;
+      if (!state.familyLeague.joinedLeagueCodes.includes(code)) {
+        state.familyLeague.joinedLeagueCodes.push(code);
+      }
+      state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(code));
+      state.pendingInviteJoinIntent = false;
+      setAccountStatus(`Joined ${state.pendingLeagueInvite?.leagueName || `League ${code}`} from invite.`);
+      showRewardToast("Joined league invite", "success");
+      closeLeagueInviteModal();
+      setPendingLeagueInvite(null);
+      renderFamilyLeaguePanel();
+      safeLoad(() => refreshLeagueDirectory(), null);
+      return true;
+    } catch (err) {
+      state.pendingInviteJoinIntent = false;
+      setAccountStatus(`Invite join failed: ${err.message || "Please try again."}`, true);
+      openLeagueInviteModal(state.pendingLeagueInvite.leagueName || `League ${code}`, code);
+      return false;
+    }
   }
   openLeagueInviteModal(state.pendingLeagueInvite.leagueName || `League ${code}`, code);
   return true;
@@ -8659,28 +8685,40 @@ function attachEvents() {
         return;
       }
       if (!accountSignedIn()) {
+        state.pendingInviteJoinIntent = true;
         setAccountMenuOpen(true);
-        setAccountStatus("Sign in or create an account first. We'll ask again after you sign in.");
+        setAccountStatus("Sign in or create an account to continue joining this league.");
+        if (el.accountNameInput) {
+          setTimeout(() => {
+            try {
+              el.accountNameInput.focus();
+            } catch {
+              // no-op
+            }
+          }, 30);
+        }
         closeLeagueInviteModal();
         return;
       }
       try {
         if (token) {
           await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/invite/join`, { token }, state.account.token);
-          await refreshLeagueDirectory();
           state.familyLeague.leagueCode = code;
           if (!state.familyLeague.joinedLeagueCodes.includes(code)) {
             state.familyLeague.joinedLeagueCodes.push(code);
           }
           state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(code));
+          state.pendingInviteJoinIntent = false;
           persistLocalMetaState();
           scheduleCloudStateSync();
           setAccountStatus(`Joined ${state.pendingLeagueInvite?.leagueName || `League ${code}`} from invite.`);
+          safeLoad(() => refreshLeagueDirectory(), null);
         } else {
           await joinFamilyLeagueCode(code, {
             referrerName: state.pendingLeagueInvite?.referrerName || "",
             source: state.pendingLeagueInvite?.source || "link",
           });
+          state.pendingInviteJoinIntent = false;
         }
         setPendingLeagueInvite(null);
         closeLeagueInviteModal();
@@ -8694,6 +8732,7 @@ function attachEvents() {
 
   if (el.leagueInviteNoBtn) {
     el.leagueInviteNoBtn.addEventListener("click", () => {
+      state.pendingInviteJoinIntent = false;
       setPendingLeagueInvite(null);
       closeLeagueInviteModal();
     });
