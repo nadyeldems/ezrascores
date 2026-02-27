@@ -233,6 +233,7 @@ const state = {
           leagueName: String(STORED_PENDING_LEAGUE_INVITE.leagueName || "").trim(),
           source: String(STORED_PENDING_LEAGUE_INVITE.source || "stored"),
           referrerName: String(STORED_PENDING_LEAGUE_INVITE.referrerName || "").trim(),
+          token: String(STORED_PENDING_LEAGUE_INVITE.token || "").trim(),
         }
       : null,
   leagueInviteModalOpen: false,
@@ -255,6 +256,7 @@ const state = {
     recoveryOpen: false,
     uiState: "SIGNED_OUT_IDLE",
     pending: {},
+    activeAction: "",
     errorLog: [],
     syncTimer: null,
     leagueRefreshTimer: null,
@@ -1673,6 +1675,7 @@ function persistPendingLeagueInvite() {
       leagueName: state.pendingLeagueInvite.leagueName || "",
       source: state.pendingLeagueInvite.source || "stored",
       referrerName: state.pendingLeagueInvite.referrerName || "",
+      token: state.pendingLeagueInvite.token || "",
     })
   );
 }
@@ -1688,6 +1691,7 @@ function setPendingLeagueInvite(invite) {
     leagueName: String(invite.leagueName || "").trim(),
     source: String(invite.source || "stored"),
     referrerName: String(invite.referrerName || "").trim(),
+    token: String(invite.token || "").trim(),
   };
   persistPendingLeagueInvite();
 }
@@ -1717,40 +1721,46 @@ function resumePendingLeagueInvitePrompt() {
   openLeagueInviteModal(state.pendingLeagueInvite?.leagueName || `League ${code}`, code);
 }
 
-function buildLeagueInviteUrl(code, referrerName = "") {
-  const clean = normalizeLeagueCodeClient(code);
+function buildLeagueInviteUrl(token) {
+  const clean = String(token || "").trim();
   if (!clean) return "";
   const url = new URL(window.location.href);
-  url.searchParams.set("invite", clean);
-  const ref = String(referrerName || "").trim();
-  if (ref) {
-    url.searchParams.set("ref", ref);
-  } else {
-    url.searchParams.delete("ref");
-  }
-  url.searchParams.set("src", "share");
+  url.searchParams.set("inv", clean);
   return url.toString();
 }
 
-async function fetchLeagueInviteMeta(code) {
-  const clean = normalizeLeagueCodeClient(code);
+async function fetchLeagueInviteMeta(token) {
+  const clean = String(token || "").trim();
   if (!clean) return null;
   const payload = await safeLoad(
-    () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/standings?code=${encodeURIComponent(clean)}`),
+    () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/invite/meta?token=${encodeURIComponent(clean)}`),
     null
   );
-  if (!payload?.league?.code) return null;
+  if (!payload?.invite?.leagueCode) return null;
   return {
-    code: normalizeLeagueCodeClient(payload.league.code),
-    leagueName: String(payload?.league?.name || "").trim() || `League ${clean}`,
+    code: normalizeLeagueCodeClient(payload.invite.leagueCode),
+    leagueName: String(payload?.invite?.leagueName || "").trim() || "League Invite",
+    referrerName: String(payload?.invite?.referrerName || "").trim(),
+    source: "link",
+    token: clean,
   };
 }
 
-async function promptLeagueInvite(code, source = "link", referrerName = "") {
-  const clean = normalizeLeagueCodeClient(code);
+async function promptLeagueInvite(token, source = "link") {
+  const clean = String(token || "").trim();
   if (!clean) return;
-  const meta = (await fetchLeagueInviteMeta(clean)) || { code: clean, leagueName: `League ${clean}` };
-  setPendingLeagueInvite({ code: meta.code, leagueName: meta.leagueName, source, referrerName });
+  const meta = await fetchLeagueInviteMeta(clean);
+  if (!meta?.code) {
+    setAccountStatus("This invite link is invalid or expired.", true);
+    return;
+  }
+  setPendingLeagueInvite({
+    code: meta.code,
+    leagueName: meta.leagueName,
+    source: source || meta.source || "link",
+    referrerName: meta.referrerName || "",
+    token: clean,
+  });
   openLeagueInviteModal(meta.leagueName, meta.code);
 }
 
@@ -1767,15 +1777,13 @@ async function processPendingLeagueInviteAfterAuth() {
 
 async function handleInviteUrlOnLoad() {
   const url = new URL(window.location.href);
-  const inviteCode = normalizeLeagueCodeClient(url.searchParams.get("invite") || "");
-  const referrerName = String(url.searchParams.get("ref") || "").trim();
+  const inviteToken = String(url.searchParams.get("inv") || "").trim();
   const source = String(url.searchParams.get("src") || "link").trim() || "link";
-  if (!inviteCode) return;
-  url.searchParams.delete("invite");
-  url.searchParams.delete("ref");
+  if (!inviteToken) return;
+  url.searchParams.delete("inv");
   url.searchParams.delete("src");
   window.history.replaceState({}, "", url.toString());
-  await promptLeagueInvite(inviteCode, source, referrerName);
+  await promptLeagueInvite(inviteToken, source);
 }
 
 async function joinFamilyLeagueCode(code, options = {}) {
@@ -5668,6 +5676,14 @@ async function registerAccount() {
 }
 
 async function runAccountAction(action, startText, errorPrefix, task) {
+  const authActions = new Set(["register", "login", "recovery_send", "recovery_reset", "logout"]);
+  if (authActions.has(action) && state.account.activeAction && state.account.activeAction !== action) {
+    setAccountStatus("Please wait for the current account action to finish.");
+    return null;
+  }
+  if (authActions.has(action)) {
+    state.account.activeAction = action;
+  }
   setAccountPending(action, true);
   trackAccountEvent(`${action}_start`);
   if (startText) setAccountStatus(startText);
@@ -5683,6 +5699,9 @@ async function runAccountAction(action, startText, errorPrefix, task) {
     throw err;
   } finally {
     setAccountPending(action, false);
+    if (state.account.activeAction === action) {
+      state.account.activeAction = "";
+    }
     renderAccountUI();
   }
 }
@@ -8506,9 +8525,14 @@ function attachEvents() {
         return;
       }
       const leagueName = String(currentLeague?.name || "").trim() || `League ${code}`;
-      const url = buildLeagueInviteUrl(code, state.account.user?.name || "");
-      if (!url) {
-        setAccountStatus("Unable to build invite link.", true);
+      const invitePayload = await safeLoad(
+        () => apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/invite/create`, { code }, state.account.token),
+        null
+      );
+      const inviteToken = String(invitePayload?.invite?.token || "").trim();
+      const url = buildLeagueInviteUrl(inviteToken);
+      if (!inviteToken || !url) {
+        setAccountStatus("Unable to create invite link right now.", true);
         return;
       }
       const shareText = `Join my EZRASCORES league: ${leagueName}`;
@@ -8629,6 +8653,7 @@ function attachEvents() {
   if (el.leagueInviteYesBtn) {
     el.leagueInviteYesBtn.addEventListener("click", async () => {
       const code = normalizeLeagueCodeClient(state.pendingLeagueInvite?.code || "");
+      const token = String(state.pendingLeagueInvite?.token || "").trim();
       if (!code) {
         closeLeagueInviteModal();
         return;
@@ -8640,10 +8665,23 @@ function attachEvents() {
         return;
       }
       try {
-        await joinFamilyLeagueCode(code, {
-          referrerName: state.pendingLeagueInvite?.referrerName || "",
-          source: state.pendingLeagueInvite?.source || "link",
-        });
+        if (token) {
+          await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/invite/join`, { token }, state.account.token);
+          await refreshLeagueDirectory();
+          state.familyLeague.leagueCode = code;
+          if (!state.familyLeague.joinedLeagueCodes.includes(code)) {
+            state.familyLeague.joinedLeagueCodes.push(code);
+          }
+          state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(code));
+          persistLocalMetaState();
+          scheduleCloudStateSync();
+          setAccountStatus(`Joined ${state.pendingLeagueInvite?.leagueName || `League ${code}`} from invite.`);
+        } else {
+          await joinFamilyLeagueCode(code, {
+            referrerName: state.pendingLeagueInvite?.referrerName || "",
+            source: state.pendingLeagueInvite?.source || "link",
+          });
+        }
         setPendingLeagueInvite(null);
         closeLeagueInviteModal();
         showRewardToast("Joined league invite", "success");

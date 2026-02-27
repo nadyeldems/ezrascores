@@ -121,11 +121,63 @@ function randomHex(bytes = 16) {
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function toBase64Url(bytes) {
+  let binary = "";
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (let i = 0; i < arr.length; i += 1) binary += String.fromCharCode(arr[i]);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function fromBase64Url(value) {
+  const clean = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  if (!clean) return new Uint8Array();
+  const pad = clean.length % 4 === 0 ? "" : "=".repeat(4 - (clean.length % 4));
+  const binary = atob(clean + pad);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
 async function sha256Hex(text) {
   const data = new TextEncoder().encode(text);
   const digest = await crypto.subtle.digest("SHA-256", data);
   const bytes = new Uint8Array(digest);
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function signInviteToken(payload, secret) {
+  const body = toBase64Url(new TextEncoder().encode(JSON.stringify(payload)));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(String(secret || "")),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  return `${body}.${toBase64Url(new Uint8Array(sig))}`;
+}
+
+async function verifyInviteToken(token, secret) {
+  const raw = String(token || "");
+  const parts = raw.split(".");
+  if (parts.length !== 2) return { ok: false, error: "Invalid token format." };
+  const [body, sig] = parts;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(String(secret || "")),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"]
+  );
+  const valid = await crypto.subtle.verify("HMAC", key, fromBase64Url(sig), new TextEncoder().encode(body));
+  if (!valid) return { ok: false, error: "Invalid token signature." };
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body)));
+    return { ok: true, payload };
+  } catch {
+    return { ok: false, error: "Invalid token payload." };
+  }
 }
 
 function getBearerToken(request) {
@@ -206,6 +258,30 @@ async function ensureAccountSchema(db) {
       )
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_league_members_user_id ON ezra_league_members(user_id)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_league_invites (
+        id TEXT PRIMARY KEY,
+        league_code TEXT NOT NULL,
+        inviter_user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        FOREIGN KEY (league_code) REFERENCES ezra_leagues(code),
+        FOREIGN KEY (inviter_user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_league_invites_code ON ezra_league_invites(league_code, expires_at)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_league_invite_joins (
+        invite_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (invite_id, user_id),
+        FOREIGN KEY (invite_id) REFERENCES ezra_league_invites(id),
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_league_invite_joins_user ON ezra_league_invite_joins(user_id)`,
     `
       CREATE TABLE IF NOT EXISTS ezra_event_results_cache (
         event_id TEXT PRIMARY KEY,
@@ -1695,6 +1771,153 @@ async function handleLeagueJoin(db, request) {
   return json({ ok: true, code, alreadyMember: Boolean(existingMember), referralTracked: Boolean(referrerUserId) }, 200);
 }
 
+async function handleLeagueInviteCreate(db, request, env) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const code = normalizeLeagueCode(body?.code);
+  if (!code) return json({ error: "Invalid league code." }, 400);
+  const league = await db.prepare("SELECT code, name FROM ezra_leagues WHERE code = ?1 LIMIT 1").bind(code).first();
+  if (!league) return json({ error: "League code not found." }, 404);
+  const member = await db
+    .prepare("SELECT 1 AS ok FROM ezra_league_members WHERE league_code = ?1 AND user_id = ?2 LIMIT 1")
+    .bind(code, session.user_id)
+    .first();
+  if (!member?.ok) return json({ error: "You must be in this league to share invites." }, 403);
+  const secret = String(env?.EZRA_INVITE_SECRET || env?.EZRA_CRON_SECRET || "").trim();
+  if (!secret) return json({ error: "Invite secret not configured." }, 503);
+  const now = Date.now();
+  const ttlMs = 1000 * 60 * 60 * 24 * 7;
+  const inviteId = randomHex(12);
+  await db
+    .prepare(
+      `INSERT INTO ezra_league_invites (id, league_code, inviter_user_id, created_at, expires_at, status)
+       VALUES (?1, ?2, ?3, ?4, ?5, 'active')`
+    )
+    .bind(inviteId, code, session.user_id, new Date(now).toISOString(), now + ttlMs)
+    .run();
+  const payload = {
+    i: inviteId,
+    l: code,
+    u: String(session.user_id || ""),
+    n: String(session.name || ""),
+    iat: now,
+    exp: now + ttlMs,
+    src: "share",
+  };
+  const token = await signInviteToken(payload, secret);
+  return json(
+    {
+      ok: true,
+      invite: {
+        token,
+        inviteId,
+        leagueCode: code,
+        leagueName: normalizeLeagueName(league.name, `League ${code}`),
+        referrerName: String(session.name || ""),
+        expiresAt: now + ttlMs,
+      },
+    },
+    200
+  );
+}
+
+async function handleLeagueInviteMeta(db, request, env) {
+  const url = new URL(request.url);
+  const token = String(url.searchParams.get("token") || "").trim();
+  if (!token) return json({ error: "Missing invite token." }, 400);
+  const secret = String(env?.EZRA_INVITE_SECRET || env?.EZRA_CRON_SECRET || "").trim();
+  if (!secret) return json({ error: "Invite secret not configured." }, 503);
+  const verified = await verifyInviteToken(token, secret);
+  if (!verified.ok) return json({ error: verified.error || "Invalid invite token." }, 400);
+  const payload = verified.payload && typeof verified.payload === "object" ? verified.payload : {};
+  const inviteId = String(payload.i || "").trim();
+  const code = normalizeLeagueCode(payload.l);
+  const exp = Number(payload.exp || 0);
+  if (!inviteId || !code || !Number.isFinite(exp)) return json({ error: "Invalid invite payload." }, 400);
+  if (Date.now() > exp) return json({ error: "Invite has expired." }, 410);
+  const invite = await db
+    .prepare("SELECT id, league_code, inviter_user_id, expires_at, status FROM ezra_league_invites WHERE id = ?1 LIMIT 1")
+    .bind(inviteId)
+    .first();
+  if (!invite || String(invite.status || "") !== "active" || Number(invite.expires_at || 0) < Date.now()) {
+    return json({ error: "Invite is no longer active." }, 410);
+  }
+  const league = await db.prepare("SELECT code, name FROM ezra_leagues WHERE code = ?1 LIMIT 1").bind(code).first();
+  if (!league) return json({ error: "League not found." }, 404);
+  return json(
+    {
+      ok: true,
+      invite: {
+        token,
+        inviteId,
+        leagueCode: code,
+        leagueName: normalizeLeagueName(league.name, `League ${code}`),
+        referrerName: String(payload.n || "").trim(),
+        expiresAt: Number(invite.expires_at || exp),
+      },
+    },
+    200
+  );
+}
+
+async function handleLeagueJoinInvite(db, request, env) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const token = String(body?.token || "").trim();
+  if (!token) return json({ error: "Missing invite token." }, 400);
+  const secret = String(env?.EZRA_INVITE_SECRET || env?.EZRA_CRON_SECRET || "").trim();
+  if (!secret) return json({ error: "Invite secret not configured." }, 503);
+  const verified = await verifyInviteToken(token, secret);
+  if (!verified.ok) return json({ error: verified.error || "Invalid invite token." }, 400);
+  const payload = verified.payload && typeof verified.payload === "object" ? verified.payload : {};
+  const inviteId = String(payload.i || "").trim();
+  const code = normalizeLeagueCode(payload.l);
+  const inviterUserId = String(payload.u || "").trim();
+  const referrerName = normalizeName(payload.n || "");
+  const source = String(payload.src || "share").trim().slice(0, 32);
+  const exp = Number(payload.exp || 0);
+  if (!inviteId || !code || !Number.isFinite(exp)) return json({ error: "Invalid invite payload." }, 400);
+  if (Date.now() > exp) return json({ error: "Invite has expired." }, 410);
+  const invite = await db
+    .prepare("SELECT id, league_code, inviter_user_id, expires_at, status FROM ezra_league_invites WHERE id = ?1 LIMIT 1")
+    .bind(inviteId)
+    .first();
+  if (!invite || String(invite.status || "") !== "active" || Number(invite.expires_at || 0) < Date.now()) {
+    return json({ error: "Invite is no longer active." }, 410);
+  }
+  const league = await db.prepare("SELECT code FROM ezra_leagues WHERE code = ?1 LIMIT 1").bind(code).first();
+  if (!league) return json({ error: "League code not found." }, 404);
+  const alreadyMember = await db
+    .prepare("SELECT 1 AS ok FROM ezra_league_members WHERE league_code = ?1 AND user_id = ?2 LIMIT 1")
+    .bind(code, session.user_id)
+    .first();
+  if (!alreadyMember) {
+    const nowIso = new Date().toISOString();
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO ezra_league_members
+          (league_code, user_id, joined_at, joined_via_invite, invited_by_user_id, invite_source, invite_referrer_name)
+         VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6)`
+      )
+      .bind(
+        code,
+        session.user_id,
+        nowIso,
+        inviterUserId && inviterUserId !== session.user_id ? inviterUserId : null,
+        source || null,
+        referrerName || null
+      )
+      .run();
+  }
+  await db
+    .prepare("INSERT OR IGNORE INTO ezra_league_invite_joins (invite_id, user_id, joined_at) VALUES (?1, ?2, ?3)")
+    .bind(inviteId, session.user_id, new Date().toISOString())
+    .run();
+  return json({ ok: true, code, alreadyMember: Boolean(alreadyMember), referralTracked: Boolean(inviterUserId) }, 200);
+}
+
 async function handleLeagueList(db, request, key) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
@@ -2180,6 +2403,15 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "league/join" && request.method === "POST") {
       return handleLeagueJoin(db, request);
+    }
+    if (route === "league/invite/create" && request.method === "POST") {
+      return handleLeagueInviteCreate(db, request, env);
+    }
+    if (route === "league/invite/meta" && request.method === "GET") {
+      return handleLeagueInviteMeta(db, request, env);
+    }
+    if (route === "league/invite/join" && request.method === "POST") {
+      return handleLeagueJoinInvite(db, request, env);
     }
     if (route === "league/name" && (request.method === "PUT" || request.method === "PATCH")) {
       return handleLeagueRename(db, request);
