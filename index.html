@@ -141,13 +141,6 @@
           </div>
         </div>
       </header>
-      <div id="sticky-date-bar" class="sticky-date-bar hidden" aria-label="Quick date controls">
-        <button id="sticky-date-prev" class="btn sticky-date-btn" type="button" aria-label="Previous day">◀</button>
-        <button id="sticky-date-today" class="btn sticky-date-btn" type="button">Today</button>
-        <span id="sticky-date-label" class="sticky-date-label">--</span>
-        <button id="sticky-date-next" class="btn sticky-date-btn" type="button" aria-label="Next day">▶</button>
-      </div>
-
       <section id="favorite-banner" class="favorite-banner" aria-live="polite">
         <div class="favorite-empty" id="favorite-empty">
           <p>No favourite team selected yet.</p>
@@ -203,9 +196,8 @@
         <section class="panel hidden" id="squad-panel">
           <div class="panel-head squad-head">
             <h3 id="squad-title">Squad</h3>
-            <button id="squad-toggle-btn" class="btn" type="button" aria-expanded="false">Show Squad</button>
           </div>
-          <div id="squad-body" class="hidden">
+          <div id="squad-body">
             <div id="squad-list" class="squad-list"></div>
           </div>
         </section>
@@ -365,7 +357,7 @@
 
         <section class="panel controls-panel" id="controls-panel">
           <div class="filter-toolbar">
-            <div class="filter-group">
+            <div id="league-filter-group" class="filter-group">
               <p class="filter-label">League Filter</p>
               <div class="league-controls" role="tablist" aria-label="League selection">
                 <button class="btn league-btn active" type="button" data-league="EPL">Premier League</button>
@@ -373,7 +365,7 @@
                 <button class="btn league-btn" type="button" data-league="ALL">All</button>
               </div>
             </div>
-            <div class="filter-group">
+            <div id="date-filter-group" class="filter-group">
               <p class="filter-label">Date Filter</p>
               <div class="date-controls">
                 <button class="btn date-quick-btn" type="button" data-offset="-1">Yesterday</button>

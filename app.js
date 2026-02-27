@@ -435,7 +435,6 @@ const el = {
   leagueMemberCloseBtn: document.getElementById("league-member-close-btn"),
   squadPanel: document.getElementById("squad-panel"),
   squadTitle: document.getElementById("squad-title"),
-  squadToggleBtn: document.getElementById("squad-toggle-btn"),
   squadBody: document.getElementById("squad-body"),
   squadList: document.getElementById("squad-list"),
   playerDvdLayer: document.getElementById("player-dvd-layer"),
@@ -448,11 +447,8 @@ const el = {
   playerQuizOptions: document.getElementById("player-quiz-options"),
   playerQuizFeedback: document.getElementById("player-quiz-feedback"),
   controlsPanel: document.querySelector(".controls-panel"),
-  stickyDateBar: document.getElementById("sticky-date-bar"),
-  stickyDateLabel: document.getElementById("sticky-date-label"),
-  stickyDatePrev: document.getElementById("sticky-date-prev"),
-  stickyDateToday: document.getElementById("sticky-date-today"),
-  stickyDateNext: document.getElementById("sticky-date-next"),
+  leagueFilterGroup: document.getElementById("league-filter-group"),
+  dateFilterGroup: document.getElementById("date-filter-group"),
   funZonePanel: document.getElementById("fun-zone-panel"),
   fixturesPanel: document.getElementById("fixtures-panel"),
   tablePanel: document.getElementById("table-panel"),
@@ -2190,7 +2186,7 @@ function renderFamilyLeaguePanel() {
     const rank = index >= 0 ? index + 1 : displayStandings.indexOf(member) + 1;
     const isSignedInMember = String(member.user_id || "") === String(state.account.user?.id || "");
     const titlesWon = Math.max(0, Number(member.titles_won || 0));
-    const titleBadge = titlesWon > 0 ? ` 🏆 x${titlesWon}` : "";
+    const titleBadge = titlesWon > 0 ? ` <span class="title-badge">🏆 x${titlesWon}</span>` : rank === 1 ? ` <span class="title-badge title-badge-ghost">🏆</span>` : "";
     const row = document.createElement("div");
     row.className = `family-row ${isSignedInMember ? "active" : ""}`;
     row.setAttribute("role", "button");
@@ -3522,15 +3518,13 @@ function sortSquadByRole(list) {
 }
 
 function renderSquadPanel() {
-  if (!el.squadPanel || !el.squadList || !el.squadTitle || !el.squadToggleBtn || !el.squadBody) return;
+  if (!el.squadPanel || !el.squadList || !el.squadTitle || !el.squadBody) return;
   const favorite = state.favoriteTeam;
   if (!favorite?.idTeam) {
     state.squadOpen = false;
     state.selectedSquadPlayerKey = "";
     el.squadPanel.classList.add("hidden");
     el.squadBody.classList.add("hidden");
-    el.squadToggleBtn.setAttribute("aria-expanded", "false");
-    el.squadToggleBtn.textContent = "Show Squad";
     el.squadList.innerHTML = "";
     return;
   }
@@ -3539,9 +3533,8 @@ function renderSquadPanel() {
     state.selectedSquadPlayerKey = "";
   }
   el.squadPanel.classList.remove("hidden");
-  el.squadBody.classList.toggle("hidden", !state.squadOpen);
-  el.squadToggleBtn.setAttribute("aria-expanded", String(state.squadOpen));
-  el.squadToggleBtn.textContent = state.squadOpen ? "Hide Squad" : "Show Squad";
+  state.squadOpen = true;
+  el.squadBody.classList.remove("hidden");
   el.squadTitle.textContent = `${favorite.strTeam} Squad`;
   el.squadList.innerHTML = "";
 
@@ -4800,6 +4793,7 @@ function formatDateTime(dateStr, timeStr) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
   });
 }
 
@@ -4808,6 +4802,18 @@ function formatDateUK(dateIso) {
   const [y, m, d] = dateIso.split("-").map(Number);
   const date = new Date(y, (m || 1) - 1, d || 1);
   return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function formatDateWithDayUK(dateIso) {
+  if (!dateIso) return "--";
+  const [y, m, d] = dateIso.split("-").map(Number);
+  const date = new Date(y, (m || 1) - 1, d || 1);
+  return date.toLocaleDateString("en-GB", {
+    weekday: "short",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -4948,7 +4954,7 @@ function formatKickoffTime(event) {
   if (event?.dateEvent) {
     const dt = new Date(`${event.dateEvent}T${event.strTime}`);
     if (!Number.isNaN(dt.getTime())) {
-      return dt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+      return dt.toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
     }
   }
   const time = event.strTime.slice(0, 5);
@@ -6514,28 +6520,24 @@ function updateDateNavControls() {
     el.dateNextBtn.disabled = atMax;
     el.dateNextBtn.title = atMax ? `Latest available date: ${formatDateUK(bounds.maxIso)}` : "Next day";
   }
-  if (el.stickyDatePrev) {
-    el.stickyDatePrev.disabled = atMin;
-    el.stickyDatePrev.title = atMin ? `Earliest available date: ${formatDateUK(bounds.minIso)}` : "Previous day";
-  }
-  if (el.stickyDateNext) {
-    el.stickyDateNext.disabled = atMax;
-    el.stickyDateNext.title = atMax ? `Latest available date: ${formatDateUK(bounds.maxIso)}` : "Next day";
-  }
 }
 
 function renderFixtures() {
-  const desktopHomeMode = !isMobileViewport() && state.mainTab === "home";
-  if (desktopHomeMode) {
-    el.fixturesTitle.textContent = "Today's Key Fixtures";
-  } else {
-    el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateUK(state.selectedDate)})`;
-  }
+  const homeMode = state.mainTab === "home";
   let events;
-  if (desktopHomeMode) {
+  if (homeMode) {
     const today = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP];
-    events = today.sort(fixtureSort).slice(0, 5);
+    const tomorrow = [...state.fixtures.next.EPL, ...state.fixtures.next.CHAMP];
+    const todaySorted = today.sort(fixtureSort);
+    if (todaySorted.length > 0) {
+      el.fixturesTitle.textContent = `Today's Fixtures (${formatDateWithDayUK(toISODate(new Date()))})`;
+      events = todaySorted.slice(0, 5);
+    } else {
+      el.fixturesTitle.textContent = `No fixtures today • Tomorrow's Fixtures (${formatDateWithDayUK(addDaysIso(toISODate(new Date()), 1))})`;
+      events = tomorrow.sort(fixtureSort).slice(0, 5);
+    }
   } else {
+    el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateWithDayUK(state.selectedDate)})`;
     events =
       state.selectedLeague === "ALL"
         ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
@@ -6547,10 +6549,6 @@ function renderFixtures() {
     const bounds = fixtureWindowBounds();
     el.datePicker.min = bounds.minIso;
     el.datePicker.max = bounds.maxIso;
-  }
-  if (el.stickyDateLabel) {
-    const d = state.selectedDate ? new Date(`${state.selectedDate}T00:00:00`) : new Date();
-    el.stickyDateLabel.textContent = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   }
   setDateButtonState();
   updateDateNavControls();
@@ -6708,10 +6706,19 @@ function renderMobileSectionLayout() {
   const tablesTab = state.mainTab === "tables";
 
   setPanelVisible(controls, predict || tablesTab);
+  if (el.dateFilterGroup) {
+    el.dateFilterGroup.classList.toggle("hidden", tablesTab);
+  }
+  if (el.leagueFilterGroup) {
+    el.leagueFilterGroup.classList.remove("hidden");
+  }
   setPanelVisible(fixtures, home || predict);
   setPanelVisible(tables, tablesTab);
   setPanelVisible(fun, home || play);
-  if (squad) setPanelVisible(squad, squadTab);
+  if (squad) {
+    setPanelVisible(squad, squadTab);
+    if (squadTab) state.squadOpen = true;
+  }
   fun.classList.toggle("home-focus", home);
 }
 
@@ -6853,17 +6860,6 @@ function renderTableSkeletons(count = 2) {
     `;
     el.tablesWrap.appendChild(row);
   }
-}
-
-function updateStickyDateBarVisibility() {
-  if (!el.stickyDateBar || !el.controlsPanel) return;
-  if (!isMobileViewport()) {
-    el.stickyDateBar.classList.add("hidden");
-    return;
-  }
-  const rect = el.controlsPanel.getBoundingClientRect();
-  const shouldShow = rect.bottom < 70;
-  el.stickyDateBar.classList.toggle("hidden", !shouldShow);
 }
 
 function initRevealOnScroll() {
@@ -7886,7 +7882,6 @@ async function fullRefresh() {
       renderTables();
     }
     renderFunZone();
-    updateStickyDateBarVisibility();
     setLeagueButtonState();
     if (state.playerPopEnabled && el.playerDvdLayer?.classList.contains("hidden")) {
       showRandomPlayerPop();
@@ -7895,9 +7890,6 @@ async function fullRefresh() {
 
     state.lastRefresh = new Date();
     renderLastRefreshed();
-    if (el.fixturesTitle) {
-      el.fixturesTitle.textContent = selectedDateLabel(state.selectedDate);
-    }
     console.debug(`[perf] fullRefresh ${Math.round(performance.now() - perfStart)}ms`);
     nextContext = currentPollContext();
   } catch (err) {
@@ -7915,9 +7907,6 @@ async function fullRefresh() {
     renderFunZone();
     if (el.lastRefreshed) {
       el.lastRefreshed.textContent = `Last refresh failed: ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
-    }
-    if (el.fixturesTitle) {
-      el.fixturesTitle.textContent = selectedDateLabel(state.selectedDate || toISODate(new Date()));
     }
   } finally {
     state.refreshInFlight = false;
@@ -8210,13 +8199,6 @@ function attachEvents() {
     });
   }
 
-  if (el.squadToggleBtn) {
-    el.squadToggleBtn.addEventListener("click", () => {
-      state.squadOpen = !state.squadOpen;
-      renderSquadPanel();
-    });
-  }
-
   if (el.higherLowerStartBtn) {
     el.higherLowerStartBtn.addEventListener("click", async () => {
       await startHigherLowerGame(true);
@@ -8224,7 +8206,6 @@ function attachEvents() {
   }
 
   window.addEventListener("resize", () => {
-    updateStickyDateBarVisibility();
     positionFavoritePickerMenu();
     renderMobileSectionLayout();
     if (!state.playerPopEnabled || !el.playerDvdLayer || el.playerDvdLayer.classList.contains("hidden")) return;
@@ -8333,24 +8314,7 @@ function attachEvents() {
     });
   }
 
-  if (el.stickyDatePrev) {
-    el.stickyDatePrev.addEventListener("click", () => {
-      shiftSelectedDate(-1);
-    });
-  }
-  if (el.stickyDateNext) {
-    el.stickyDateNext.addEventListener("click", () => {
-      shiftSelectedDate(1);
-    });
-  }
-  if (el.stickyDateToday) {
-    el.stickyDateToday.addEventListener("click", () => {
-      scheduleSelectedDateChange(toISODate(new Date()));
-    });
-  }
-
   window.addEventListener("scroll", () => {
-    updateStickyDateBarVisibility();
     positionFavoritePickerMenu();
   });
 
@@ -8421,7 +8385,6 @@ setAccountMenuOpen(false);
 setNotificationsOpen(false);
 setFamilyOptionsOpen(false);
 initRevealOnScroll();
-updateStickyDateBarVisibility();
 persistLocalMetaState();
 renderFunZone();
 renderMobileSectionLayout();
