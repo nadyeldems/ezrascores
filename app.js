@@ -5683,8 +5683,35 @@ function eventState(event) {
   const hasDeferredStatus = isDeferredEvent(event);
   const hasNotStartedStatus = isNotStartedEvent(event);
   const scored = hasScore(event);
+  const kickoff = fixtureKickoffDate(event);
+  const elapsedMs = kickoff && !Number.isNaN(kickoff.getTime()) ? Date.now() - kickoff.getTime() : null;
+
+  if (hasFinalStatus) {
+    return { key: "final", label: "final score" };
+  }
+
+  if (scored && date && date < today) {
+    return { key: "final", label: "final score" };
+  }
+
+  if (scored && date === today) {
+    if (elapsedMs !== null) {
+      if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
+      if (elapsedMs >= 135 * 60 * 1000) return { key: "final", label: "final score" };
+      if (hasLiveStatus) {
+        const progress = liveProgressLabel(event);
+        const label = progress === "LIVE" ? "live" : `live ${progress}`;
+        return { key: "live", label };
+      }
+      return { key: "final", label: "final score" };
+    }
+    return hasLiveStatus ? { key: "live", label: "live" } : { key: "final", label: "final score" };
+  }
 
   if (hasNotStartedStatus) {
+    return { key: "upcoming", label: "upcoming" };
+  }
+  if (hasDeferredStatus) {
     return { key: "upcoming", label: "upcoming" };
   }
   if (hasLiveStatus) {
@@ -5692,35 +5719,25 @@ function eventState(event) {
     const label = progress === "LIVE" ? "live" : `live ${progress}`;
     return { key: "live", label };
   }
-  if (hasFinalStatus) {
-    return { key: "final", label: "final score" };
-  }
-  if (hasDeferredStatus) {
-    return { key: "upcoming", label: "upcoming" };
-  }
-  if (scored && date && date < today) {
-    return { key: "final", label: "final score" };
-  }
-  if (scored && date === today) {
-    const kickoff = fixtureKickoffDate(event);
-    if (kickoff && !Number.isNaN(kickoff.getTime())) {
-      const elapsedMs = Date.now() - kickoff.getTime();
-      if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
-      if (elapsedMs <= 150 * 60 * 1000) return { key: "live", label: "live" };
-      return { key: "final", label: "final score" };
-    }
-    return { key: "live", label: "live" };
-  }
   if (date === today && !scored && !hasNotStartedStatus && !hasFinalStatus) {
-    const kickoff = fixtureKickoffDate(event);
-    if (kickoff && !Number.isNaN(kickoff.getTime())) {
-      const elapsedMs = Date.now() - kickoff.getTime();
+    if (elapsedMs !== null) {
       if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
       // Without live/final status and without scores, keep as upcoming to avoid false "live" dashes.
       if (elapsedMs >= 0) return { key: "upcoming", label: "upcoming" };
     }
   }
   return { key: "upcoming", label: "upcoming" };
+}
+
+function detailStatusText(event, stateInfo) {
+  if (stateInfo?.key === "final") return "Full Time";
+  if (stateInfo?.key === "live") {
+    const progress = liveProgressLabel(event);
+    return progress === "LIVE" ? "In Play" : progress;
+  }
+  if (isDeferredEvent(event)) return "Deferred";
+  if (isNotStartedEvent(event)) return "Not Started";
+  return event?.strStatus || "Scheduled";
 }
 
 function mergeTodayWithLive(todayEvents, liveEvents) {
@@ -6916,7 +6933,7 @@ function detailRowsFromEvent(event, stateInfo) {
     { label: "Kickoff", value: formatDateTime(event.dateEvent, event.strTime) },
     { label: "Venue", value: event.strVenue || "" },
     { label: "Match State", value: stateInfo.label },
-    { label: "Status", value: event.strStatus || "" },
+    { label: "Status", value: detailStatusText(event, stateInfo) },
     { label: "Season", value: event.strSeason || "" },
     { label: "Round", value: event.intRound || "" },
     { label: "Referee", value: event.strReferee || "" },
