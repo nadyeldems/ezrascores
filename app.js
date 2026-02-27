@@ -241,6 +241,7 @@ const state = {
   account: {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
+    recoveryOpen: false,
     syncTimer: null,
     leagueRefreshTimer: null,
     syncing: false,
@@ -377,9 +378,18 @@ const el = {
   accountAuthSignedOut: document.getElementById("account-auth-signedout"),
   accountAuthSignedIn: document.getElementById("account-auth-signedin"),
   accountNameInput: document.getElementById("account-name-input"),
+  accountEmailInput: document.getElementById("account-email-input"),
   accountPinInput: document.getElementById("account-pin-input"),
   accountRegisterBtn: document.getElementById("account-register-btn"),
   accountLoginBtn: document.getElementById("account-login-btn"),
+  accountForgotBtn: document.getElementById("account-forgot-btn"),
+  accountRecoveryBox: document.getElementById("account-recovery-box"),
+  accountRecoveryCodeInput: document.getElementById("account-recovery-code-input"),
+  accountRecoveryNewPinInput: document.getElementById("account-recovery-new-pin-input"),
+  accountRecoverySendBtn: document.getElementById("account-recovery-send-btn"),
+  accountRecoveryResetBtn: document.getElementById("account-recovery-reset-btn"),
+  accountEmailManageInput: document.getElementById("account-email-manage-input"),
+  accountEmailSaveBtn: document.getElementById("account-email-save-btn"),
   accountSyncBtn: document.getElementById("account-sync-btn"),
   accountLogoutBtn: document.getElementById("account-logout-btn"),
   accountUserLabel: document.getElementById("account-user-label"),
@@ -661,6 +671,17 @@ function accountSignedIn() {
   return Boolean(state.account?.token && state.account?.user?.id);
 }
 
+function setAccountRecoveryOpen(open) {
+  state.account.recoveryOpen = Boolean(open);
+  if (el.accountRecoveryBox) {
+    el.accountRecoveryBox.classList.toggle("hidden", !state.account.recoveryOpen);
+  }
+  if (el.accountForgotBtn) {
+    el.accountForgotBtn.setAttribute("aria-expanded", String(state.account.recoveryOpen));
+    el.accountForgotBtn.textContent = state.account.recoveryOpen ? "Hide Reset" : "Forgot PIN?";
+  }
+}
+
 function setAccountStatus(text, isError = false) {
   if (!el.accountStatus) return;
   el.accountStatus.textContent = text;
@@ -674,6 +695,16 @@ function renderAccountUI() {
   el.accountAuthSignedIn.classList.toggle("hidden", !signedIn);
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
+    if (el.accountEmailInput && state.account.user?.email) {
+      el.accountEmailInput.value = state.account.user.email;
+    }
+    if (el.accountEmailManageInput) {
+      el.accountEmailManageInput.value = String(state.account.user?.email || "");
+      el.accountEmailManageInput.placeholder = state.account.user?.email ? "Recovery email" : "Add recovery email";
+    }
+    setAccountRecoveryOpen(false);
+  } else {
+    setAccountRecoveryOpen(Boolean(state.account.recoveryOpen));
   }
   renderLifetimePointsPill();
   updateFamilyControlsState();
@@ -5072,7 +5103,19 @@ async function apiRequest(method, path, body = null, token = "") {
   }
   updateServerTimeOffsetFromResponse(res);
   const isJson = (res.headers.get("Content-Type") || "").includes("application/json");
-  const payload = isJson ? await res.json() : { error: await res.text() };
+  let payload = {};
+  if (isJson) {
+    const raw = await res.text();
+    if (raw) {
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = {};
+      }
+    }
+  } else {
+    payload = { error: await res.text() };
+  }
   if (!res.ok) {
     const raw = String(payload?.error || "");
     const isHtml = /<!doctype html>|<html/i.test(raw);
@@ -5253,10 +5296,12 @@ async function initAccountSession() {
 
 async function registerAccount() {
   const name = el.accountNameInput?.value || "";
+  const email = el.accountEmailInput?.value || "";
   const pin = el.accountPinInput?.value || "";
-  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin });
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin, email });
   state.account.token = data.token || "";
   state.account.user = data.user || null;
+  state.account.recoveryOpen = false;
   localStorage.setItem("ezra_account_token", state.account.token);
   resetAccountScopedLocalState();
   let partialWarning = false;
@@ -5287,6 +5332,7 @@ async function loginAccount() {
   const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/login`, { name, pin });
   state.account.token = data.token || "";
   state.account.user = data.user || null;
+  state.account.recoveryOpen = false;
   localStorage.setItem("ezra_account_token", state.account.token);
   resetAccountScopedLocalState();
   let partialWarning = false;
@@ -5312,12 +5358,63 @@ async function loginAccount() {
   );
 }
 
+async function startPinRecovery() {
+  const name = String(el.accountNameInput?.value || "").trim();
+  const email = String(el.accountEmailInput?.value || "").trim();
+  if (!name || !email) {
+    throw new Error("Enter your display name and recovery email first.");
+  }
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/recovery/start`, { name, email });
+  setAccountRecoveryOpen(true);
+  if (el.accountRecoveryCodeInput) {
+    el.accountRecoveryCodeInput.value = data?.devCode ? String(data.devCode) : "";
+    el.accountRecoveryCodeInput.focus();
+  }
+  const fallback = data?.detail ? `${data.detail}${data?.devCode ? ` Dev code: ${data.devCode}` : ""}` : "Check your email for the recovery code.";
+  setAccountStatus(data?.sent ? "Recovery code sent. Check your inbox." : fallback, !data?.sent);
+}
+
+async function completePinRecovery() {
+  const name = String(el.accountNameInput?.value || "").trim();
+  const email = String(el.accountEmailInput?.value || "").trim();
+  const code = String(el.accountRecoveryCodeInput?.value || "").trim();
+  const newPin = String(el.accountRecoveryNewPinInput?.value || "");
+  if (!name || !email || !code || !newPin) {
+    throw new Error("Enter name, email, recovery code, and a new PIN.");
+  }
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/recovery/complete`, { name, email, code, newPin });
+  state.account.token = data.token || "";
+  state.account.user = data.user || null;
+  state.account.recoveryOpen = false;
+  localStorage.setItem("ezra_account_token", state.account.token);
+  if (el.accountPinInput) el.accountPinInput.value = "";
+  if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.value = "";
+  if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.value = "";
+  await initAccountSession();
+  setAccountStatus(`PIN reset complete. Signed in as ${state.account.user?.name || "user"}.`);
+}
+
+async function updateAccountEmail() {
+  if (!accountSignedIn()) {
+    throw new Error("Sign in first.");
+  }
+  const email = String(el.accountEmailManageInput?.value || "").trim();
+  if (!email) {
+    throw new Error("Enter an email address.");
+  }
+  const data = await apiRequest("PATCH", `${API_PROXY_BASE}/v1/ezra/account/me`, { email }, state.account.token);
+  state.account.user = data?.user || state.account.user;
+  renderAccountUI();
+  setAccountStatus(`Recovery email saved for ${state.account.user?.name || "user"}.`);
+}
+
 async function logoutAccount() {
   if (state.account.token) {
     await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/logout`, {}, state.account.token).catch(() => null);
   }
   state.account.token = "";
   state.account.user = null;
+  state.account.recoveryOpen = false;
   if (state.account.syncTimer) {
     clearTimeout(state.account.syncTimer);
     state.account.syncTimer = null;
@@ -7943,9 +8040,64 @@ function attachEvents() {
     });
   }
 
+  if (el.accountForgotBtn) {
+    el.accountForgotBtn.addEventListener("click", () => {
+      setAccountRecoveryOpen(!state.account.recoveryOpen);
+      if (state.account.recoveryOpen && el.accountRecoveryCodeInput) {
+        el.accountRecoveryCodeInput.focus();
+      }
+    });
+  }
+
+  if (el.accountRecoverySendBtn) {
+    el.accountRecoverySendBtn.addEventListener("click", async () => {
+      try {
+        setAccountStatus("Sending recovery code...");
+        await startPinRecovery();
+      } catch (err) {
+        setAccountStatus(`Recovery failed: ${err.message}`, true);
+      }
+    });
+  }
+
+  if (el.accountRecoveryResetBtn) {
+    el.accountRecoveryResetBtn.addEventListener("click", async () => {
+      try {
+        setAccountStatus("Resetting PIN...");
+        await completePinRecovery();
+      } catch (err) {
+        setAccountStatus(`Reset failed: ${err.message}`, true);
+      }
+    });
+  }
+
   if (el.accountLogoutBtn) {
     el.accountLogoutBtn.addEventListener("click", async () => {
       await logoutAccount();
+    });
+  }
+
+  if (el.accountEmailSaveBtn) {
+    el.accountEmailSaveBtn.addEventListener("click", async () => {
+      try {
+        setAccountStatus("Saving recovery email...");
+        await updateAccountEmail();
+      } catch (err) {
+        setAccountStatus(`Save email failed: ${err.message}`, true);
+      }
+    });
+  }
+
+  if (el.accountEmailManageInput) {
+    el.accountEmailManageInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      try {
+        setAccountStatus("Saving recovery email...");
+        await updateAccountEmail();
+      } catch (err) {
+        setAccountStatus(`Save email failed: ${err.message}`, true);
+      }
     });
   }
 

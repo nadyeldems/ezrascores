@@ -79,6 +79,23 @@ function normalizeName(name) {
   return String(name || "").trim().replace(/\s+/g, " ");
 }
 
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function validateEmail(email) {
+  const clean = normalizeEmail(email);
+  if (!clean) return { ok: true, clean: "" };
+  if (clean.length > 254) {
+    return { ok: false, message: "Email address is too long." };
+  }
+  const simple = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!simple.test(clean)) {
+    return { ok: false, message: "Enter a valid email address." };
+  }
+  return { ok: true, clean };
+}
+
 function normalizeTeamToken(value) {
   return String(value || "")
     .toLowerCase()
@@ -128,6 +145,9 @@ async function ensureAccountSchema(db) {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         name_key TEXT NOT NULL UNIQUE,
+        email TEXT,
+        email_key TEXT,
+        email_verified_at TEXT,
         pin_salt TEXT NOT NULL,
         pin_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -320,6 +340,22 @@ async function ensureAccountSchema(db) {
         FOREIGN KEY (user_id) REFERENCES ezra_users(id)
       )
     `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_auth_codes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        email_key TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        consumed_at INTEGER,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_user ON ezra_auth_codes(user_id, purpose, expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_email ON ezra_auth_codes(email_key, purpose, expires_at)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key) WHERE email_key IS NOT NULL`,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -332,7 +368,99 @@ async function ensureAccountSchema(db) {
       throw err;
     }
   }
+  try {
+    await db.prepare("ALTER TABLE ezra_users ADD COLUMN email TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
+  try {
+    await db.prepare("ALTER TABLE ezra_users ADD COLUMN email_key TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
+  try {
+    await db.prepare("ALTER TABLE ezra_users ADD COLUMN email_verified_at TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
   accountSchemaReady = true;
+}
+
+function randomNumericCode(len = 6) {
+  const arr = new Uint8Array(len);
+  crypto.getRandomValues(arr);
+  return [...arr].map((n) => String(n % 10)).join("");
+}
+
+async function sendRecoveryEmail(env, email, code) {
+  const apiKey = String(env?.RESEND_API_KEY || "").trim();
+  const from = String(env?.EZRA_FROM_EMAIL || "").trim();
+  if (!apiKey || !from) return { ok: false, configured: false };
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      from,
+      to: [email],
+      subject: "EZRASCORES PIN reset code",
+      text: `Your EZRASCORES reset code is ${code}. It expires in 15 minutes.`,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Email delivery failed (${res.status}): ${detail.slice(0, 160)}`);
+  }
+  return { ok: true, configured: true };
+}
+
+async function createRecoveryCode(db, userId, emailKey, purpose = "pin_reset") {
+  const id = randomHex(12);
+  const code = randomNumericCode(6);
+  const codeHash = await sha256Hex(`${id}:${code}`);
+  const now = Date.now();
+  const expiresAt = now + 15 * 60 * 1000;
+  await db
+    .prepare(
+      `
+      INSERT INTO ezra_auth_codes
+        (id, user_id, email_key, purpose, code_hash, expires_at, consumed_at, created_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
+      `
+    )
+    .bind(id, userId, emailKey, purpose, codeHash, expiresAt, new Date(now).toISOString())
+    .run();
+  return { id, code, expiresAt };
+}
+
+async function consumeRecoveryCode(db, userId, emailKey, code, purpose = "pin_reset") {
+  const now = Date.now();
+  const row = await db
+    .prepare(
+      `
+      SELECT id, code_hash, expires_at, consumed_at
+      FROM ezra_auth_codes
+      WHERE user_id = ?1 AND email_key = ?2 AND purpose = ?3 AND expires_at > ?4
+      ORDER BY created_at DESC
+      LIMIT 1
+      `
+    )
+    .bind(userId, emailKey, purpose, now)
+    .first();
+  if (!row) return { ok: false, error: "No valid recovery code found. Request a new code." };
+  if (Number(row.consumed_at || 0) > 0) return { ok: false, error: "Recovery code already used. Request a new code." };
+  const expected = await sha256Hex(`${row.id}:${String(code || "").trim()}`);
+  if (expected !== row.code_hash) return { ok: false, error: "Recovery code is invalid." };
+  await db
+    .prepare("UPDATE ezra_auth_codes SET consumed_at = ?2 WHERE id = ?1")
+    .bind(row.id, now)
+    .run();
+  return { ok: true };
 }
 
 function randomLeagueCode() {
@@ -1138,7 +1266,7 @@ async function getSessionWithUser(db, token) {
   if (!token) return null;
   const row = await db
     .prepare(`
-      SELECT s.token, s.expires_at, u.id AS user_id, u.name
+      SELECT s.token, s.expires_at, u.id AS user_id, u.name, u.email, u.email_verified_at
       FROM ezra_sessions s
       JOIN ezra_users u ON u.id = s.user_id
       WHERE s.token = ?1
@@ -1164,10 +1292,16 @@ async function handleAccountRegister(db, request) {
   const body = await parseJson(request);
   const valid = validateCredentials(body?.name, body?.pin);
   if (!valid.ok) return json({ error: valid.message }, 400);
+  const emailCheck = validateEmail(body?.email);
+  if (!emailCheck.ok) return json({ error: emailCheck.message }, 400);
 
   const nameKey = valid.cleanName.toLowerCase();
   const existing = await db.prepare("SELECT id FROM ezra_users WHERE name_key = ?1 LIMIT 1").bind(nameKey).first();
   if (existing) return json({ error: "Name already exists. Please choose another." }, 409);
+  if (emailCheck.clean) {
+    const emailTaken = await db.prepare("SELECT id FROM ezra_users WHERE email_key = ?1 LIMIT 1").bind(emailCheck.clean).first();
+    if (emailTaken) return json({ error: "Email already in use. Try account recovery or a different email." }, 409);
+  }
 
   const userId = randomHex(12);
   const salt = randomHex(10);
@@ -1177,15 +1311,15 @@ async function handleAccountRegister(db, request) {
   try {
     await db
       .prepare(`
-        INSERT INTO ezra_users (id, name, name_key, pin_salt, pin_hash, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        INSERT INTO ezra_users (id, name, name_key, email, email_key, email_verified_at, pin_salt, pin_hash, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9)
       `)
-      .bind(userId, valid.cleanName, nameKey, salt, pinHash, nowIso, nowIso)
+      .bind(userId, valid.cleanName, nameKey, emailCheck.clean || null, emailCheck.clean || null, salt, pinHash, nowIso, nowIso)
       .run();
   } catch (err) {
     const msg = String(err?.message || err);
     if (msg.toLowerCase().includes("unique")) {
-      return json({ error: "Name already exists. Please choose another." }, 409);
+      return json({ error: "Name or email already exists. Please choose another." }, 409);
     }
     throw err;
   }
@@ -1199,7 +1333,18 @@ async function handleAccountRegister(db, request) {
   await ensureDefaultLeagueForUser(db, userId);
 
   const token = await createSession(db, userId);
-  return json({ token, user: { id: userId, name: valid.cleanName } }, 200);
+  return json(
+    {
+      token,
+      user: {
+        id: userId,
+        name: valid.cleanName,
+        email: emailCheck.clean || "",
+        hasRecoveryEmail: Boolean(emailCheck.clean),
+      },
+    },
+    200
+  );
 }
 
 async function handleAccountLogin(db, request) {
@@ -1209,7 +1354,7 @@ async function handleAccountLogin(db, request) {
 
   const nameKey = valid.cleanName.toLowerCase();
   const row = await db
-    .prepare("SELECT id, name, pin_salt, pin_hash FROM ezra_users WHERE name_key = ?1 LIMIT 1")
+    .prepare("SELECT id, name, email, pin_salt, pin_hash FROM ezra_users WHERE name_key = ?1 LIMIT 1")
     .bind(nameKey)
     .first();
   if (!row) return json({ error: "Account not found." }, 404);
@@ -1218,13 +1363,154 @@ async function handleAccountLogin(db, request) {
   if (checkHash !== row.pin_hash) return json({ error: "Invalid PIN." }, 401);
 
   const token = await createSession(db, row.id);
-  return json({ token, user: { id: row.id, name: row.name } }, 200);
+  return json(
+    {
+      token,
+      user: {
+        id: row.id,
+        name: row.name,
+        email: String(row.email || ""),
+        hasRecoveryEmail: Boolean(row.email),
+      },
+    },
+    200
+  );
 }
 
 async function handleAccountMe(db, request) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
-  return json({ user: { id: session.user_id, name: session.name } }, 200);
+  return json(
+    {
+      user: {
+        id: session.user_id,
+        name: session.name,
+        email: String(session.email || ""),
+        hasRecoveryEmail: Boolean(session.email),
+        emailVerifiedAt: session.email_verified_at || null,
+      },
+    },
+    200
+  );
+}
+
+async function handleAccountUpdateMe(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const emailCheck = validateEmail(body?.email);
+  if (!emailCheck.ok || !emailCheck.clean) {
+    return json({ error: "Enter a valid email address." }, 400);
+  }
+  const emailOwner = await db
+    .prepare("SELECT id FROM ezra_users WHERE email_key = ?1 AND id <> ?2 LIMIT 1")
+    .bind(emailCheck.clean, session.user_id)
+    .first();
+  if (emailOwner?.id) {
+    return json({ error: "Email already in use by another account." }, 409);
+  }
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare("UPDATE ezra_users SET email = ?2, email_key = ?3, updated_at = ?4 WHERE id = ?1")
+    .bind(session.user_id, emailCheck.clean, emailCheck.clean, nowIso)
+    .run();
+  return json(
+    {
+      ok: true,
+      user: {
+        id: session.user_id,
+        name: session.name,
+        email: emailCheck.clean,
+        hasRecoveryEmail: true,
+        emailVerifiedAt: session.email_verified_at || null,
+      },
+    },
+    200
+  );
+}
+
+async function handleAccountRecoveryStart(db, request, env) {
+  const body = await parseJson(request);
+  const cleanName = normalizeName(body?.name);
+  const nameKey = cleanName.toLowerCase();
+  const emailCheck = validateEmail(body?.email);
+  if (!cleanName || !emailCheck.ok || !emailCheck.clean) {
+    return json({ error: "Enter your display name and recovery email." }, 400);
+  }
+  const row = await db
+    .prepare("SELECT id, email_key FROM ezra_users WHERE name_key = ?1 LIMIT 1")
+    .bind(nameKey)
+    .first();
+  if (!row || !row.email_key || String(row.email_key) !== emailCheck.clean) {
+    return json({ ok: true, sent: true, generic: true }, 200);
+  }
+  const recovery = await createRecoveryCode(db, String(row.id), emailCheck.clean, "pin_reset");
+  let sent = false;
+  try {
+    const out = await sendRecoveryEmail(env, emailCheck.clean, recovery.code);
+    sent = Boolean(out.ok);
+  } catch {
+    sent = false;
+  }
+  const isDevReveal = String(env?.EZRA_DEV_AUTH_CODE || "").trim() === "1";
+  return json(
+    {
+      ok: true,
+      sent,
+      generic: true,
+      ...(sent ? {} : { detail: "Email not configured. Set RESEND_API_KEY and EZRA_FROM_EMAIL." }),
+      ...(isDevReveal ? { devCode: recovery.code } : {}),
+    },
+    200
+  );
+}
+
+async function handleAccountRecoveryComplete(db, request) {
+  const body = await parseJson(request);
+  const cleanName = normalizeName(body?.name);
+  const nameKey = cleanName.toLowerCase();
+  const emailCheck = validateEmail(body?.email);
+  const valid = validateCredentials(body?.name, body?.newPin);
+  if (!cleanName || !emailCheck.ok || !emailCheck.clean) {
+    return json({ error: "Enter your display name and recovery email." }, 400);
+  }
+  if (!valid.ok) return json({ error: valid.message }, 400);
+  const code = String(body?.code || "").trim();
+  if (!/^\d{6}$/.test(code)) {
+    return json({ error: "Enter the 6-digit recovery code." }, 400);
+  }
+
+  const user = await db
+    .prepare("SELECT id, name, email_key FROM ezra_users WHERE name_key = ?1 LIMIT 1")
+    .bind(nameKey)
+    .first();
+  if (!user || !user.email_key || String(user.email_key) !== emailCheck.clean) {
+    return json({ error: "Account details do not match." }, 404);
+  }
+  const verification = await consumeRecoveryCode(db, String(user.id), emailCheck.clean, code, "pin_reset");
+  if (!verification.ok) return json({ error: verification.error }, 400);
+
+  const salt = randomHex(10);
+  const pinHash = await sha256Hex(`${salt}:${valid.cleanPin}`);
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare("UPDATE ezra_users SET pin_salt = ?2, pin_hash = ?3, updated_at = ?4 WHERE id = ?1")
+    .bind(String(user.id), salt, pinHash, nowIso)
+    .run();
+  const token = await createSession(db, String(user.id));
+  return json(
+    {
+      ok: true,
+      token,
+      user: {
+        id: String(user.id),
+        name: String(user.name || cleanName),
+        email: emailCheck.clean,
+        hasRecoveryEmail: true,
+      },
+    },
+    200
+  );
 }
 
 async function handleAccountGetPreferences(db, request) {
@@ -1796,6 +2082,9 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     if (route === "me" && request.method === "GET") {
       return handleAccountMe(db, request);
     }
+    if (route === "me" && (request.method === "PATCH" || request.method === "PUT")) {
+      return handleAccountUpdateMe(db, request);
+    }
     if (route === "preferences" && request.method === "GET") {
       return handleAccountGetPreferences(db, request);
     }
@@ -1804,6 +2093,12 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "logout" && request.method === "POST") {
       return handleAccountLogout(db, request);
+    }
+    if (route === "recovery/start" && request.method === "POST") {
+      return handleAccountRecoveryStart(db, request, env);
+    }
+    if (route === "recovery/complete" && request.method === "POST") {
+      return handleAccountRecoveryComplete(db, request);
     }
     if (route === "state" && (request.method === "PUT" || request.method === "PATCH")) {
       return handleAccountPutState(db, request);

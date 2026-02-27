@@ -1983,6 +1983,14 @@ body.league-member-overlay-open::before {
   gap: 0.35rem;
 }
 
+.account-recovery-box {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+  padding-top: 0.2rem;
+  border-top: 1px dashed var(--line-soft);
+}
+
 .account-input {
   width: 100%;
   min-height: 2rem;
