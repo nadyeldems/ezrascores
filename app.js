@@ -175,6 +175,7 @@ function loadDreamTeamState() {
 
 const state = {
   selectedLeague: "ALL",
+  mainTab: "home",
   serverTimeOffsetMs: 0,
   selectedDate: "",
   selectedDateFixtures: { EPL: [], CHAMP: [] },
@@ -269,6 +270,7 @@ const state = {
   fixtureFetchBackoffUntil: {},
   selectedDateLoadSeq: 0,
   selectedDateTimer: null,
+  rewardToastTimer: null,
   liveStream: { es: null, reconnectTimer: null, lastVersion: "", connected: false },
   playerPop: {
     rafId: null,
@@ -404,6 +406,8 @@ const el = {
   funZoneBody: document.getElementById("fun-zone-body"),
   mobileTabsPanel: document.getElementById("mobile-tabs-panel"),
   mobileTabButtons: [...document.querySelectorAll(".mobile-tab-btn")],
+  mainTabsPanel: document.getElementById("main-tabs-panel"),
+  mainTabButtons: [...document.querySelectorAll(".main-tab-btn")],
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
   playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
@@ -438,6 +442,10 @@ const el = {
   stickyDatePrev: document.getElementById("sticky-date-prev"),
   stickyDateToday: document.getElementById("sticky-date-today"),
   stickyDateNext: document.getElementById("sticky-date-next"),
+  funZonePanel: document.getElementById("fun-zone-panel"),
+  fixturesPanel: document.getElementById("fixtures-panel"),
+  tablePanel: document.getElementById("table-panel"),
+  rewardToast: document.getElementById("reward-toast"),
 };
 
 function hideAppSplash(force = false) {
@@ -889,6 +897,7 @@ function completeQuest(questId) {
   if (daily.completed.includes(questId)) return false;
   daily.completed.push(questId);
   awardQuestBonus(questId);
+  showRewardToast("Quest complete • +5 points");
   persistLocalMetaState();
   scheduleCloudStateSync();
   // Ensure mini-league standings reflect quest points immediately.
@@ -5353,6 +5362,7 @@ function settleFamilyPredictions() {
   const currentId = currentFamilyMemberId();
   const eventsById = allKnownEventsById();
   let changed = false;
+  let pointsAwardedTotal = 0;
   Object.values(state.familyLeague.predictions || {}).forEach((record) => {
     if (!record || record.settled || !record.eventId) return;
     const event = eventsById.get(record.eventId);
@@ -5375,6 +5385,7 @@ function settleFamilyPredictions() {
       }
       if (points > 0) {
         addFamilyPoints(points);
+        pointsAwardedTotal += points;
       }
       pick.scored = true;
       pick.awarded = points;
@@ -5389,6 +5400,9 @@ function settleFamilyPredictions() {
     persistLocalMetaState();
     scheduleCloudStateSync();
     scheduleLeagueStandingsRefresh();
+    if (pointsAwardedTotal > 0) {
+      showRewardToast(`Prediction settled • +${pointsAwardedTotal} pts`);
+    }
   }
   return changed;
 }
@@ -5497,22 +5511,32 @@ function buildPredictionModule(event, stateInfo) {
   }
 
   wrapper.innerHTML = `
-    <div class="predict-head">Predict the score?</div>
+    <div class="predict-head">Predict the score</div>
     <div class="predict-form">
       <div class="predict-score-stack">
-        <span class="predict-team-label" title="${escapeHtml(homeTeam)}">Home: ${escapeHtml(homeTeam)}</span>
-        <button class="btn predict-step-btn plus" type="button" data-step-target="home" aria-label="Increase home score">+</button>
-        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="0" aria-label="Home team score" />
-        <button class="btn predict-step-btn minus" type="button" data-step-target="home" aria-label="Decrease home score">-</button>
+        <span class="predict-team-label" title="${escapeHtml(homeTeam)}">HOME • ${escapeHtml(homeTeam)}</span>
+        <div class="predict-stepper">
+          <button class="btn predict-step-btn plus" type="button" data-step-target="home" aria-label="Increase home score">+</button>
+          <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="0" aria-label="Home team score" />
+          <button class="btn predict-step-btn minus" type="button" data-step-target="home" aria-label="Decrease home score">−</button>
+        </div>
       </div>
       <span class="predict-score-sep">-</span>
       <div class="predict-score-stack">
-        <span class="predict-team-label" title="${escapeHtml(awayTeam)}">Away: ${escapeHtml(awayTeam)}</span>
-        <button class="btn predict-step-btn plus" type="button" data-step-target="away" aria-label="Increase away score">+</button>
-        <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="0" aria-label="Away team score" />
-        <button class="btn predict-step-btn minus" type="button" data-step-target="away" aria-label="Decrease away score">-</button>
+        <span class="predict-team-label" title="${escapeHtml(awayTeam)}">AWAY • ${escapeHtml(awayTeam)}</span>
+        <div class="predict-stepper">
+          <button class="btn predict-step-btn plus" type="button" data-step-target="away" aria-label="Increase away score">+</button>
+          <input class="predict-input" inputmode="numeric" pattern="[0-9]*" min="0" max="20" type="number" step="1" placeholder="0" aria-label="Away team score" />
+          <button class="btn predict-step-btn minus" type="button" data-step-target="away" aria-label="Decrease away score">−</button>
+        </div>
       </div>
-      <button class="btn predict-save-btn" type="button">${memberPick ? "Update Pick" : "Save Pick"}</button>
+      <div class="predict-quick-row">
+        <button class="btn predict-chip" type="button" data-chip="1-0">1-0</button>
+        <button class="btn predict-chip" type="button" data-chip="2-1">2-1</button>
+        <button class="btn predict-chip" type="button" data-chip="1-1">1-1</button>
+        <button class="btn predict-chip" type="button" data-chip="2-2">2-2</button>
+      </div>
+      <button class="btn predict-save-btn" type="button">${memberPick ? "Update Pick" : "Lock Pick"}</button>
     </div>
     <div class="predict-status"></div>
   `;
@@ -5540,6 +5564,15 @@ function buildPredictionModule(event, stateInfo) {
   wrapper.querySelectorAll("button[data-step-target='home'].minus").forEach((btn) => btn.addEventListener("click", () => step(homeInput, -1)));
   wrapper.querySelectorAll("button[data-step-target='away'].plus").forEach((btn) => btn.addEventListener("click", () => step(awayInput, 1)));
   wrapper.querySelectorAll("button[data-step-target='away'].minus").forEach((btn) => btn.addEventListener("click", () => step(awayInput, -1)));
+  wrapper.querySelectorAll(".predict-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const [h, a] = String(chip.dataset.chip || "").split("-").map((n) => Number(n));
+      if (!Number.isInteger(h) || !Number.isInteger(a)) return;
+      homeInput.value = String(h);
+      awayInput.value = String(a);
+      updateDraftStatus();
+    });
+  });
   if (memberPick) {
     homeInput.value = String(memberPick.home);
     awayInput.value = String(memberPick.away);
@@ -5575,6 +5608,8 @@ function buildPredictionModule(event, stateInfo) {
       status.textContent = "Enter valid whole-number scores.";
       return;
     }
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving...";
     const freshRecord = ensurePredictionRecord(event);
     freshRecord.entries[currentId] = {
       home,
@@ -5587,9 +5622,15 @@ function buildPredictionModule(event, stateInfo) {
     scheduleCloudStateSync();
     status.textContent = `Saved ✓ ${home}-${away} for ${activeMember.name}`;
     status.classList.add("success");
+    saveBtn.textContent = "Saved";
     refreshVisibleFixturePredictionBadges();
     scheduleLeagueStandingsRefresh(400);
     renderFamilyLeaguePanel();
+    showRewardToast(`Pick locked: ${home}-${away}`, "success");
+    setTimeout(() => {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Update Pick";
+    }, 700);
   });
   homeInput.addEventListener("input", updateDraftStatus);
   awayInput.addEventListener("input", updateDraftStatus);
@@ -6188,11 +6229,22 @@ function updateDateNavControls() {
 }
 
 function renderFixtures() {
-  el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateUK(state.selectedDate)})`;
-  const events =
-    state.selectedLeague === "ALL"
-      ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
-      : [...state.selectedDateFixtures[state.selectedLeague]];
+  const desktopHomeMode = !isMobileViewport() && state.mainTab === "home";
+  if (desktopHomeMode) {
+    el.fixturesTitle.textContent = "Today's Key Fixtures";
+  } else {
+    el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateUK(state.selectedDate)})`;
+  }
+  let events;
+  if (desktopHomeMode) {
+    const today = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP];
+    events = today.sort(fixtureSort).slice(0, 5);
+  } else {
+    events =
+      state.selectedLeague === "ALL"
+        ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
+        : [...state.selectedDateFixtures[state.selectedLeague]];
+  }
   renderFixtureList(el.fixturesList, events, "selected");
   if (el.datePicker) {
     el.datePicker.value = state.selectedDate;
@@ -6313,23 +6365,52 @@ function setMobileTab(tab) {
   renderMobileSectionLayout();
 }
 
+function setMainTab(tab) {
+  const safe = ["home", "play", "predict", "squad", "tables"].includes(tab) ? tab : "home";
+  state.mainTab = safe;
+  renderMobileSectionLayout();
+  renderFixtures();
+  renderTables();
+}
+
+function renderMainTabButtons() {
+  el.mainTabButtons.forEach((btn) => {
+    const active = btn.dataset.mainTab === state.mainTab;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  });
+}
+
 function renderMobileSectionLayout() {
   const mobile = isMobileViewport();
   const controls = el.controlsPanel;
-  const fixtures = document.getElementById("fixtures-panel");
-  const tables = document.getElementById("table-panel");
-  const fun = document.getElementById("fun-zone-panel");
+  const fixtures = el.fixturesPanel;
+  const tables = el.tablePanel;
+  const fun = el.funZonePanel;
+  const squad = el.squadPanel;
   if (!controls || !fixtures || !tables || !fun) return;
 
+  renderMainTabButtons();
+
   if (!mobile) {
+    el.mainTabsPanel?.classList.remove("hidden");
     el.mobileTabsPanel?.classList.add("hidden");
-    controls.classList.remove("hidden");
-    fixtures.classList.remove("hidden");
-    tables.classList.remove("hidden");
-    fun.classList.remove("hidden");
+    const home = state.mainTab === "home";
+    const play = state.mainTab === "play";
+    const predict = state.mainTab === "predict";
+    const squadTab = state.mainTab === "squad";
+    const tablesTab = state.mainTab === "tables";
+
+    controls.classList.toggle("hidden", !(predict || tablesTab));
+    fixtures.classList.toggle("hidden", !(home || predict));
+    tables.classList.toggle("hidden", !tablesTab);
+    fun.classList.toggle("hidden", !(home || play));
+    if (squad) squad.classList.toggle("hidden", !squadTab);
+    fun.classList.toggle("home-focus", home);
     return;
   }
 
+  el.mainTabsPanel?.classList.add("hidden");
   el.mobileTabsPanel?.classList.remove("hidden");
   el.mobileTabButtons.forEach((btn) => {
     const active = btn.dataset.mobileTab === state.mobileTab;
@@ -6341,6 +6422,24 @@ function renderMobileSectionLayout() {
   fixtures.classList.toggle("hidden", state.mobileTab !== "fixtures");
   tables.classList.toggle("hidden", state.mobileTab !== "table");
   fun.classList.toggle("hidden", state.mobileTab !== "fun");
+  if (squad) squad.classList.remove("hidden");
+  fun.classList.remove("home-focus");
+}
+
+function showRewardToast(message, tone = "success") {
+  if (!el.rewardToast || !message) return;
+  el.rewardToast.textContent = String(message);
+  el.rewardToast.classList.remove("hidden", "success", "neutral");
+  el.rewardToast.classList.add(tone === "neutral" ? "neutral" : "success");
+  requestAnimationFrame(() => {
+    el.rewardToast.classList.add("active");
+  });
+  if (state.rewardToastTimer) clearTimeout(state.rewardToastTimer);
+  state.rewardToastTimer = setTimeout(() => {
+    el.rewardToast?.classList.remove("active");
+    setTimeout(() => el.rewardToast?.classList.add("hidden"), 220);
+    state.rewardToastTimer = null;
+  }, 1800);
 }
 
 function canPatchFixtureRows(events) {
@@ -7683,6 +7782,12 @@ function attachEvents() {
   el.mobileTabButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       setMobileTab(btn.dataset.mobileTab || "fixtures");
+    });
+  });
+
+  el.mainTabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setMainTab(btn.dataset.mainTab || "home");
     });
   });
 

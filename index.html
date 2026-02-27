@@ -182,6 +182,16 @@
       </section>
 
       <main id="main-content">
+        <section class="panel main-tabs-panel" id="main-tabs-panel" aria-label="Main sections">
+          <div class="main-tabs" role="tablist" aria-label="Main sections">
+            <button class="btn main-tab-btn active" type="button" data-main-tab="home" role="tab" aria-selected="true">Home</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="play" role="tab" aria-selected="false">Play</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="predict" role="tab" aria-selected="false">Predict</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="squad" role="tab" aria-selected="false">Squad</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="tables" role="tab" aria-selected="false">Tables</button>
+          </div>
+        </section>
+
         <section class="panel mobile-tabs-panel" id="mobile-tabs-panel" aria-label="Mobile sections">
           <div class="mobile-tabs" role="tablist" aria-label="Section tabs">
             <button class="btn mobile-tab-btn active" type="button" data-mobile-tab="fixtures" role="tab" aria-selected="true">Fixtures</button>
@@ -419,6 +429,8 @@
       <div id="player-quiz-feedback" class="player-quiz-feedback hidden"></div>
     </div>
 
+    <div id="reward-toast" class="reward-toast hidden" aria-live="polite" role="status"></div>
+
     <template id="fixture-template">
       <details class="fixture-item">
         <summary>
@@ -481,6 +493,6 @@
       </article>
     </template>
 
-  <script src="app.js?v=20260226d"></script>
+  <script src="app.js?v=20260226e"></script>
 </body>
 </html>
