@@ -4495,40 +4495,6 @@ body[data-motion="arcade"] .fixture-focus {
     margin: max(0.6rem, calc(var(--safe-top) + 0.95rem)) auto;
   }
 
-  #main-content {
-    padding-bottom: calc(5.6rem + env(safe-area-inset-bottom));
-  }
-
-  .main-tabs-panel {
-    position: fixed;
-    left: 0.5rem;
-    right: 0.5rem;
-    bottom: max(0.5rem, env(safe-area-inset-bottom));
-    z-index: 980;
-    margin: 0;
-    padding: 0.38rem;
-    border-radius: 0.88rem;
-    background: rgba(9, 5, 3, 0.94);
-    backdrop-filter: blur(8px);
-  }
-
-  .main-tabs {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 0.32rem;
-    padding: 0;
-    overflow: visible;
-  }
-
-  .main-tab-btn {
-    min-width: 0;
-    width: 100%;
-    min-height: 2.4rem;
-    padding: 0.18rem 0.1rem;
-    font-size: 1rem;
-    border-radius: 0.62rem;
-  }
-
   .panel {
     padding: 0.72rem;
     margin-bottom: 0.72rem;

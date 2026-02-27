@@ -405,6 +405,7 @@ const el = {
   notificationsBadge: document.getElementById("notifications-badge"),
   notificationsPanel: document.getElementById("notifications-panel"),
   notificationsList: document.getElementById("notifications-list"),
+  notificationsHelper: document.getElementById("notifications-helper"),
   notificationsClearBtn: document.getElementById("notifications-clear-btn"),
   lifetimePointsPill: document.getElementById("lifetime-points-pill"),
   missionsMeta: document.getElementById("missions-meta"),
@@ -577,6 +578,11 @@ function renderNotificationsPanel() {
   ensureNotificationsState();
   if (!el.notificationsList || !el.notificationsBadge) return;
   const items = Array.isArray(state.notifications?.items) ? state.notifications.items : [];
+  if (el.notificationsHelper) {
+    el.notificationsHelper.textContent = items.length
+      ? "Latest updates are shown first. Opening this panel marks alerts as read."
+      : "Goal alerts, quest resets and league rank changes appear here.";
+  }
   if (!items.length) {
     el.notificationsList.innerHTML = `<p class="muted">No notifications yet.</p>`;
   } else {
@@ -792,6 +798,23 @@ function setAccountStatus(text, isError = false) {
 
 function renderAccountHelper() {
   if (!el.accountHelper) return;
+  const ui = String(state.account?.uiState || "");
+  if (ui === "REGISTERING") {
+    el.accountHelper.textContent = "Creating account...";
+    return;
+  }
+  if (ui === "SIGNING_IN") {
+    el.accountHelper.textContent = "Signing in...";
+    return;
+  }
+  if (ui === "RECOVERY_SENDING_CODE") {
+    el.accountHelper.textContent = "Sending recovery code to your email...";
+    return;
+  }
+  if (ui === "RECOVERY_RESETTING_PIN") {
+    el.accountHelper.textContent = "Resetting PIN...";
+    return;
+  }
   if (accountSignedIn()) {
     el.accountHelper.textContent = "Signed in. You can sync, update recovery email, or sign out.";
     return;
@@ -8604,7 +8627,13 @@ function attachEvents() {
     }
     if (state.leagueMemberView.open) {
       closeLeagueMemberView();
+      return;
     }
+    closeFavoritePickerMenu();
+    setSettingsMenuOpen(false);
+    setAccountMenuOpen(false);
+    setNotificationsOpen(false);
+    setFamilyOptionsOpen(false);
   });
 
   el.leagueButtons.forEach((btn) => {
