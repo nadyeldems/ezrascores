@@ -2851,9 +2851,50 @@ function normalizeTime(value) {
   return raw.slice(0, 8);
 }
 
+function firstDefined(event, keys) {
+  for (const key of keys) {
+    const value = event?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function normalizeEventForCache(rawEvent) {
+  const event = rawEvent && typeof rawEvent === "object" ? { ...rawEvent } : {};
+  const ts = String(firstDefined(event, ["strTimestamp", "timestamp", "dateTime"]) || "").trim();
+  const tsDate = ts ? normalizeEventDate(ts.slice(0, 10)) : "";
+  const tsTime = ts && ts.includes("T") ? normalizeTime(ts.split("T")[1] || "") : "";
+
+  const dateEvent = normalizeEventDate(firstDefined(event, ["dateEvent", "strDate", "date"]) || tsDate);
+  const strTime = normalizeTime(firstDefined(event, ["strTime", "time"]) || tsTime);
+
+  const homeScore = numericScore(firstDefined(event, ["intHomeScore", "strHomeScore", "intHome", "intScoreHome", "homeScore"]));
+  const awayScore = numericScore(firstDefined(event, ["intAwayScore", "strAwayScore", "intAway", "intScoreAway", "awayScore"]));
+
+  return {
+    ...event,
+    idEvent: String(firstDefined(event, ["idEvent", "eventId", "id"]) || event.idEvent || "").trim(),
+    dateEvent: dateEvent || String(event.dateEvent || "").trim(),
+    strTime: strTime || String(event.strTime || "").trim(),
+    strHomeTeam: String(firstDefined(event, ["strHomeTeam", "strHome", "homeTeam"]) || event.strHomeTeam || "").trim(),
+    strAwayTeam: String(firstDefined(event, ["strAwayTeam", "strAway", "awayTeam"]) || event.strAwayTeam || "").trim(),
+    idHomeTeam: String(firstDefined(event, ["idHomeTeam", "homeTeamId", "idHome"]) || event.idHomeTeam || "").trim(),
+    idAwayTeam: String(firstDefined(event, ["idAwayTeam", "awayTeamId", "idAway"]) || event.idAwayTeam || "").trim(),
+    intHomeScore: homeScore,
+    intAwayScore: awayScore,
+    strStatus: String(firstDefined(event, ["strStatus", "status"]) || event.strStatus || "").trim(),
+    strProgress: String(firstDefined(event, ["strProgress", "strMinute", "minute"]) || event.strProgress || "").trim(),
+    strLeague: String(firstDefined(event, ["strLeague", "league"]) || event.strLeague || "").trim(),
+    strTimestamp: ts || String(event.strTimestamp || "").trim(),
+  };
+}
+
 function mergeEventsByKey(events) {
   const map = new Map();
-  for (const event of events || []) {
+  for (const rawEvent of events || []) {
+    const event = normalizeEventForCache(rawEvent);
     if (!event || typeof event !== "object") continue;
     const key = fixtureCacheKey(event);
     if (!key) continue;
@@ -2876,7 +2917,7 @@ async function upsertFixtures(db, leagueId, events) {
   const now = Date.now();
   let count = 0;
   for (const raw of events) {
-    const event = raw && typeof raw === "object" ? raw : null;
+    const event = normalizeEventForCache(raw);
     if (!event) continue;
     const eventId = fixtureCacheKey(event);
     const dateEvent = normalizeEventDate(event.dateEvent);
@@ -3064,9 +3105,23 @@ async function handleEzraFixturesRoute(context, key) {
     );
   }
 
+  let eventsOut = sortByDateTime(fromCache);
+  if (dateIso === todayIso) {
+    try {
+      const origin = `${url.protocol}//${url.host}`;
+      const live = await ensureLiveSnapshot(caches.default, origin, key);
+      const liveLeague = Array.isArray(live?.snapshot?.leagues?.[leagueId]) ? live.snapshot.leagues[leagueId] : [];
+      if (liveLeague.length) {
+        eventsOut = sortByDateTime(mergeEvents(eventsOut, liveLeague).map((event) => normalizeEventForCache(event)));
+      }
+    } catch {
+      // Keep cached events if live merge fails.
+    }
+  }
+
   return json(
     {
-      events: sortByDateTime(fromCache),
+      events: eventsOut,
       leagueId,
       date: dateIso,
       source: "d1",
@@ -3387,12 +3442,13 @@ function canonicalEventHash(event) {
 }
 
 function eventKey(event) {
-  if (event?.idEvent) return `id:${event.idEvent}`;
+  const normalized = normalizeEventForCache(event);
+  if (normalized?.idEvent) return `id:${normalized.idEvent}`;
   return [
     "m",
-    String(event?.dateEvent || ""),
-    String(event?.strHomeTeam || "").toLowerCase(),
-    String(event?.strAwayTeam || "").toLowerCase(),
+    String(normalized?.dateEvent || ""),
+    String(normalized?.strHomeTeam || "").toLowerCase(),
+    String(normalized?.strAwayTeam || "").toLowerCase(),
   ].join("|");
 }
 
@@ -3418,22 +3474,23 @@ function sortEvents(events) {
 
 function toClientEvent(event) {
   if (!event || typeof event !== "object") return null;
+  const normalized = normalizeEventForCache(event);
   return {
-    idEvent: event.idEvent || "",
-    dateEvent: event.dateEvent || "",
-    strTime: event.strTime || "",
-    strHomeTeam: event.strHomeTeam || "",
-    strAwayTeam: event.strAwayTeam || "",
-    idHomeTeam: event.idHomeTeam || "",
-    idAwayTeam: event.idAwayTeam || "",
-    intHomeScore: event.intHomeScore ?? null,
-    intAwayScore: event.intAwayScore ?? null,
-    strStatus: event.strStatus || "",
-    strProgress: event.strProgress || "",
-    strMinute: event.strMinute || "",
-    strVenue: event.strVenue || "",
-    strLeague: event.strLeague || "",
-    strTimestamp: event.strTimestamp || "",
+    idEvent: normalized.idEvent || "",
+    dateEvent: normalized.dateEvent || "",
+    strTime: normalized.strTime || "",
+    strHomeTeam: normalized.strHomeTeam || "",
+    strAwayTeam: normalized.strAwayTeam || "",
+    idHomeTeam: normalized.idHomeTeam || "",
+    idAwayTeam: normalized.idAwayTeam || "",
+    intHomeScore: normalized.intHomeScore ?? null,
+    intAwayScore: normalized.intAwayScore ?? null,
+    strStatus: normalized.strStatus || "",
+    strProgress: normalized.strProgress || "",
+    strMinute: normalized.strMinute || "",
+    strVenue: normalized.strVenue || "",
+    strLeague: normalized.strLeague || "",
+    strTimestamp: normalized.strTimestamp || "",
   };
 }
 

@@ -2777,6 +2777,15 @@ body.league-member-overlay-open::before {
   margin: 0;
 }
 
+#league-invite-auth-box {
+  display: grid;
+  gap: 0.5rem;
+}
+
+#league-invite-status.error {
+  color: #ff9aa1;
+}
+
 @media (max-width: 860px) {
   .main-tabs {
     display: flex;

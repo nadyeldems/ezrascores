@@ -442,9 +442,20 @@
       <div class="league-invite-card">
         <h3 id="league-invite-title">League Invite</h3>
         <p id="league-invite-text" class="muted">You've been invited to a league. Would you like to join?</p>
-        <div class="account-actions">
+        <p id="league-invite-status" class="settings-note muted" role="status" aria-live="polite"></p>
+        <div id="league-invite-confirm-box" class="account-actions">
           <button id="league-invite-yes-btn" class="btn" type="button">Yes, Join</button>
           <button id="league-invite-no-btn" class="btn" type="button">No Thanks</button>
+        </div>
+        <div id="league-invite-auth-box" class="hidden">
+          <input id="league-invite-name-input" class="account-input" type="text" maxlength="32" placeholder="Display name" />
+          <input id="league-invite-email-input" class="account-input" type="email" maxlength="254" placeholder="Recovery email (optional)" />
+          <input id="league-invite-pin-input" class="account-input" type="password" maxlength="24" placeholder="PIN / passcode" />
+          <div class="account-actions">
+            <button id="league-invite-signin-btn" class="btn" type="button">Sign In</button>
+            <button id="league-invite-register-btn" class="btn" type="button">Create Account</button>
+            <button id="league-invite-back-btn" class="btn" type="button">Back</button>
+          </div>
         </div>
       </div>
     </div>

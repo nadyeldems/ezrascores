@@ -238,6 +238,7 @@ const state = {
       : null,
   leagueInviteModalOpen: false,
   pendingInviteJoinIntent: false,
+  leagueInviteStep: "confirm",
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
@@ -255,6 +256,7 @@ const state = {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
     recoveryOpen: false,
+    phase: STORED_ACCOUNT_TOKEN ? "RESTORING_SESSION" : "SIGNED_OUT",
     uiState: "SIGNED_OUT_IDLE",
     pending: {},
     activeAction: "",
@@ -262,6 +264,8 @@ const state = {
     syncTimer: null,
     leagueRefreshTimer: null,
     syncing: false,
+    bootstrapInFlight: false,
+    bootstrapPromise: null,
   },
   maxDreamTeamPlayers: 18,
   dreamTeamOpen: false,
@@ -487,8 +491,17 @@ const el = {
   rewardToast: document.getElementById("reward-toast"),
   leagueInviteModal: document.getElementById("league-invite-modal"),
   leagueInviteText: document.getElementById("league-invite-text"),
+  leagueInviteStatus: document.getElementById("league-invite-status"),
+  leagueInviteConfirmBox: document.getElementById("league-invite-confirm-box"),
+  leagueInviteAuthBox: document.getElementById("league-invite-auth-box"),
   leagueInviteYesBtn: document.getElementById("league-invite-yes-btn"),
   leagueInviteNoBtn: document.getElementById("league-invite-no-btn"),
+  leagueInviteNameInput: document.getElementById("league-invite-name-input"),
+  leagueInviteEmailInput: document.getElementById("league-invite-email-input"),
+  leagueInvitePinInput: document.getElementById("league-invite-pin-input"),
+  leagueInviteSigninBtn: document.getElementById("league-invite-signin-btn"),
+  leagueInviteRegisterBtn: document.getElementById("league-invite-register-btn"),
+  leagueInviteBackBtn: document.getElementById("league-invite-back-btn"),
 };
 
 function hideAppSplash(force = false) {
@@ -744,9 +757,22 @@ function setAccountPending(action, pending) {
   updateAccountControlsState();
 }
 
+function setAccountPhase(phase) {
+  state.account.phase = String(phase || "SIGNED_OUT");
+  updateAccountControlsState();
+}
+
 function updateAccountUiState() {
   const signedIn = accountSignedIn();
   const hasPending = accountAnyPending();
+  if (state.account.phase === "RESTORING_SESSION") {
+    state.account.uiState = "RESTORING_SESSION";
+    return;
+  }
+  if (state.account.phase === "SYNCING_PROFILE") {
+    state.account.uiState = "SYNCING_PROFILE";
+    return;
+  }
   if (signedIn) {
     if (state.account.pending?.save_email) {
       state.account.uiState = "SIGNED_IN_SAVING_EMAIL";
@@ -777,7 +803,7 @@ function updateAccountUiState() {
 }
 
 function updateAccountControlsState() {
-  const busy = accountAnyPending();
+  const busy = accountAnyPending() || Boolean(state.account.bootstrapInFlight);
   const signedIn = accountSignedIn();
   if (el.accountRegisterBtn) el.accountRegisterBtn.disabled = busy || signedIn;
   if (el.accountLoginBtn) el.accountLoginBtn.disabled = busy || signedIn;
@@ -818,6 +844,14 @@ function setAccountStatus(text, isError = false) {
 function renderAccountHelper() {
   if (!el.accountHelper) return;
   const ui = String(state.account?.uiState || "");
+  if (ui === "RESTORING_SESSION") {
+    el.accountHelper.textContent = "Restoring account session...";
+    return;
+  }
+  if (ui === "SYNCING_PROFILE") {
+    el.accountHelper.textContent = "Syncing your account data...";
+    return;
+  }
   if (ui === "REGISTERING") {
     el.accountHelper.textContent = "Creating account...";
     return;
@@ -1700,8 +1734,47 @@ function setPendingLeagueInvite(invite) {
 
 function closeLeagueInviteModal() {
   state.leagueInviteModalOpen = false;
+  state.leagueInviteStep = "confirm";
+  setLeagueInviteAuthBusy(false);
   if (el.leagueInviteModal) {
     el.leagueInviteModal.classList.add("hidden");
+  }
+}
+
+function setLeagueInviteInlineStatus(text = "", isError = false) {
+  if (!el.leagueInviteStatus) return;
+  el.leagueInviteStatus.textContent = String(text || "");
+  el.leagueInviteStatus.classList.toggle("error", Boolean(isError));
+}
+
+function setLeagueInviteAuthBusy(isBusy) {
+  const busy = Boolean(isBusy);
+  if (el.leagueInviteNameInput) el.leagueInviteNameInput.disabled = busy;
+  if (el.leagueInviteEmailInput) el.leagueInviteEmailInput.disabled = busy;
+  if (el.leagueInvitePinInput) el.leagueInvitePinInput.disabled = busy;
+  if (el.leagueInviteSigninBtn) el.leagueInviteSigninBtn.disabled = busy;
+  if (el.leagueInviteRegisterBtn) el.leagueInviteRegisterBtn.disabled = busy;
+  if (el.leagueInviteBackBtn) el.leagueInviteBackBtn.disabled = busy;
+  if (el.leagueInviteYesBtn) el.leagueInviteYesBtn.disabled = busy;
+  if (el.leagueInviteNoBtn) el.leagueInviteNoBtn.disabled = busy;
+}
+
+function setLeagueInviteStep(step = "confirm") {
+  state.leagueInviteStep = step === "auth" ? "auth" : "confirm";
+  if (el.leagueInviteConfirmBox) {
+    el.leagueInviteConfirmBox.classList.toggle("hidden", state.leagueInviteStep !== "confirm");
+  }
+  if (el.leagueInviteAuthBox) {
+    el.leagueInviteAuthBox.classList.toggle("hidden", state.leagueInviteStep !== "auth");
+  }
+}
+
+function fillInviteAuthFromAccountInputs() {
+  if (el.leagueInviteNameInput && !el.leagueInviteNameInput.value) {
+    el.leagueInviteNameInput.value = String(el.accountNameInput?.value || state.account.user?.name || "");
+  }
+  if (el.leagueInviteEmailInput && !el.leagueInviteEmailInput.value) {
+    el.leagueInviteEmailInput.value = String(el.accountEmailInput?.value || state.account.user?.email || "");
   }
 }
 
@@ -1712,6 +1785,10 @@ function openLeagueInviteModal(leagueName, code) {
     ? ` by ${state.pendingLeagueInvite.referrerName}`
     : "";
   el.leagueInviteText.textContent = `You've been invited to ${prettyName}${byLine}. Would you like to join?`;
+  setLeagueInviteInlineStatus("");
+  setLeagueInviteStep("confirm");
+  fillInviteAuthFromAccountInputs();
+  setLeagueInviteAuthBusy(false);
   state.leagueInviteModalOpen = true;
   el.leagueInviteModal.classList.remove("hidden");
 }
@@ -1773,32 +1850,131 @@ async function processPendingLeagueInviteAfterAuth() {
     setPendingLeagueInvite(null);
     return false;
   }
+  openLeagueInviteModal(state.pendingLeagueInvite.leagueName || `League ${code}`, code);
+  if (state.pendingInviteJoinIntent) {
+    setLeagueInviteInlineStatus("You are signed in. Confirm to join this league.");
+  }
+  state.pendingInviteJoinIntent = false;
+  return true;
+}
+
+async function joinPendingLeagueInviteFromModal() {
+  const code = normalizeLeagueCodeClient(state.pendingLeagueInvite?.code || "");
   const token = String(state.pendingLeagueInvite?.token || "").trim();
-  if (state.pendingInviteJoinIntent && token) {
-    try {
+  if (!code) {
+    setPendingLeagueInvite(null);
+    closeLeagueInviteModal();
+    return;
+  }
+  if (!accountSignedIn()) {
+    setLeagueInviteStep("auth");
+    fillInviteAuthFromAccountInputs();
+    setLeagueInviteInlineStatus("Sign in or create an account to join this league.");
+    if (el.leagueInviteNameInput) {
+      setTimeout(() => {
+        try {
+          el.leagueInviteNameInput.focus();
+        } catch {
+          // no-op
+        }
+      }, 30);
+    }
+    return;
+  }
+  setLeagueInviteAuthBusy(true);
+  setLeagueInviteInlineStatus("Joining league...");
+  try {
+    if (token) {
       await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/invite/join`, { token }, state.account.token);
       state.familyLeague.leagueCode = code;
       if (!state.familyLeague.joinedLeagueCodes.includes(code)) {
         state.familyLeague.joinedLeagueCodes.push(code);
       }
       state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(code));
-      state.pendingInviteJoinIntent = false;
+      persistLocalMetaState();
+      scheduleCloudStateSync();
       setAccountStatus(`Joined ${state.pendingLeagueInvite?.leagueName || `League ${code}`} from invite.`);
-      showRewardToast("Joined league invite", "success");
-      closeLeagueInviteModal();
-      setPendingLeagueInvite(null);
-      renderFamilyLeaguePanel();
-      safeLoad(() => refreshLeagueDirectory(), null);
-      return true;
-    } catch (err) {
-      state.pendingInviteJoinIntent = false;
-      setAccountStatus(`Invite join failed: ${err.message || "Please try again."}`, true);
-      openLeagueInviteModal(state.pendingLeagueInvite.leagueName || `League ${code}`, code);
-      return false;
+      await safeLoad(() => refreshLeagueDirectory(), null);
+    } else {
+      await joinFamilyLeagueCode(code, {
+        referrerName: state.pendingLeagueInvite?.referrerName || "",
+        source: state.pendingLeagueInvite?.source || "link",
+      });
     }
+    state.pendingInviteJoinIntent = false;
+    setPendingLeagueInvite(null);
+    closeLeagueInviteModal();
+    showRewardToast("Joined league invite", "success");
+    renderFamilyLeaguePanel();
+  } catch (err) {
+    setLeagueInviteInlineStatus(`Invite join failed: ${err.message || "Please try again."}`, true);
+  } finally {
+    setLeagueInviteAuthBusy(false);
   }
-  openLeagueInviteModal(state.pendingLeagueInvite.leagueName || `League ${code}`, code);
-  return true;
+}
+
+async function signInFromInviteModal() {
+  const name = String(el.leagueInviteNameInput?.value || "").trim();
+  const pin = String(el.leagueInvitePinInput?.value || "");
+  if (!name || !pin) {
+    setLeagueInviteInlineStatus("Enter your display name and PIN to sign in.", true);
+    return;
+  }
+  setLeagueInviteAuthBusy(true);
+  setLeagueInviteInlineStatus("Signing in...");
+  try {
+    const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/login`, { name, pin });
+    state.account.token = data.token || "";
+    state.account.user = data.user || null;
+    state.account.recoveryOpen = false;
+    setAccountPhase("AUTHENTICATED");
+    localStorage.setItem("ezra_account_token", state.account.token);
+    await runPostAuthBootstrap("Signed in");
+    renderAccountUI();
+    renderFamilyLeaguePanel();
+    refreshVisibleFixturePredictionBadges();
+    state.pendingInviteJoinIntent = true;
+    setLeagueInviteStep("confirm");
+    setLeagueInviteInlineStatus(`Signed in as ${state.account.user?.name || "user"}. Tap "Yes, Join" to continue.`);
+  } catch (err) {
+    const mapped = mapAccountErrorMessage("login", err);
+    setLeagueInviteInlineStatus(`Sign in failed: ${mapped}`, true);
+  } finally {
+    setLeagueInviteAuthBusy(false);
+  }
+}
+
+async function registerFromInviteModal() {
+  const name = String(el.leagueInviteNameInput?.value || "").trim();
+  const email = String(el.leagueInviteEmailInput?.value || "").trim();
+  const pin = String(el.leagueInvitePinInput?.value || "");
+  if (!name || !pin) {
+    setLeagueInviteInlineStatus("Enter a display name and PIN to create an account.", true);
+    return;
+  }
+  setLeagueInviteAuthBusy(true);
+  setLeagueInviteInlineStatus("Creating account...");
+  try {
+    const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin, email });
+    state.account.token = data.token || "";
+    state.account.user = data.user || null;
+    state.account.recoveryOpen = false;
+    setAccountPhase("AUTHENTICATED");
+    localStorage.setItem("ezra_account_token", state.account.token);
+    await runPostAuthBootstrap("Account created");
+    await safeLoad(() => syncCloudStateNow(), null);
+    renderAccountUI();
+    renderFamilyLeaguePanel();
+    refreshVisibleFixturePredictionBadges();
+    state.pendingInviteJoinIntent = true;
+    setLeagueInviteStep("confirm");
+    setLeagueInviteInlineStatus(`Account created for ${state.account.user?.name || "user"}. Tap "Yes, Join" to continue.`);
+  } catch (err) {
+    const mapped = mapAccountErrorMessage("register", err);
+    setLeagueInviteInlineStatus(`Create account failed: ${mapped}`, true);
+  } finally {
+    setLeagueInviteAuthBusy(false);
+  }
 }
 
 async function handleInviteUrlOnLoad() {
@@ -5581,6 +5757,55 @@ async function loadCloudState() {
   applyCloudState(data?.state || {}, { strict: true });
 }
 
+async function runPostAuthBootstrap(contextLabel = "auth") {
+  if (!accountSignedIn()) return { ok: false, partialWarning: true };
+  if (state.account.bootstrapPromise) {
+    return state.account.bootstrapPromise;
+  }
+  const promise = (async () => {
+    state.account.bootstrapInFlight = true;
+    setAccountPhase("SYNCING_PROFILE");
+    renderAccountUI();
+    let partialWarning = false;
+    try {
+      resetAccountScopedLocalState();
+      const cloud = await safeLoad(() => loadCloudState(), null);
+      if (cloud === null) partialWarning = true;
+      const dash = await safeLoad(() => refreshChallengeDashboard(true), null);
+      if (!dash) partialWarning = true;
+      ensureSignedInUserInFamilyLeague();
+      const leaguesOk = await safeLoad(async () => {
+        await refreshLeagueDirectory();
+        return true;
+      }, false);
+      if (!leaguesOk) partialWarning = true;
+      const inviteHandled = await safeLoad(() => processPendingLeagueInviteAfterAuth(), false);
+      if (inviteHandled === false && state.pendingLeagueInvite?.code && accountSignedIn()) {
+        partialWarning = true;
+      }
+      persistLocalMetaState();
+      scheduleCloudStateSync();
+      refreshVisibleFixturePredictionBadges();
+      renderFamilyLeaguePanel();
+      setAccountPhase("READY");
+      renderAccountUI();
+      if (partialWarning) {
+        setAccountStatus(`${contextLabel}: signed in, but some sections are still loading. Retry in a moment.`);
+      }
+      return { ok: true, partialWarning };
+    } catch (err) {
+      setAccountPhase("ERROR");
+      renderAccountUI();
+      throw err;
+    } finally {
+      state.account.bootstrapInFlight = false;
+      state.account.bootstrapPromise = null;
+    }
+  })();
+  state.account.bootstrapPromise = promise;
+  return promise;
+}
+
 async function refreshChallengeDashboard(force = false) {
   if (!accountSignedIn()) {
     state.challengeDashboard = null;
@@ -5626,6 +5851,7 @@ function scheduleCloudStateSync(delayMs = 1200) {
 async function initAccountSession() {
   renderAccountUI();
   if (!state.account.token) {
+    setAccountPhase("SIGNED_OUT");
     resetAccountScopedLocalState();
     state.challengeDashboard = null;
     state.challengeDashboardAt = 0;
@@ -5635,25 +5861,20 @@ async function initAccountSession() {
     renderFamilyLeaguePanel();
     return;
   }
+  setAccountPhase("RESTORING_SESSION");
+  renderAccountUI();
   try {
     const me = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/me`, null, state.account.token);
     state.account.user = me.user || null;
     if (!state.account.user) throw new Error("Session expired");
-    resetAccountScopedLocalState();
-    await loadCloudState();
-    await safeLoad(() => refreshChallengeDashboard(true), null);
-    ensureSignedInUserInFamilyLeague();
-    await refreshLeagueDirectory();
-    await processPendingLeagueInviteAfterAuth();
-    persistLocalMetaState();
-    renderAccountUI();
-    renderFamilyLeaguePanel();
-    refreshVisibleFixturePredictionBadges();
+    setAccountPhase("AUTHENTICATED");
+    await runPostAuthBootstrap("Session restored");
     setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
     resumePendingLeagueInvitePrompt();
   } catch (err) {
     state.account.token = "";
     state.account.user = null;
+    setAccountPhase("SIGNED_OUT");
     localStorage.removeItem("ezra_account_token");
     renderAccountUI();
     renderFamilyLeaguePanel();
@@ -5673,24 +5894,11 @@ async function registerAccount() {
   state.account.token = data.token || "";
   state.account.user = data.user || null;
   state.account.recoveryOpen = false;
+  setAccountPhase("AUTHENTICATED");
   localStorage.setItem("ezra_account_token", state.account.token);
-  resetAccountScopedLocalState();
-  let partialWarning = false;
-  const dash = await safeLoad(() => refreshChallengeDashboard(true), null);
-  if (!dash) partialWarning = true;
-  ensureSignedInUserInFamilyLeague();
-  const leaguesOk = await safeLoad(async () => {
-    await refreshLeagueDirectory();
-    return true;
-  }, false);
-  if (!leaguesOk) partialWarning = true;
-  const inviteJoined = await safeLoad(() => processPendingLeagueInviteAfterAuth(), false);
-  if (inviteJoined === false && state.pendingLeagueInvite?.code && accountSignedIn()) {
-    partialWarning = true;
-  }
-  persistLocalMetaState();
-  const synced = await safeLoad(() => syncCloudStateNow(), null);
-  if (synced === null) partialWarning = true;
+  const result = await runPostAuthBootstrap("Account created");
+  const partialWarning = Boolean(result?.partialWarning);
+  await safeLoad(() => syncCloudStateNow(), null);
   renderAccountUI();
   renderFamilyLeaguePanel();
   refreshVisibleFixturePredictionBadges();
@@ -5703,6 +5911,10 @@ async function registerAccount() {
 
 async function runAccountAction(action, startText, errorPrefix, task) {
   const authActions = new Set(["register", "login", "recovery_send", "recovery_reset", "logout"]);
+  if (state.account.bootstrapInFlight && action !== "logout") {
+    setAccountStatus("Finishing account sync. Please wait a moment.");
+    return null;
+  }
   if (authActions.has(action) && state.account.activeAction && state.account.activeAction !== action) {
     setAccountStatus("Please wait for the current account action to finish.");
     return null;
@@ -5739,25 +5951,10 @@ async function loginAccount() {
   state.account.token = data.token || "";
   state.account.user = data.user || null;
   state.account.recoveryOpen = false;
+  setAccountPhase("AUTHENTICATED");
   localStorage.setItem("ezra_account_token", state.account.token);
-  resetAccountScopedLocalState();
-  let partialWarning = false;
-  const cloud = await safeLoad(() => loadCloudState(), null);
-  if (cloud === null) partialWarning = true;
-  const dash = await safeLoad(() => refreshChallengeDashboard(true), null);
-  if (!dash) partialWarning = true;
-  ensureSignedInUserInFamilyLeague();
-  const leaguesOk = await safeLoad(async () => {
-    await refreshLeagueDirectory();
-    return true;
-  }, false);
-  if (!leaguesOk) partialWarning = true;
-  const inviteJoined = await safeLoad(() => processPendingLeagueInviteAfterAuth(), false);
-  if (inviteJoined === false && state.pendingLeagueInvite?.code && accountSignedIn()) {
-    partialWarning = true;
-  }
-  persistLocalMetaState();
-  scheduleCloudStateSync();
+  const result = await runPostAuthBootstrap("Signed in");
+  const partialWarning = Boolean(result?.partialWarning);
   renderAccountUI();
   renderFamilyLeaguePanel();
   refreshVisibleFixturePredictionBadges();
@@ -5796,11 +5993,12 @@ async function completePinRecovery() {
   state.account.token = data.token || "";
   state.account.user = data.user || null;
   state.account.recoveryOpen = false;
+  setAccountPhase("AUTHENTICATED");
   localStorage.setItem("ezra_account_token", state.account.token);
   if (el.accountPinInput) el.accountPinInput.value = "";
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.value = "";
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.value = "";
-  await initAccountSession();
+  await runPostAuthBootstrap("PIN reset");
   setAccountStatus(`PIN reset complete. Signed in as ${state.account.user?.name || "user"}.`);
 }
 
@@ -5825,6 +6023,7 @@ async function logoutAccount() {
   state.account.token = "";
   state.account.user = null;
   state.account.recoveryOpen = false;
+  setAccountPhase("SIGNED_OUT");
   if (state.account.syncTimer) {
     clearTimeout(state.account.syncTimer);
     state.account.syncTimer = null;
@@ -6642,11 +6841,10 @@ function renderFixtureList(target, events, mode) {
     const homeName = event.strHomeTeam || "TBC";
     const awayName = event.strAwayTeam || "TBC";
 
-    const home = event.intHomeScore;
-    const away = event.intAwayScore;
-    const hasScores = home !== null && home !== undefined && away !== null && away !== undefined;
-    const homeScoreText = hasScores ? String(home) : "–";
-    const awayScoreText = hasScores ? String(away) : "–";
+    const pair = scorePair(event);
+    const hasScores = Boolean(pair);
+    const homeScoreText = hasScores ? String(pair.home) : "–";
+    const awayScoreText = hasScores ? String(pair.away) : "–";
 
     const statusEl = node.querySelector(".match-state");
     node.querySelector(".kickoff-time").textContent = formatKickoffTime(event);
@@ -6680,8 +6878,8 @@ function renderFixtureList(target, events, mode) {
     awayInlineScoreEl.textContent = awayScoreText;
     if (hasScores) {
       const prev = state.fixtureScoreSnapshot.get(key);
-      const homeChanged = prev && prev.home !== Number(home);
-      const awayChanged = prev && prev.away !== Number(away);
+      const homeChanged = prev && prev.home !== Number(pair.home);
+      const awayChanged = prev && prev.away !== Number(pair.away);
       if (homeChanged) {
         homeScoreEl.classList.add("score-update");
         homeInlineScoreEl.classList.add("score-update");
@@ -6690,12 +6888,12 @@ function renderFixtureList(target, events, mode) {
         awayScoreEl.classList.add("score-update");
         awayInlineScoreEl.classList.add("score-update");
       }
-      state.fixtureScoreSnapshot.set(key, { home: Number(home), away: Number(away) });
-      if (Number(home) > Number(away)) {
+      state.fixtureScoreSnapshot.set(key, { home: Number(pair.home), away: Number(pair.away) });
+      if (Number(pair.home) > Number(pair.away)) {
         homeScoreEl.classList.add("leading");
         homeInlineScoreEl.classList.add("leading");
       }
-      if (Number(away) > Number(home)) {
+      if (Number(pair.away) > Number(pair.home)) {
         awayScoreEl.classList.add("leading");
         awayInlineScoreEl.classList.add("leading");
       }
@@ -7301,11 +7499,10 @@ function patchVisibleFixtureRows(events) {
     node.classList.toggle("has-favorite", hasFavorite);
     renderFixtureBadges(summaryEl, event, { pinned: hasFavorite });
 
-    const home = event.intHomeScore;
-    const away = event.intAwayScore;
-    const hasScores = home !== null && home !== undefined && away !== null && away !== undefined;
-    const homeText = hasScores ? String(home) : "–";
-    const awayText = hasScores ? String(away) : "–";
+    const pair = scorePair(event);
+    const hasScores = Boolean(pair);
+    const homeText = hasScores ? String(pair.home) : "–";
+    const awayText = hasScores ? String(pair.away) : "–";
     [homeScoreEl, awayScoreEl, homeInlineScoreEl, awayInlineScoreEl].forEach((elNode) => {
       elNode?.classList.remove("leading", "score-update");
     });
@@ -7316,8 +7513,8 @@ function patchVisibleFixtureRows(events) {
 
     if (hasScores) {
       const prev = state.fixtureScoreSnapshot.get(key);
-      const homeChanged = prev && prev.home !== Number(home);
-      const awayChanged = prev && prev.away !== Number(away);
+      const homeChanged = prev && prev.home !== Number(pair.home);
+      const awayChanged = prev && prev.away !== Number(pair.away);
       if (homeChanged) {
         homeScoreEl?.classList.add("score-update");
         homeInlineScoreEl?.classList.add("score-update");
@@ -7326,12 +7523,12 @@ function patchVisibleFixtureRows(events) {
         awayScoreEl?.classList.add("score-update");
         awayInlineScoreEl?.classList.add("score-update");
       }
-      state.fixtureScoreSnapshot.set(key, { home: Number(home), away: Number(away) });
-      if (Number(home) > Number(away)) {
+      state.fixtureScoreSnapshot.set(key, { home: Number(pair.home), away: Number(pair.away) });
+      if (Number(pair.home) > Number(pair.away)) {
         homeScoreEl?.classList.add("leading");
         homeInlineScoreEl?.classList.add("leading");
       }
-      if (Number(away) > Number(home)) {
+      if (Number(pair.away) > Number(pair.home)) {
         awayScoreEl?.classList.add("leading");
         awayInlineScoreEl?.classList.add("leading");
       }
@@ -7607,8 +7804,9 @@ function findLastCompletedForTeam(events, team, todayIso, excludeEvent) {
 }
 
 function scoreLine(event) {
-  const hs = event?.intHomeScore ?? "-";
-  const as = event?.intAwayScore ?? "-";
+  const pair = scorePair(event);
+  const hs = pair ? pair.home : "-";
+  const as = pair ? pair.away : "-";
   return `${event?.strHomeTeam || "Home"} ${hs} - ${as} ${event?.strAwayTeam || "Away"}`;
 }
 
@@ -7671,8 +7869,12 @@ function numericScore(value) {
 }
 
 function scorePair(event) {
-  const home = numericScore(event?.intHomeScore);
-  const away = numericScore(event?.intAwayScore);
+  const home = numericScore(
+    event?.intHomeScore ?? event?.strHomeScore ?? event?.intHome ?? event?.intScoreHome ?? event?.homeScore
+  );
+  const away = numericScore(
+    event?.intAwayScore ?? event?.strAwayScore ?? event?.intAway ?? event?.intScoreAway ?? event?.awayScore
+  );
   if (home === null || away === null) return null;
   return { home, away };
 }
@@ -8361,6 +8563,9 @@ function scheduleNextRefresh(context) {
 
 async function fullRefresh() {
   if (state.refreshInFlight) return;
+  if (!state.boot.firstRefreshDone && state.account.bootstrapPromise) {
+    await safeLoad(() => state.account.bootstrapPromise, null);
+  }
   const perfStart = performance.now();
   state.refreshInFlight = true;
   state.refreshStartedAt = Date.now();
@@ -8393,10 +8598,10 @@ async function fullRefresh() {
     state.selectedDate = selectedDateForRefresh;
     const selectedSeq = ++state.selectedDateLoadSeq;
     await refreshSelectedDateFixtures(selectedDateForRefresh, selectedSeq);
-    if (accountSignedIn() && Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
+    if (accountSignedIn() && !state.account.bootstrapInFlight && Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
       await safeLoad(() => refreshLeagueDirectory(), null);
     }
-    if (accountSignedIn()) {
+    if (accountSignedIn() && !state.account.bootstrapInFlight) {
       await safeLoad(() => refreshChallengeDashboard(false), null);
     }
     settleFamilyPredictions();
@@ -8678,55 +8883,7 @@ function attachEvents() {
 
   if (el.leagueInviteYesBtn) {
     el.leagueInviteYesBtn.addEventListener("click", async () => {
-      const code = normalizeLeagueCodeClient(state.pendingLeagueInvite?.code || "");
-      const token = String(state.pendingLeagueInvite?.token || "").trim();
-      if (!code) {
-        closeLeagueInviteModal();
-        return;
-      }
-      if (!accountSignedIn()) {
-        state.pendingInviteJoinIntent = true;
-        setAccountMenuOpen(true);
-        setAccountStatus("Sign in or create an account to continue joining this league.");
-        if (el.accountNameInput) {
-          setTimeout(() => {
-            try {
-              el.accountNameInput.focus();
-            } catch {
-              // no-op
-            }
-          }, 30);
-        }
-        closeLeagueInviteModal();
-        return;
-      }
-      try {
-        if (token) {
-          await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/invite/join`, { token }, state.account.token);
-          state.familyLeague.leagueCode = code;
-          if (!state.familyLeague.joinedLeagueCodes.includes(code)) {
-            state.familyLeague.joinedLeagueCodes.push(code);
-          }
-          state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(code));
-          state.pendingInviteJoinIntent = false;
-          persistLocalMetaState();
-          scheduleCloudStateSync();
-          setAccountStatus(`Joined ${state.pendingLeagueInvite?.leagueName || `League ${code}`} from invite.`);
-          safeLoad(() => refreshLeagueDirectory(), null);
-        } else {
-          await joinFamilyLeagueCode(code, {
-            referrerName: state.pendingLeagueInvite?.referrerName || "",
-            source: state.pendingLeagueInvite?.source || "link",
-          });
-          state.pendingInviteJoinIntent = false;
-        }
-        setPendingLeagueInvite(null);
-        closeLeagueInviteModal();
-        showRewardToast("Joined league invite", "success");
-        renderFamilyLeaguePanel();
-      } catch (err) {
-        setAccountStatus(`Invite join failed: ${err.message || "Please try again."}`, true);
-      }
+      await joinPendingLeagueInviteFromModal();
     });
   }
 
@@ -8735,6 +8892,41 @@ function attachEvents() {
       state.pendingInviteJoinIntent = false;
       setPendingLeagueInvite(null);
       closeLeagueInviteModal();
+    });
+  }
+
+  if (el.leagueInviteSigninBtn) {
+    el.leagueInviteSigninBtn.addEventListener("click", async () => {
+      await signInFromInviteModal();
+    });
+  }
+
+  if (el.leagueInviteRegisterBtn) {
+    el.leagueInviteRegisterBtn.addEventListener("click", async () => {
+      await registerFromInviteModal();
+    });
+  }
+
+  if (el.leagueInviteBackBtn) {
+    el.leagueInviteBackBtn.addEventListener("click", () => {
+      setLeagueInviteStep("confirm");
+      setLeagueInviteInlineStatus("Would you like to join this league?");
+    });
+  }
+
+  if (el.leagueInviteNameInput) {
+    el.leagueInviteNameInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      await signInFromInviteModal();
+    });
+  }
+
+  if (el.leagueInvitePinInput) {
+    el.leagueInvitePinInput.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      await signInFromInviteModal();
     });
   }
 
