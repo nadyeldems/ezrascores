@@ -2008,6 +2008,107 @@ body.league-member-overlay-open::before {
   flex-wrap: wrap;
 }
 
+.account-avatar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.12rem;
+  min-width: 2rem;
+}
+
+.account-toggle-avatar {
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  object-fit: cover;
+  display: block;
+}
+
+.account-toggle-avatar-fallback {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.avatar-editor {
+  border: 1px dashed var(--line-soft);
+  border-radius: 0.65rem;
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.45rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.avatar-editor-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.account-avatar-preview {
+  width: 2.45rem;
+  height: 2.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #100905;
+}
+
+.avatar-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.avatar-editor-field {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.avatar-editor-field .account-input {
+  min-height: 1.85rem;
+}
+
+.avatar-color-input {
+  padding: 0.08rem;
+  min-height: 1.85rem;
+}
+
+.mission-title-with-avatar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.league-member-avatar,
+.member-profile-avatar {
+  width: 1.35rem;
+  height: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+  background: #0d0703;
+  flex: 0 0 auto;
+}
+
+.league-member-avatar img,
+.member-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.member-card-title-with-avatar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .settings-note {
   margin: 0.2rem 0 0;
   line-height: 1.2;
@@ -2846,6 +2947,16 @@ body.league-member-overlay-open::before {
   }
 
   #fun-zone-panel.home-focus .fun-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .avatar-editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .avatar-editor-grid {
     grid-template-columns: 1fr;
   }
 }

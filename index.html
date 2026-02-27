@@ -84,7 +84,10 @@
             </div>
           </div>
           <div class="account-menu" id="account-menu">
-            <button id="account-toggle-btn" class="btn feature-btn settings-cog-btn" type="button" aria-expanded="false" aria-label="Account">👤</button>
+            <button id="account-toggle-btn" class="btn feature-btn settings-cog-btn account-avatar-btn" type="button" aria-expanded="false" aria-label="Account">
+              <img id="account-toggle-avatar" class="account-toggle-avatar hidden" alt="Account avatar" />
+              <span id="account-toggle-avatar-fallback" class="account-toggle-avatar-fallback">👤</span>
+            </button>
             <div id="account-panel" class="settings-panel hidden">
               <div class="settings-group">
                 <p class="settings-label">Account (optional cloud save)</p>
@@ -110,6 +113,64 @@
                 <div id="account-auth-signedin" class="account-auth-box hidden">
                   <p id="account-user-label" class="muted">Signed in</p>
                   <input id="account-email-manage-input" class="account-input" type="email" maxlength="254" placeholder="Add recovery email" />
+                  <div class="avatar-editor">
+                    <div class="avatar-editor-head">
+                      <img id="account-avatar-preview" class="account-avatar-preview" alt="Avatar preview" />
+                      <span class="muted">Avatar Builder</span>
+                    </div>
+                    <div class="avatar-editor-grid">
+                      <label class="avatar-editor-field">Hair
+                        <select id="avatar-hair-style" class="account-input">
+                          <option value="short">Short</option>
+                          <option value="fade">Fade</option>
+                          <option value="spike">Spike</option>
+                          <option value="curly">Curly</option>
+                          <option value="bald">Bald</option>
+                        </select>
+                      </label>
+                      <label class="avatar-editor-field">Head
+                        <select id="avatar-head-shape" class="account-input">
+                          <option value="round">Round</option>
+                          <option value="oval">Oval</option>
+                          <option value="square">Square</option>
+                        </select>
+                      </label>
+                      <label class="avatar-editor-field">Mouth
+                        <select id="avatar-mouth-style" class="account-input">
+                          <option value="smile">Smile</option>
+                          <option value="flat">Flat</option>
+                          <option value="open">Open</option>
+                        </select>
+                      </label>
+                      <label class="avatar-editor-field">Kit Style
+                        <select id="avatar-kit-style" class="account-input">
+                          <option value="plain">Plain</option>
+                          <option value="sleeves">Sleeves</option>
+                          <option value="diamond">Diamond</option>
+                          <option value="stripes">Stripes</option>
+                          <option value="hoops">Hoops</option>
+                          <option value="total90">Total 90</option>
+                        </select>
+                      </label>
+                      <label class="avatar-editor-field">Boots
+                        <select id="avatar-boots-style" class="account-input">
+                          <option value="classic">Classic</option>
+                          <option value="speed">Speed</option>
+                          <option value="high">High</option>
+                        </select>
+                      </label>
+                      <label class="avatar-editor-field color">Skin <input id="avatar-skin-color" class="account-input avatar-color-input" type="color" value="#E0AD80" /></label>
+                      <label class="avatar-editor-field color">Hair <input id="avatar-hair-color" class="account-input avatar-color-input" type="color" value="#2D1A12" /></label>
+                      <label class="avatar-editor-field color">Eyes <input id="avatar-eye-color" class="account-input avatar-color-input" type="color" value="#1F1F1F" /></label>
+                      <label class="avatar-editor-field color">Kit 1 <input id="avatar-kit-color-1" class="account-input avatar-color-input" type="color" value="#F39A1D" /></label>
+                      <label class="avatar-editor-field color">Kit 2 <input id="avatar-kit-color-2" class="account-input avatar-color-input" type="color" value="#111111" /></label>
+                      <label class="avatar-editor-field color">Boots <input id="avatar-boots-color" class="account-input avatar-color-input" type="color" value="#111111" /></label>
+                    </div>
+                    <div class="account-actions">
+                      <button id="account-avatar-random-btn" class="btn" type="button">Randomize</button>
+                      <button id="account-avatar-save-btn" class="btn" type="button">Save Avatar</button>
+                    </div>
+                  </div>
                   <div class="account-actions">
                     <button id="account-email-save-btn" class="btn" type="button">Save Email</button>
                     <button id="account-sync-btn" class="btn" type="button">Sync Save</button>

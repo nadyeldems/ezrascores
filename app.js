@@ -110,6 +110,127 @@ function defaultHigherLowerState() {
   };
 }
 
+const AVATAR_OPTIONS = {
+  hairStyle: ["short", "fade", "spike", "curly", "bald"],
+  headShape: ["round", "oval", "square"],
+  mouth: ["smile", "flat", "open"],
+  kitStyle: ["plain", "sleeves", "diamond", "stripes", "hoops", "total90"],
+  bootsStyle: ["classic", "speed", "high"],
+};
+
+function clampAvatarColor(value, fallback) {
+  const raw = String(value || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toUpperCase() : fallback;
+}
+
+function avatarSeedIndex(seed, modulo) {
+  const text = String(seed || "ezra");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  return modulo > 0 ? hash % modulo : 0;
+}
+
+function defaultAvatarConfig(seed = "") {
+  const primaryPalette = ["#F39A1D", "#E14D2A", "#2B88D8", "#37A060", "#A35BE6", "#DE5C8E"];
+  const secondaryPalette = ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#331018"];
+  const skinPalette = ["#F2C8A0", "#E0AD80", "#C98B63", "#A76A45", "#7F4D2E"];
+  const hairPalette = ["#111111", "#2D1A12", "#5A3A2B", "#A16A43", "#D4C0A0"];
+  const eyePalette = ["#1F1F1F", "#4B2A1E", "#1E3A5F", "#0F5A3E"];
+  return {
+    hairStyle: AVATAR_OPTIONS.hairStyle[avatarSeedIndex(`${seed}:hair`, AVATAR_OPTIONS.hairStyle.length)],
+    headShape: AVATAR_OPTIONS.headShape[avatarSeedIndex(`${seed}:head`, AVATAR_OPTIONS.headShape.length)],
+    eyeColor: eyePalette[avatarSeedIndex(`${seed}:eye`, eyePalette.length)],
+    mouth: AVATAR_OPTIONS.mouth[avatarSeedIndex(`${seed}:mouth`, AVATAR_OPTIONS.mouth.length)],
+    skinColor: skinPalette[avatarSeedIndex(`${seed}:skin`, skinPalette.length)],
+    hairColor: hairPalette[avatarSeedIndex(`${seed}:haircolor`, hairPalette.length)],
+    kitColor1: primaryPalette[avatarSeedIndex(`${seed}:kit1`, primaryPalette.length)],
+    kitColor2: secondaryPalette[avatarSeedIndex(`${seed}:kit2`, secondaryPalette.length)],
+    kitStyle: AVATAR_OPTIONS.kitStyle[avatarSeedIndex(`${seed}:kitstyle`, AVATAR_OPTIONS.kitStyle.length)],
+    bootsStyle: AVATAR_OPTIONS.bootsStyle[avatarSeedIndex(`${seed}:boots`, AVATAR_OPTIONS.bootsStyle.length)],
+    bootsColor: secondaryPalette[avatarSeedIndex(`${seed}:bootsColor`, secondaryPalette.length)],
+  };
+}
+
+function sanitizeAvatarConfig(input, seed = "") {
+  const base = defaultAvatarConfig(seed);
+  const src = input && typeof input === "object" ? input : {};
+  const pick = (v, allow, fallback) => (allow.includes(String(v || "")) ? String(v) : fallback);
+  return {
+    hairStyle: pick(src.hairStyle, AVATAR_OPTIONS.hairStyle, base.hairStyle),
+    headShape: pick(src.headShape, AVATAR_OPTIONS.headShape, base.headShape),
+    eyeColor: clampAvatarColor(src.eyeColor, base.eyeColor),
+    mouth: pick(src.mouth, AVATAR_OPTIONS.mouth, base.mouth),
+    skinColor: clampAvatarColor(src.skinColor, base.skinColor),
+    hairColor: clampAvatarColor(src.hairColor, base.hairColor),
+    kitColor1: clampAvatarColor(src.kitColor1, base.kitColor1),
+    kitColor2: clampAvatarColor(src.kitColor2, base.kitColor2),
+    kitStyle: pick(src.kitStyle, AVATAR_OPTIONS.kitStyle, base.kitStyle),
+    bootsStyle: pick(src.bootsStyle, AVATAR_OPTIONS.bootsStyle, base.bootsStyle),
+    bootsColor: clampAvatarColor(src.bootsColor, base.bootsColor),
+  };
+}
+
+function avatarSvgDataUri(input, seed = "", size = 96) {
+  const a = sanitizeAvatarConfig(input, seed);
+  const head =
+    a.headShape === "oval"
+      ? `<ellipse cx="50" cy="40" rx="17" ry="19" fill="${a.skinColor}"/>`
+      : a.headShape === "square"
+        ? `<rect x="33" y="22" width="34" height="36" rx="7" fill="${a.skinColor}"/>`
+        : `<circle cx="50" cy="40" r="18" fill="${a.skinColor}"/>`;
+  const hair =
+    a.hairStyle === "bald"
+      ? ""
+      : a.hairStyle === "fade"
+        ? `<rect x="34" y="18" width="32" height="10" rx="5" fill="${a.hairColor}"/><rect x="35" y="24" width="6" height="16" rx="3" fill="${a.hairColor}" opacity="0.65"/><rect x="59" y="24" width="6" height="16" rx="3" fill="${a.hairColor}" opacity="0.65"/>`
+        : a.hairStyle === "spike"
+          ? `<path d="M33 28 L37 15 L43 26 L49 14 L55 26 L61 15 L67 28 Z" fill="${a.hairColor}"/>`
+          : a.hairStyle === "curly"
+            ? `<circle cx="37" cy="25" r="6" fill="${a.hairColor}"/><circle cx="45" cy="21" r="7" fill="${a.hairColor}"/><circle cx="55" cy="21" r="7" fill="${a.hairColor}"/><circle cx="63" cy="25" r="6" fill="${a.hairColor}"/>`
+            : `<rect x="33" y="17" width="34" height="12" rx="6" fill="${a.hairColor}"/>`;
+  const mouth =
+    a.mouth === "open"
+      ? `<ellipse cx="50" cy="47" rx="5" ry="3.5" fill="#2A1208"/>`
+      : a.mouth === "flat"
+        ? `<line x1="45" y1="48" x2="55" y2="48" stroke="#2A1208" stroke-width="2" stroke-linecap="round"/>`
+        : `<path d="M44 47 Q50 52 56 47" stroke="#2A1208" stroke-width="2" fill="none" stroke-linecap="round"/>`;
+
+  let kitPattern = "";
+  if (a.kitStyle === "sleeves") {
+    kitPattern = `<rect x="24" y="63" width="10" height="14" fill="${a.kitColor2}"/><rect x="66" y="63" width="10" height="14" fill="${a.kitColor2}"/>`;
+  } else if (a.kitStyle === "diamond") {
+    kitPattern = `<path d="M50 59 L58 67 L50 75 L42 67 Z" fill="${a.kitColor2}"/>`;
+  } else if (a.kitStyle === "stripes") {
+    kitPattern = `<rect x="37" y="58" width="4" height="22" fill="${a.kitColor2}"/><rect x="46" y="58" width="4" height="22" fill="${a.kitColor2}"/><rect x="55" y="58" width="4" height="22" fill="${a.kitColor2}"/>`;
+  } else if (a.kitStyle === "hoops") {
+    kitPattern = `<rect x="28" y="62" width="44" height="4" fill="${a.kitColor2}"/><rect x="28" y="70" width="44" height="4" fill="${a.kitColor2}"/>`;
+  } else if (a.kitStyle === "total90") {
+    kitPattern = `<path d="M30 70 C40 58, 60 58, 70 70" stroke="${a.kitColor2}" stroke-width="5" fill="none"/><circle cx="50" cy="70" r="3" fill="${a.kitColor2}"/>`;
+  }
+
+  const boots =
+    a.bootsStyle === "speed"
+      ? `<rect x="34" y="84" width="14" height="4" rx="2" fill="${a.bootsColor}"/><rect x="52" y="84" width="14" height="4" rx="2" fill="${a.bootsColor}"/>`
+      : a.bootsStyle === "high"
+        ? `<rect x="34" y="80" width="14" height="8" rx="2" fill="${a.bootsColor}"/><rect x="52" y="80" width="14" height="8" rx="2" fill="${a.bootsColor}"/>`
+        : `<ellipse cx="41" cy="86" rx="7" ry="3" fill="${a.bootsColor}"/><ellipse cx="59" cy="86" rx="7" ry="3" fill="${a.bootsColor}"/>`;
+
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
+  <rect x="0" y="0" width="100" height="100" rx="20" fill="#120904"/>
+  <circle cx="50" cy="50" r="48" fill="rgba(255,255,255,0.02)" />
+  <rect x="28" y="58" width="44" height="22" rx="9" fill="${a.kitColor1}"/>
+  ${kitPattern}
+  ${boots}
+  ${head}
+  ${hair}
+  <circle cx="44" cy="40" r="2.3" fill="${a.eyeColor}"/>
+  <circle cx="56" cy="40" r="2.3" fill="${a.eyeColor}"/>
+  ${mouth}
+</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function defaultFamilyLeagueState() {
   return {
     leagueCode: "",
@@ -398,6 +519,8 @@ const el = {
   settingsPanel: document.getElementById("settings-panel"),
   accountMenu: document.getElementById("account-menu"),
   accountToggleBtn: document.getElementById("account-toggle-btn"),
+  accountToggleAvatar: document.getElementById("account-toggle-avatar"),
+  accountToggleAvatarFallback: document.getElementById("account-toggle-avatar-fallback"),
   accountPanel: document.getElementById("account-panel"),
   accountAuthSignedOut: document.getElementById("account-auth-signedout"),
   accountAuthSignedIn: document.getElementById("account-auth-signedin"),
@@ -414,6 +537,20 @@ const el = {
   accountRecoveryResetBtn: document.getElementById("account-recovery-reset-btn"),
   accountRecoveryCancelBtn: document.getElementById("account-recovery-cancel-btn"),
   accountEmailManageInput: document.getElementById("account-email-manage-input"),
+  accountAvatarPreview: document.getElementById("account-avatar-preview"),
+  accountAvatarSaveBtn: document.getElementById("account-avatar-save-btn"),
+  accountAvatarRandomBtn: document.getElementById("account-avatar-random-btn"),
+  avatarHairStyleInput: document.getElementById("avatar-hair-style"),
+  avatarHeadShapeInput: document.getElementById("avatar-head-shape"),
+  avatarMouthStyleInput: document.getElementById("avatar-mouth-style"),
+  avatarKitStyleInput: document.getElementById("avatar-kit-style"),
+  avatarBootsStyleInput: document.getElementById("avatar-boots-style"),
+  avatarSkinColorInput: document.getElementById("avatar-skin-color"),
+  avatarHairColorInput: document.getElementById("avatar-hair-color"),
+  avatarEyeColorInput: document.getElementById("avatar-eye-color"),
+  avatarKitColor1Input: document.getElementById("avatar-kit-color-1"),
+  avatarKitColor2Input: document.getElementById("avatar-kit-color-2"),
+  avatarBootsColorInput: document.getElementById("avatar-boots-color"),
   accountHelper: document.getElementById("account-helper"),
   accountEmailSaveBtn: document.getElementById("account-email-save-btn"),
   accountSyncBtn: document.getElementById("account-sync-btn"),
@@ -822,6 +959,24 @@ function updateAccountControlsState() {
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.disabled = busy || signedIn;
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.disabled = busy || signedIn;
   if (el.accountEmailManageInput) el.accountEmailManageInput.disabled = busy || !signedIn;
+  if (el.accountAvatarSaveBtn) el.accountAvatarSaveBtn.disabled = busy || !signedIn;
+  if (el.accountAvatarRandomBtn) el.accountAvatarRandomBtn.disabled = busy || !signedIn;
+  const avatarInputs = [
+    el.avatarHairStyleInput,
+    el.avatarHeadShapeInput,
+    el.avatarMouthStyleInput,
+    el.avatarKitStyleInput,
+    el.avatarBootsStyleInput,
+    el.avatarSkinColorInput,
+    el.avatarHairColorInput,
+    el.avatarEyeColorInput,
+    el.avatarKitColor1Input,
+    el.avatarKitColor2Input,
+    el.avatarBootsColorInput,
+  ];
+  avatarInputs.forEach((input) => {
+    if (input) input.disabled = busy || !signedIn;
+  });
   updateAccountUiState();
 }
 
@@ -841,6 +996,65 @@ function setAccountStatus(text, isError = false) {
   if (!el.accountStatus) return;
   el.accountStatus.textContent = text;
   el.accountStatus.classList.toggle("error", Boolean(isError));
+}
+
+function currentAccountAvatar() {
+  const seed = state.account.user?.name || state.account.user?.id || "ezra";
+  return sanitizeAvatarConfig(state.account.user?.avatar, seed);
+}
+
+function readAvatarEditorState() {
+  const seed = state.account.user?.name || state.account.user?.id || "ezra";
+  return sanitizeAvatarConfig(
+    {
+      hairStyle: el.avatarHairStyleInput?.value,
+      headShape: el.avatarHeadShapeInput?.value,
+      eyeColor: el.avatarEyeColorInput?.value,
+      mouth: el.avatarMouthStyleInput?.value,
+      skinColor: el.avatarSkinColorInput?.value,
+      hairColor: el.avatarHairColorInput?.value,
+      kitColor1: el.avatarKitColor1Input?.value,
+      kitColor2: el.avatarKitColor2Input?.value,
+      kitStyle: el.avatarKitStyleInput?.value,
+      bootsStyle: el.avatarBootsStyleInput?.value,
+      bootsColor: el.avatarBootsColorInput?.value,
+    },
+    seed
+  );
+}
+
+function writeAvatarEditorState(avatar) {
+  const seed = state.account.user?.name || state.account.user?.id || "ezra";
+  const safe = sanitizeAvatarConfig(avatar, seed);
+  if (el.avatarHairStyleInput) el.avatarHairStyleInput.value = safe.hairStyle;
+  if (el.avatarHeadShapeInput) el.avatarHeadShapeInput.value = safe.headShape;
+  if (el.avatarMouthStyleInput) el.avatarMouthStyleInput.value = safe.mouth;
+  if (el.avatarKitStyleInput) el.avatarKitStyleInput.value = safe.kitStyle;
+  if (el.avatarBootsStyleInput) el.avatarBootsStyleInput.value = safe.bootsStyle;
+  if (el.avatarSkinColorInput) el.avatarSkinColorInput.value = safe.skinColor;
+  if (el.avatarHairColorInput) el.avatarHairColorInput.value = safe.hairColor;
+  if (el.avatarEyeColorInput) el.avatarEyeColorInput.value = safe.eyeColor;
+  if (el.avatarKitColor1Input) el.avatarKitColor1Input.value = safe.kitColor1;
+  if (el.avatarKitColor2Input) el.avatarKitColor2Input.value = safe.kitColor2;
+  if (el.avatarBootsColorInput) el.avatarBootsColorInput.value = safe.bootsColor;
+  if (el.accountAvatarPreview) {
+    el.accountAvatarPreview.src = avatarSvgDataUri(safe, seed, 116);
+  }
+}
+
+function renderAccountAvatarButton() {
+  if (!el.accountToggleAvatar || !el.accountToggleAvatarFallback) return;
+  const seed = state.account.user?.name || state.account.user?.id || "ezra";
+  const safe = currentAccountAvatar();
+  el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
+  el.accountToggleAvatar.classList.remove("hidden");
+  el.accountToggleAvatarFallback.classList.add("hidden");
+}
+
+function avatarBadgeMarkup(avatar, name, sizeClass = "member-avatar") {
+  const seed = name || "user";
+  const safe = sanitizeAvatarConfig(avatar, seed);
+  return `<span class="${sizeClass}"><img src="${avatarSvgDataUri(safe, seed, 88)}" alt="${escapeHtml(name || "User")} avatar" /></span>`;
 }
 
 function renderAccountHelper() {
@@ -886,6 +1100,7 @@ function renderAccountUI() {
   const signedIn = accountSignedIn();
   el.accountAuthSignedOut.classList.toggle("hidden", signedIn);
   el.accountAuthSignedIn.classList.toggle("hidden", !signedIn);
+  renderAccountAvatarButton();
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
     if (el.accountEmailInput && state.account.user?.email) {
@@ -895,8 +1110,10 @@ function renderAccountUI() {
       el.accountEmailManageInput.value = String(state.account.user?.email || "");
       el.accountEmailManageInput.placeholder = state.account.user?.email ? "Recovery email" : "Add recovery email";
     }
+    writeAvatarEditorState(currentAccountAvatar());
     setAccountRecoveryOpen(false);
   } else {
+    writeAvatarEditorState(defaultAvatarConfig("ezra"));
     setAccountRecoveryOpen(Boolean(state.account.recoveryOpen));
   }
   renderLifetimePointsPill();
@@ -2509,6 +2726,8 @@ function renderLeagueMemberView() {
   const viewerTitlesWon = Math.max(0, Number(data?.viewerTitlesWon || 0));
   const showPreviousRound = Boolean(state.leagueMemberView.showPreviousRound);
   el.leagueMemberTitle.textContent = `${memberName}${memberTitlesWon > 0 ? ` 🏆 x${memberTitlesWon}` : ""} • Profile`;
+  const memberAvatar = avatarBadgeMarkup(data?.user?.avatar, memberName, "member-profile-avatar");
+  const viewerAvatar = avatarBadgeMarkup(state.account.user?.avatar, state.account.user?.name || "You", "member-profile-avatar");
   const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
   const myDream = leagueMemberDreamTeamSummary(state.dreamTeam);
   const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled, showPreviousRound);
@@ -2528,7 +2747,7 @@ function renderLeagueMemberView() {
     <section class="member-view-group">
       <div class="member-points-summary ${compareEnabled ? "two" : "one"}">
         <article class="member-points-card">
-          <h5>${compareEnabled ? "Them" : escapeHtml(memberName)}</h5>
+          <h5 class="member-card-title-with-avatar">${memberAvatar}<span>${compareEnabled ? "Them" : escapeHtml(memberName)}</span></h5>
           <p>Current week: <strong>${memberWeekPoints}</strong></p>
           <p>Total points: <strong>${memberTotalPoints}</strong></p>
           <p>Titles: <strong>${memberTitlesWon}</strong>${memberTitlesWon > 0 ? " 🏆" : ""}</p>
@@ -2537,7 +2756,7 @@ function renderLeagueMemberView() {
           compareEnabled
             ? `
           <article class="member-points-card">
-            <h5>You</h5>
+            <h5 class="member-card-title-with-avatar">${viewerAvatar}<span>You</span></h5>
             <p>Current week: <strong>${viewerWeekPoints}</strong></p>
             <p>Total points: <strong>${viewerTotalPoints}</strong></p>
             <p>Titles: <strong>${viewerTitlesWon}</strong>${viewerTitlesWon > 0 ? " 🏆" : ""}</p>
@@ -2743,9 +2962,10 @@ function renderFamilyLeaguePanel() {
     row.className = `family-row ${isSignedInMember ? "active" : ""}`;
     row.setAttribute("role", "button");
     row.tabIndex = 0;
+    const avatarHtml = avatarBadgeMarkup(member.avatar, member.name || "User", "league-member-avatar");
     row.innerHTML = `
       <div class="mission-text">
-        <div class="mission-title">#${rank} ${escapeHtml(member.name || "User")}${titleBadge}</div>
+        <div class="mission-title mission-title-with-avatar">${avatarHtml}<span>#${rank} ${escapeHtml(member.name || "User")}${titleBadge}</span></div>
         <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""}${compactHomeMode ? "" : " • Tap to view profile"}</div>
       </div>
       <div class="account-actions">
@@ -6030,6 +6250,28 @@ async function updateAccountEmail() {
   setAccountStatus(`Recovery email saved for ${state.account.user?.name || "user"}.`);
 }
 
+async function saveAccountAvatar() {
+  if (!accountSignedIn()) {
+    setAccountStatus("Sign in to save your avatar.", true);
+    return;
+  }
+  const avatar = readAvatarEditorState();
+  const data = await apiRequest("PUT", `${API_PROXY_BASE}/v1/ezra/account/avatar`, { avatar }, state.account.token);
+  if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
+  state.account.user.avatar = sanitizeAvatarConfig(data?.avatar, state.account.user?.name || state.account.user?.id || "ezra");
+  renderAccountUI();
+  renderFamilyLeaguePanel();
+  if (state.leagueMemberView.open) renderLeagueMemberView();
+  setAccountStatus("Avatar saved.");
+}
+
+function randomizeAccountAvatar() {
+  if (!accountSignedIn()) return;
+  const seed = `${state.account.user?.name || "ezra"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  writeAvatarEditorState(defaultAvatarConfig(seed));
+  setAccountStatus("Avatar randomized. Save to keep it.");
+}
+
 async function logoutAccount() {
   if (state.account.token) {
     await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/logout`, {}, state.account.token).catch(() => null);
@@ -8735,6 +8977,41 @@ function attachEvents() {
       if (event.key !== "Enter") return;
       event.preventDefault();
       await runAccountAction("save_email", "Saving recovery email...", "Save email failed", updateAccountEmail).catch(() => null);
+    });
+  }
+
+  const avatarInputs = [
+    el.avatarHairStyleInput,
+    el.avatarHeadShapeInput,
+    el.avatarMouthStyleInput,
+    el.avatarKitStyleInput,
+    el.avatarBootsStyleInput,
+    el.avatarSkinColorInput,
+    el.avatarHairColorInput,
+    el.avatarEyeColorInput,
+    el.avatarKitColor1Input,
+    el.avatarKitColor2Input,
+    el.avatarBootsColorInput,
+  ];
+  avatarInputs.forEach((input) => {
+    if (!input) return;
+    input.addEventListener("change", () => {
+      writeAvatarEditorState(readAvatarEditorState());
+    });
+    input.addEventListener("input", () => {
+      writeAvatarEditorState(readAvatarEditorState());
+    });
+  });
+
+  if (el.accountAvatarRandomBtn) {
+    el.accountAvatarRandomBtn.addEventListener("click", () => {
+      randomizeAccountAvatar();
+    });
+  }
+
+  if (el.accountAvatarSaveBtn) {
+    el.accountAvatarSaveBtn.addEventListener("click", async () => {
+      await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar).catch(() => null);
     });
   }
 

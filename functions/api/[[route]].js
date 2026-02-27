@@ -116,6 +116,78 @@ function validateCredentials(name, pin) {
   return { ok: true, cleanName, cleanPin };
 }
 
+const AVATAR_HAIR_STYLES = ["short", "fade", "spike", "curly", "bald"];
+const AVATAR_HEAD_SHAPES = ["round", "oval", "square"];
+const AVATAR_MOUTH_STYLES = ["smile", "flat", "open"];
+const AVATAR_KIT_STYLES = ["plain", "sleeves", "diamond", "stripes", "hoops", "total90"];
+const AVATAR_BOOTS_STYLES = ["classic", "speed", "high"];
+
+function clampHexColor(value, fallback) {
+  const raw = String(value || "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toUpperCase();
+  return fallback;
+}
+
+function avatarSeedIndex(seed, modulo) {
+  const text = String(seed || "ezra");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return modulo > 0 ? hash % modulo : 0;
+}
+
+function defaultAvatarConfig(seed = "") {
+  const primaryPalette = ["#F39A1D", "#E14D2A", "#2B88D8", "#37A060", "#A35BE6", "#DE5C8E"];
+  const secondaryPalette = ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#331018"];
+  const skinPalette = ["#F2C8A0", "#E0AD80", "#C98B63", "#A76A45", "#7F4D2E"];
+  const hairPalette = ["#111111", "#2D1A12", "#5A3A2B", "#A16A43", "#D4C0A0"];
+  const eyePalette = ["#1F1F1F", "#4B2A1E", "#1E3A5F", "#0F5A3E"];
+
+  return {
+    hairStyle: AVATAR_HAIR_STYLES[avatarSeedIndex(`${seed}:hair`, AVATAR_HAIR_STYLES.length)],
+    headShape: AVATAR_HEAD_SHAPES[avatarSeedIndex(`${seed}:head`, AVATAR_HEAD_SHAPES.length)],
+    eyeColor: eyePalette[avatarSeedIndex(`${seed}:eye`, eyePalette.length)],
+    mouth: AVATAR_MOUTH_STYLES[avatarSeedIndex(`${seed}:mouth`, AVATAR_MOUTH_STYLES.length)],
+    skinColor: skinPalette[avatarSeedIndex(`${seed}:skin`, skinPalette.length)],
+    hairColor: hairPalette[avatarSeedIndex(`${seed}:haircolor`, hairPalette.length)],
+    kitColor1: primaryPalette[avatarSeedIndex(`${seed}:kit1`, primaryPalette.length)],
+    kitColor2: secondaryPalette[avatarSeedIndex(`${seed}:kit2`, secondaryPalette.length)],
+    kitStyle: AVATAR_KIT_STYLES[avatarSeedIndex(`${seed}:kitstyle`, AVATAR_KIT_STYLES.length)],
+    bootsStyle: AVATAR_BOOTS_STYLES[avatarSeedIndex(`${seed}:boots`, AVATAR_BOOTS_STYLES.length)],
+    bootsColor: secondaryPalette[avatarSeedIndex(`${seed}:bootsColor`, secondaryPalette.length)],
+  };
+}
+
+function sanitizeAvatarConfig(input, seed = "") {
+  const base = defaultAvatarConfig(seed);
+  const src = input && typeof input === "object" ? input : {};
+  const pick = (value, allow, fallback) => (allow.includes(String(value || "")) ? String(value) : fallback);
+  return {
+    hairStyle: pick(src.hairStyle, AVATAR_HAIR_STYLES, base.hairStyle),
+    headShape: pick(src.headShape, AVATAR_HEAD_SHAPES, base.headShape),
+    eyeColor: clampHexColor(src.eyeColor, base.eyeColor),
+    mouth: pick(src.mouth, AVATAR_MOUTH_STYLES, base.mouth),
+    skinColor: clampHexColor(src.skinColor, base.skinColor),
+    hairColor: clampHexColor(src.hairColor, base.hairColor),
+    kitColor1: clampHexColor(src.kitColor1, base.kitColor1),
+    kitColor2: clampHexColor(src.kitColor2, base.kitColor2),
+    kitStyle: pick(src.kitStyle, AVATAR_KIT_STYLES, base.kitStyle),
+    bootsStyle: pick(src.bootsStyle, AVATAR_BOOTS_STYLES, base.bootsStyle),
+    bootsColor: clampHexColor(src.bootsColor, base.bootsColor),
+  };
+}
+
+function parseAvatarConfig(raw, seed = "") {
+  if (!raw) return defaultAvatarConfig(seed);
+  try {
+    const parsed = JSON.parse(String(raw));
+    return sanitizeAvatarConfig(parsed, seed);
+  } catch {
+    return defaultAvatarConfig(seed);
+  }
+}
+
 function randomHex(bytes = 16) {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);
@@ -201,6 +273,7 @@ async function ensureAccountSchema(db) {
         email TEXT,
         email_key TEXT,
         email_verified_at TEXT,
+        avatar_json TEXT,
         pin_salt TEXT NOT NULL,
         pin_hash TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -468,6 +541,12 @@ async function ensureAccountSchema(db) {
     if (!msg.includes("duplicate column")) throw err;
   }
   try {
+    await db.prepare("ALTER TABLE ezra_users ADD COLUMN avatar_json TEXT").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
+  try {
     await db.prepare("ALTER TABLE ezra_league_members ADD COLUMN joined_via_invite INTEGER NOT NULL DEFAULT 0").run();
   } catch (err) {
     const msg = String(err?.message || err || "").toLowerCase();
@@ -628,6 +707,13 @@ function parseStatusText(event) {
 function isFinalEvent(event) {
   const s = parseStatusText(event);
   return /\b(ft|full time|match finished|finished|aet|after pen|final)\b/.test(s);
+}
+
+function isLiveEvent(event) {
+  const s = parseStatusText(event);
+  if (!s) return false;
+  if (/\b(ht|1h|2h|live|in play|playing|et|pen)\b/.test(s)) return true;
+  return /\d{1,3}\s*'/.test(s);
 }
 
 function eventKickoffMs(event, fallbackKickoffIso = "") {
@@ -835,7 +921,7 @@ async function fetchEventResultById(key, eventId, resultCache, db, options = {})
       ? `${String(event.dateEvent).trim()}T${String(event.strTime || "12:00:00").trim().slice(0, 8)}Z`
       : String(options?.kickoffIso || "");
     const final = eventLikelyFinal(event, options?.kickoffIso || "") && home !== null && away !== null;
-    const result = { final, home, away, kickoffAt };
+    const result = { final, home, away, kickoffAt, event };
     await writeCachedEventResult(db, cacheKey, event, result);
     resultCache.set(cacheKey, result);
     return result;
@@ -847,6 +933,43 @@ async function fetchEventResultById(key, eventId, resultCache, db, options = {})
     resultCache.set(cacheKey, fallback);
     return fallback;
   }
+}
+
+async function hydrateLiveScoresForEvents(events, key, db) {
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) return list;
+  const resultCache = new Map();
+  const candidates = list.filter((event) => {
+    if (!event || typeof event !== "object") return false;
+    if (!String(event.idEvent || "").trim()) return false;
+    if (numericScore(event.intHomeScore) !== null && numericScore(event.intAwayScore) !== null) return false;
+    return isLiveEvent(event);
+  });
+  if (!candidates.length) return list;
+
+  // Keep this bounded: only hydrate likely live rows that are missing scores.
+  await Promise.allSettled(
+    candidates.slice(0, 12).map(async (event) => {
+      const kickoffIso = event?.dateEvent
+        ? `${String(event.dateEvent).trim()}T${String(event.strTime || "12:00:00").trim().slice(0, 8)}Z`
+        : "";
+      const result = await fetchEventResultById(key, event.idEvent, resultCache, db, { kickoffIso });
+      const scoreHome = numericScore(result?.home);
+      const scoreAway = numericScore(result?.away);
+      if (scoreHome !== null && scoreAway !== null) {
+        event.intHomeScore = scoreHome;
+        event.intAwayScore = scoreAway;
+      }
+      const fullEvent = result?.event && typeof result.event === "object" ? normalizeEventForCache(result.event) : null;
+      if (fullEvent) {
+        event.strStatus = fullEvent.strStatus || event.strStatus || "";
+        event.strProgress = fullEvent.strProgress || event.strProgress || "";
+        event.strMinute = fullEvent.strMinute || event.strMinute || "";
+        event.strTimestamp = fullEvent.strTimestamp || event.strTimestamp || "";
+      }
+    })
+  );
+  return list;
 }
 
 async function upsertUserScore(db, userId, points) {
@@ -1118,7 +1241,7 @@ async function leagueStandings(db, code, key) {
   const season = currentSevenDaySeasonWindow();
   const rows = await db
     .prepare(`
-      SELECT u.id AS user_id, u.name,
+      SELECT u.id AS user_id, u.name, u.avatar_json,
              COALESCE(sp.points, 0) AS points,
              COALESCE(s.points, 0) AS lifetime_points,
              (
@@ -1139,14 +1262,21 @@ async function leagueStandings(db, code, key) {
     `)
     .bind(code, season.seasonId)
     .all();
-  return rows?.results || [];
+  return (rows?.results || []).map((row) => ({
+    user_id: row.user_id,
+    name: row.name,
+    points: Number(row.points || 0),
+    lifetime_points: Number(row.lifetime_points || 0),
+    titles_won: Number(row.titles_won || 0),
+    avatar: parseAvatarConfig(row.avatar_json, row.name || row.user_id),
+  }));
 }
 
 async function leagueStandingsFallback(db, code) {
   const season = currentSevenDaySeasonWindow();
   const rows = await db
     .prepare(`
-      SELECT u.id AS user_id, u.name,
+      SELECT u.id AS user_id, u.name, u.avatar_json,
              COALESCE(sp.points, 0) AS points,
              COALESCE(s.points, 0) AS lifetime_points,
              (
@@ -1167,7 +1297,14 @@ async function leagueStandingsFallback(db, code) {
     `)
     .bind(code, season.seasonId)
     .all();
-  return rows?.results || [];
+  return (rows?.results || []).map((row) => ({
+    user_id: row.user_id,
+    name: row.name,
+    points: Number(row.points || 0),
+    lifetime_points: Number(row.lifetime_points || 0),
+    titles_won: Number(row.titles_won || 0),
+    avatar: parseAvatarConfig(row.avatar_json, row.name || row.user_id),
+  }));
 }
 
 async function syncLeagueScoresFromStates(db, code, key) {
@@ -1373,7 +1510,7 @@ async function getSessionWithUser(db, token) {
   if (!token) return null;
   const row = await db
     .prepare(`
-      SELECT s.token, s.expires_at, u.id AS user_id, u.name, u.email, u.email_verified_at
+      SELECT s.token, s.expires_at, u.id AS user_id, u.name, u.email, u.email_verified_at, u.avatar_json
       FROM ezra_sessions s
       JOIN ezra_users u ON u.id = s.user_id
       WHERE s.token = ?1
@@ -1411,6 +1548,8 @@ async function handleAccountRegister(db, request) {
   }
 
   const userId = randomHex(12);
+  const avatar = sanitizeAvatarConfig(body?.avatar, valid.cleanName);
+  const avatarJson = JSON.stringify(avatar);
   const salt = randomHex(10);
   const pinHash = await sha256Hex(`${salt}:${valid.cleanPin}`);
   const nowIso = new Date().toISOString();
@@ -1418,10 +1557,10 @@ async function handleAccountRegister(db, request) {
   try {
     await db
       .prepare(`
-        INSERT INTO ezra_users (id, name, name_key, email, email_key, email_verified_at, pin_salt, pin_hash, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9)
+        INSERT INTO ezra_users (id, name, name_key, email, email_key, email_verified_at, avatar_json, pin_salt, pin_hash, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10)
       `)
-      .bind(userId, valid.cleanName, nameKey, emailCheck.clean || null, emailCheck.clean || null, salt, pinHash, nowIso, nowIso)
+      .bind(userId, valid.cleanName, nameKey, emailCheck.clean || null, emailCheck.clean || null, avatarJson, salt, pinHash, nowIso, nowIso)
       .run();
   } catch (err) {
     const msg = String(err?.message || err);
@@ -1448,6 +1587,7 @@ async function handleAccountRegister(db, request) {
         name: valid.cleanName,
         email: emailCheck.clean || "",
         hasRecoveryEmail: Boolean(emailCheck.clean),
+        avatar,
       },
     },
     200
@@ -1461,7 +1601,7 @@ async function handleAccountLogin(db, request) {
 
   const nameKey = valid.cleanName.toLowerCase();
   const row = await db
-    .prepare("SELECT id, name, email, pin_salt, pin_hash FROM ezra_users WHERE name_key = ?1 LIMIT 1")
+    .prepare("SELECT id, name, email, avatar_json, pin_salt, pin_hash FROM ezra_users WHERE name_key = ?1 LIMIT 1")
     .bind(nameKey)
     .first();
   if (!row) return json({ error: "Account not found." }, 404);
@@ -1478,6 +1618,7 @@ async function handleAccountLogin(db, request) {
         name: row.name,
         email: String(row.email || ""),
         hasRecoveryEmail: Boolean(row.email),
+        avatar: parseAvatarConfig(row.avatar_json, row.name || row.id),
       },
     },
     200
@@ -1495,6 +1636,7 @@ async function handleAccountMe(db, request) {
         email: String(session.email || ""),
         hasRecoveryEmail: Boolean(session.email),
         emailVerifiedAt: session.email_verified_at || null,
+        avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id),
       },
     },
     200
@@ -1517,9 +1659,13 @@ async function handleAccountUpdateMe(db, request) {
     return json({ error: "Email already in use by another account." }, 409);
   }
   const nowIso = new Date().toISOString();
+  const avatar =
+    body && Object.prototype.hasOwnProperty.call(body, "avatar")
+      ? sanitizeAvatarConfig(body?.avatar, session.name || session.user_id)
+      : parseAvatarConfig(session.avatar_json, session.name || session.user_id);
   await db
-    .prepare("UPDATE ezra_users SET email = ?2, email_key = ?3, updated_at = ?4 WHERE id = ?1")
-    .bind(session.user_id, emailCheck.clean, emailCheck.clean, nowIso)
+    .prepare("UPDATE ezra_users SET email = ?2, email_key = ?3, avatar_json = ?4, updated_at = ?5 WHERE id = ?1")
+    .bind(session.user_id, emailCheck.clean, emailCheck.clean, JSON.stringify(avatar), nowIso)
     .run();
   return json(
     {
@@ -1530,10 +1676,30 @@ async function handleAccountUpdateMe(db, request) {
         email: emailCheck.clean,
         hasRecoveryEmail: true,
         emailVerifiedAt: session.email_verified_at || null,
+        avatar,
       },
     },
     200
   );
+}
+
+async function handleAccountGetAvatar(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  return json({ avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id) }, 200);
+}
+
+async function handleAccountPutAvatar(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const avatar = sanitizeAvatarConfig(body?.avatar, session.name || session.user_id);
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare("UPDATE ezra_users SET avatar_json = ?2, updated_at = ?3 WHERE id = ?1")
+    .bind(session.user_id, JSON.stringify(avatar), nowIso)
+    .run();
+  return json({ ok: true, avatar }, 200);
 }
 
 async function handleAccountRecoveryStart(db, request, env) {
@@ -1588,7 +1754,7 @@ async function handleAccountRecoveryComplete(db, request) {
   }
 
   const user = await db
-    .prepare("SELECT id, name, email_key FROM ezra_users WHERE name_key = ?1 LIMIT 1")
+    .prepare("SELECT id, name, email_key, avatar_json FROM ezra_users WHERE name_key = ?1 LIMIT 1")
     .bind(nameKey)
     .first();
   if (!user || !user.email_key || String(user.email_key) !== emailCheck.clean) {
@@ -1614,6 +1780,7 @@ async function handleAccountRecoveryComplete(db, request) {
         name: String(user.name || cleanName),
         email: emailCheck.clean,
         hasRecoveryEmail: true,
+        avatar: parseAvatarConfig(user.avatar_json, user.name || user.id),
       },
     },
     200
@@ -2007,7 +2174,7 @@ async function handleChallengeDashboard(db, request, key) {
     const standingsRows = await db
       .prepare(
         `
-        SELECT u.id AS user_id, u.name, COALESCE(sp.points, 0) AS points
+        SELECT u.id AS user_id, u.name, u.avatar_json, COALESCE(sp.points, 0) AS points
              ,(
                SELECT COUNT(*)
                FROM ezra_league_season_titles t
@@ -2026,12 +2193,18 @@ async function handleChallengeDashboard(db, request, key) {
       )
       .bind(currentLeagueCode, season.seasonId)
       .all();
-    seasonStandings = standingsRows?.results || [];
+    seasonStandings = (standingsRows?.results || []).map((row) => ({
+      user_id: row.user_id,
+      name: row.name,
+      points: Number(row.points || 0),
+      titles_won: Number(row.titles_won || 0),
+      avatar: parseAvatarConfig(row.avatar_json, row.name || row.user_id),
+    }));
   }
 
   return json(
     {
-      user: { id: session.user_id, name: session.name },
+      user: { id: session.user_id, name: session.name, avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id) },
       preferences: prefs,
       progress: {
         currentStreak: Number(progress?.current_streak || 0),
@@ -2162,7 +2335,7 @@ async function handleLeagueMemberView(db, request, key) {
   const targetInLeague = await isLeagueMember(db, code, userId);
   if (!targetInLeague) return json({ error: "Target user is not in this league." }, 404);
 
-  const userRow = await db.prepare("SELECT id, name FROM ezra_users WHERE id = ?1 LIMIT 1").bind(userId).first();
+  const userRow = await db.prepare("SELECT id, name, avatar_json FROM ezra_users WHERE id = ?1 LIMIT 1").bind(userId).first();
   if (!userRow) return json({ error: "User not found." }, 404);
 
   const stateRow = await db
@@ -2273,7 +2446,12 @@ async function handleLeagueMemberView(db, request, key) {
   const dreamTeam = state?.dreamTeam && typeof state.dreamTeam === "object" ? state.dreamTeam : null;
   return json(
     {
-      user: { id: userRow.id, name: userRow.name || "User", titlesWon: Math.max(0, Number(targetTitles?.c || 0)) },
+      user: {
+        id: userRow.id,
+        name: userRow.name || "User",
+        titlesWon: Math.max(0, Number(targetTitles?.c || 0)),
+        avatar: parseAvatarConfig(userRow.avatar_json, userRow.name || userRow.id),
+      },
       leagueCode: code,
       points: {
         currentWeek: Math.max(0, Number(targetCurrentWeek?.points || 0)),
@@ -2377,6 +2555,12 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "me" && (request.method === "PATCH" || request.method === "PUT")) {
       return handleAccountUpdateMe(db, request);
+    }
+    if (route === "avatar" && request.method === "GET") {
+      return handleAccountGetAvatar(db, request);
+    }
+    if (route === "avatar" && (request.method === "PUT" || request.method === "PATCH")) {
+      return handleAccountPutAvatar(db, request);
     }
     if (route === "preferences" && request.method === "GET") {
       return handleAccountGetPreferences(db, request);
@@ -3115,6 +3299,7 @@ async function handleEzraFixturesRoute(context, key) {
       if (liveLeague.length) {
         eventsOut = sortByDateTime(mergeEvents(eventsOut, liveLeague).map((event) => normalizeEventForCache(event)));
       }
+      eventsOut = await hydrateLiveScoresForEvents(eventsOut, key, db);
     } catch {
       // Keep cached events if live merge fails.
     }
