@@ -355,7 +355,7 @@ async function ensureAccountSchema(db) {
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_user ON ezra_auth_codes(user_id, purpose, expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_email ON ezra_auth_codes(email_key, purpose, expires_at)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key) WHERE email_key IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key)`,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
