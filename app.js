@@ -398,7 +398,6 @@ const el = {
   higherLowerBody: document.getElementById("higher-lower-body"),
   higherLowerStartBtn: document.getElementById("higher-lower-start-btn"),
   challengeStreak: document.getElementById("challenge-streak"),
-  challengeCombo: document.getElementById("challenge-combo"),
   challengeMastery: document.getElementById("challenge-mastery"),
   challengeAchievements: document.getElementById("challenge-achievements"),
   familyPrevLeagueBtn: document.getElementById("family-prev-league-btn"),
@@ -1333,9 +1332,8 @@ function renderMissionsPanel() {
   const name = state.account.user?.name ? ` (${state.account.user.name})` : "";
   const dash = state.challengeDashboard;
   const streak = Number(dash?.progress?.currentStreak || 0);
-  const combo = Number(dash?.progress?.comboCount || 0);
   const seasonPts = Number(dash?.currentSeason?.standings?.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0);
-  const suffix = accountSignedIn() ? ` • Streak ${streak}d • Combo x${Math.max(1, combo)} • Season ${seasonPts} pts` : "";
+  const suffix = accountSignedIn() ? ` • Streak ${streak}d • Season ${seasonPts} pts` : "";
   el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${name}${suffix}`;
   el.missionsList.innerHTML = "";
   quests.forEach((quest) => {
@@ -1960,8 +1958,14 @@ function renderLeagueMemberView() {
   const isSelf = String(data?.user?.id || "") === String(state.account.user?.id || "");
   const compareAvailable = !isSelf;
   const compareEnabled = Boolean(state.leagueMemberView.compare && compareAvailable);
+  const memberWeekPoints = Math.max(0, Number(data?.points?.currentWeek || 0));
+  const memberTotalPoints = Math.max(0, Number(data?.points?.total || 0));
+  const memberTitlesWon = Math.max(0, Number(data?.user?.titlesWon || 0));
+  const viewerWeekPoints = Math.max(0, Number(data?.viewerPoints?.currentWeek || 0));
+  const viewerTotalPoints = Math.max(0, Number(data?.viewerPoints?.total || 0));
+  const viewerTitlesWon = Math.max(0, Number(data?.viewerTitlesWon || 0));
   const showPreviousRound = Boolean(state.leagueMemberView.showPreviousRound);
-  el.leagueMemberTitle.textContent = `${memberName} • Profile`;
+  el.leagueMemberTitle.textContent = `${memberName}${memberTitlesWon > 0 ? ` 🏆 x${memberTitlesWon}` : ""} • Profile`;
   const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
   const myDream = leagueMemberDreamTeamSummary(state.dreamTeam);
   const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled, showPreviousRound);
@@ -1978,6 +1982,28 @@ function renderLeagueMemberView() {
         ${compareEnabled ? "Compare: ON" : "Compare: OFF"}
       </button>
     </div>
+    <section class="member-view-group">
+      <div class="member-points-summary ${compareEnabled ? "two" : "one"}">
+        <article class="member-points-card">
+          <h5>${compareEnabled ? "Them" : escapeHtml(memberName)}</h5>
+          <p>Current week: <strong>${memberWeekPoints}</strong></p>
+          <p>Total points: <strong>${memberTotalPoints}</strong></p>
+          <p>Titles: <strong>${memberTitlesWon}</strong>${memberTitlesWon > 0 ? " 🏆" : ""}</p>
+        </article>
+        ${
+          compareEnabled
+            ? `
+          <article class="member-points-card">
+            <h5>You</h5>
+            <p>Current week: <strong>${viewerWeekPoints}</strong></p>
+            <p>Total points: <strong>${viewerTotalPoints}</strong></p>
+            <p>Titles: <strong>${viewerTitlesWon}</strong>${viewerTitlesWon > 0 ? " 🏆" : ""}</p>
+          </article>
+        `
+            : ""
+        }
+      </div>
+    </section>
     <section class="member-view-group">
       <div class="panel-head compact-head">
         <h4>Score Predictions</h4>
@@ -2163,13 +2189,15 @@ function renderFamilyLeaguePanel() {
     const index = standings.findIndex((m) => String(m.user_id || "") === String(member.user_id || ""));
     const rank = index >= 0 ? index + 1 : displayStandings.indexOf(member) + 1;
     const isSignedInMember = String(member.user_id || "") === String(state.account.user?.id || "");
+    const titlesWon = Math.max(0, Number(member.titles_won || 0));
+    const titleBadge = titlesWon > 0 ? ` 🏆 x${titlesWon}` : "";
     const row = document.createElement("div");
     row.className = `family-row ${isSignedInMember ? "active" : ""}`;
     row.setAttribute("role", "button");
     row.tabIndex = 0;
     row.innerHTML = `
       <div class="mission-text">
-        <div class="mission-title">#${rank} ${escapeHtml(member.name || "User")}</div>
+        <div class="mission-title">#${rank} ${escapeHtml(member.name || "User")}${titleBadge}</div>
         <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""}${compactHomeMode ? "" : " • Tap to view profile"}</div>
       </div>
       <div class="account-actions">
@@ -2212,10 +2240,11 @@ const ACHIEVEMENT_GUIDE = [
   { code: "combo_3", name: "Prediction Combo", description: "Hit 3 correct outcomes in a row.", icon: "⚡" },
   { code: "exact_10", name: "Sniper", description: "Get 10 exact score predictions.", icon: "🎯" },
   { code: "mastery_25", name: "Team Analyst", description: "Make 25 predictions for one club.", icon: "📈" },
+  { code: "titles_5", name: "Dynasty", description: "Win 5 mini-league weekly titles.", icon: "👑" },
 ];
 
 function renderChallengeDashboardPanels() {
-  if (!el.challengeStreak || !el.challengeCombo || !el.challengeMastery || !el.challengeAchievements) return;
+  if (!el.challengeStreak || !el.challengeMastery || !el.challengeAchievements) return;
   const loading = accountSignedIn() && !state.challengeDashboard;
   const dash = state.challengeDashboard || null;
   const progress = dash?.progress || {};
@@ -2225,10 +2254,12 @@ function renderChallengeDashboardPanels() {
   const mySeasonPoints = Number(
     seasonRows.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0
   );
+  const myTitlesWon = Number(
+    seasonRows.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.titles_won || 0
+  );
 
   if (!accountSignedIn()) {
     el.challengeStreak.innerHTML = `<p class="muted">Sign in to track your streak and weekly points.</p>`;
-    el.challengeCombo.innerHTML = `<p class="muted">Sign in to unlock combo scoring and multipliers.</p>`;
     el.challengeMastery.innerHTML = `<p class="muted">Sign in to track team-by-team prediction performance.</p>`;
     el.challengeAchievements.innerHTML = `<p class="muted">Sign in to unlock and save achievements.</p>`;
     return;
@@ -2243,7 +2274,6 @@ function renderChallengeDashboardPanels() {
       </div>
     `;
     el.challengeStreak.innerHTML = skeleton;
-    el.challengeCombo.innerHTML = skeleton;
     el.challengeMastery.innerHTML = skeleton;
     el.challengeAchievements.innerHTML = skeleton;
     return;
@@ -2251,7 +2281,6 @@ function renderChallengeDashboardPanels() {
 
   const currentStreak = Number(progress.currentStreak || 0);
   const bestStreak = Number(progress.bestStreak || 0);
-  const comboCount = Number(progress.comboCount || 0);
   const bestCombo = Math.max(1, Number(progress.bestCombo || 1));
   const exactTotal = mastery.reduce((sum, row) => sum + Number(row?.exact_correct || 0), 0);
   const masteryBestPredCount = mastery.reduce((max, row) => Math.max(max, Number(row?.pred_count || 0)), 0);
@@ -2261,6 +2290,7 @@ function renderChallengeDashboardPanels() {
     combo_3: { current: Math.min(3, bestCombo), target: 3 },
     exact_10: { current: Math.min(10, exactTotal), target: 10 },
     mastery_25: { current: Math.min(25, masteryBestPredCount), target: 25 },
+    titles_5: { current: Math.min(5, myTitlesWon), target: 5 },
   };
 
   el.challengeStreak.innerHTML = `
@@ -2272,17 +2302,6 @@ function renderChallengeDashboardPanels() {
       </div>
     </div>
     <p class="challenge-footnote">Last quest: ${formatDashboardDate(progress.lastQuestDate)}</p>
-  `;
-
-  el.challengeCombo.innerHTML = `
-    <div class="challenge-stat-row">
-      <span class="challenge-stat-pill">x${Math.max(1, comboCount)}</span>
-      <div class="challenge-stat-copy">
-        <p class="challenge-stat-title">Current combo</p>
-        <p class="challenge-stat-sub">Best x${bestCombo}</p>
-      </div>
-    </div>
-    <p class="challenge-footnote">Combo boosts prediction points on active runs.</p>
   `;
 
   const topMastery = [...mastery]
@@ -6671,7 +6690,6 @@ function setPanelVisible(panel, visible) {
 }
 
 function renderMobileSectionLayout() {
-  const mobile = isMobileViewport();
   const controls = el.controlsPanel;
   const fixtures = el.fixturesPanel;
   const tables = el.tablePanel;
@@ -6680,39 +6698,21 @@ function renderMobileSectionLayout() {
   if (!controls || !fixtures || !tables || !fun) return;
 
   renderMainTabButtons();
+  el.mainTabsPanel?.classList.remove("hidden");
+  el.mobileTabsPanel?.classList.add("hidden");
 
-  if (!mobile) {
-    el.mainTabsPanel?.classList.remove("hidden");
-    el.mobileTabsPanel?.classList.add("hidden");
-    const home = state.mainTab === "home";
-    const play = state.mainTab === "play";
-    const predict = state.mainTab === "predict";
-    const squadTab = state.mainTab === "squad";
-    const tablesTab = state.mainTab === "tables";
+  const home = state.mainTab === "home";
+  const play = state.mainTab === "play";
+  const predict = state.mainTab === "predict";
+  const squadTab = state.mainTab === "squad";
+  const tablesTab = state.mainTab === "tables";
 
-    setPanelVisible(controls, predict || tablesTab);
-    setPanelVisible(fixtures, home || predict);
-    setPanelVisible(tables, tablesTab);
-    setPanelVisible(fun, home || play);
-    if (squad) setPanelVisible(squad, squadTab);
-    fun.classList.toggle("home-focus", home);
-    return;
-  }
-
-  el.mainTabsPanel?.classList.add("hidden");
-  el.mobileTabsPanel?.classList.remove("hidden");
-  el.mobileTabButtons.forEach((btn) => {
-    const active = btn.dataset.mobileTab === state.mobileTab;
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-selected", String(active));
-  });
-
-  setPanelVisible(controls, state.mobileTab !== "table");
-  setPanelVisible(fixtures, state.mobileTab === "fixtures");
-  setPanelVisible(tables, state.mobileTab === "table");
-  setPanelVisible(fun, state.mobileTab === "fun");
-  if (squad) setPanelVisible(squad, true);
-  fun.classList.remove("home-focus");
+  setPanelVisible(controls, predict || tablesTab);
+  setPanelVisible(fixtures, home || predict);
+  setPanelVisible(tables, tablesTab);
+  setPanelVisible(fun, home || play);
+  if (squad) setPanelVisible(squad, squadTab);
+  fun.classList.toggle("home-focus", home);
 }
 
 function showRewardToast(message, tone = "success") {

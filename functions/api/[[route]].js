@@ -266,6 +266,18 @@ async function ensureAccountSchema(db) {
       )
     `,
     `
+      CREATE TABLE IF NOT EXISTS ezra_league_season_titles (
+        league_code TEXT NOT NULL,
+        season_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        awarded_at TEXT NOT NULL,
+        PRIMARY KEY (league_code, season_id),
+        FOREIGN KEY (league_code, season_id) REFERENCES ezra_league_seasons(league_code, season_id),
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_titles_user_id ON ezra_league_season_titles(user_id)`,
+    `
       CREATE TABLE IF NOT EXISTS ezra_achievements (
         code TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -438,19 +450,24 @@ function parseIsoDateMs(value) {
 }
 
 function currentSevenDaySeasonWindow(now = new Date()) {
-  // Legacy function name retained for compatibility.
-  // Active "season" window is a rolling 4-week block (28 days) anchored to UTC epoch.
-  const windowDays = 28;
-  const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const epochMidnight = Date.UTC(1970, 0, 1);
-  const dayIndex = Math.floor((utcMidnight - epochMidnight) / (24 * 60 * 60 * 1000));
-  const blockStartDay = Math.floor(dayIndex / windowDays) * windowDays;
-  const startMs = epochMidnight + blockStartDay * 24 * 60 * 60 * 1000;
-  const endMs = startMs + windowDays * 24 * 60 * 60 * 1000;
+  // Weekly season window: resets at Monday 00:01 UTC.
+  // During Monday 00:00:00-00:00:59 UTC, keep the previous week active.
+  const adjusted = new Date(now.getTime());
+  if (adjusted.getUTCDay() === 1 && adjusted.getUTCHours() === 0 && adjusted.getUTCMinutes() < 1) {
+    adjusted.setUTCDate(adjusted.getUTCDate() - 1);
+  }
+  const weekday = adjusted.getUTCDay(); // 0 Sun ... 1 Mon ... 6 Sat
+  const daysSinceMonday = (weekday + 6) % 7;
+  const start = new Date(Date.UTC(adjusted.getUTCFullYear(), adjusted.getUTCMonth(), adjusted.getUTCDate()));
+  start.setUTCDate(start.getUTCDate() - daysSinceMonday);
+  const end = new Date(start.getTime());
+  end.setUTCDate(end.getUTCDate() + 7);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
   const startsAt = new Date(startMs).toISOString().slice(0, 10);
   const endsAt = new Date(endMs).toISOString().slice(0, 10);
   return {
-    seasonId: startsAt.replace(/-/g, ""),
+    seasonId: `W${startsAt.replace(/-/g, "")}`,
     startsAt,
     endsAt,
   };
@@ -731,6 +748,7 @@ async function ensureAchievementCatalog(db) {
     { code: "combo_3", name: "Prediction Combo", description: "Hit 3 correct outcomes in a row.", icon: "⚡" },
     { code: "exact_10", name: "Sniper", description: "Get 10 exact score predictions.", icon: "🎯" },
     { code: "mastery_25", name: "Team Analyst", description: "Make 25 predictions for one club.", icon: "📈" },
+    { code: "titles_5", name: "Dynasty", description: "Win 5 mini-league weekly titles.", icon: "👑" },
   ];
   for (const row of rows) {
     await db
@@ -746,6 +764,47 @@ async function grantAchievement(db, userId, code) {
     .prepare("INSERT OR IGNORE INTO ezra_user_achievements (user_id, achievement_code, earned_at) VALUES (?1, ?2, ?3)")
     .bind(userId, code, nowIso)
     .run();
+}
+
+async function awardSeasonTitleIfEligible(db, leagueCode, seasonId) {
+  if (!leagueCode || !seasonId) return null;
+  const existing = await db
+    .prepare(
+      `
+      SELECT league_code, season_id, user_id
+      FROM ezra_league_season_titles
+      WHERE league_code = ?1 AND season_id = ?2
+      LIMIT 1
+      `
+    )
+    .bind(leagueCode, seasonId)
+    .first();
+  if (existing?.user_id) return String(existing.user_id);
+
+  const leader = await db
+    .prepare(
+      `
+      SELECT user_id, points
+      FROM ezra_league_season_points
+      WHERE league_code = ?1 AND season_id = ?2
+      ORDER BY points DESC, user_id ASC
+      LIMIT 1
+      `
+    )
+    .bind(leagueCode, seasonId)
+    .first();
+  const winnerUserId = String(leader?.user_id || "").trim();
+  if (!winnerUserId) return null;
+  await db
+    .prepare(
+      `
+      INSERT OR IGNORE INTO ezra_league_season_titles (league_code, season_id, user_id, awarded_at)
+      VALUES (?1, ?2, ?3, ?4)
+      `
+    )
+    .bind(leagueCode, seasonId, winnerUserId, new Date().toISOString())
+    .run();
+  return winnerUserId;
 }
 
 async function replacePointLedgerForUser(db, userId, leagueCode, entries = []) {
@@ -826,7 +885,13 @@ async function leagueStandings(db, code, key) {
     .prepare(`
       SELECT u.id AS user_id, u.name,
              COALESCE(sp.points, 0) AS points,
-             COALESCE(s.points, 0) AS lifetime_points
+             COALESCE(s.points, 0) AS lifetime_points,
+             (
+               SELECT COUNT(*)
+               FROM ezra_league_season_titles t
+               WHERE t.league_code = lm.league_code
+                 AND t.user_id = lm.user_id
+             ) AS titles_won
       FROM ezra_league_members lm
       JOIN ezra_users u ON u.id = lm.user_id
       LEFT JOIN ezra_league_season_points sp
@@ -848,7 +913,13 @@ async function leagueStandingsFallback(db, code) {
     .prepare(`
       SELECT u.id AS user_id, u.name,
              COALESCE(sp.points, 0) AS points,
-             COALESCE(s.points, 0) AS lifetime_points
+             COALESCE(s.points, 0) AS lifetime_points,
+             (
+               SELECT COUNT(*)
+               FROM ezra_league_season_titles t
+               WHERE t.league_code = lm.league_code
+                 AND t.user_id = lm.user_id
+             ) AS titles_won
       FROM ezra_league_members lm
       JOIN ezra_users u ON u.id = lm.user_id
       LEFT JOIN ezra_league_season_points sp
@@ -1032,6 +1103,24 @@ async function syncLeagueScoresFromStates(db, code, key) {
       await replacePointLedgerForUser(db, userId, code, ledger);
     })
   );
+
+  const winnerUserId = await awardSeasonTitleIfEligible(db, code, season.seasonId);
+  if (winnerUserId) {
+    const titlesRow = await db
+      .prepare(
+        `
+        SELECT COUNT(*) AS c
+        FROM ezra_league_season_titles
+        WHERE league_code = ?1 AND user_id = ?2
+        `
+      )
+      .bind(code, winnerUserId)
+      .first();
+    const titlesWon = Math.max(0, Number(titlesRow?.c || 0));
+    if (titlesWon >= 5) {
+      await grantAchievement(db, winnerUserId, "titles_5");
+    }
+  }
 }
 
 async function createSession(db, userId) {
@@ -1340,6 +1429,12 @@ async function handleChallengeDashboard(db, request, key) {
       .prepare(
         `
         SELECT u.id AS user_id, u.name, COALESCE(sp.points, 0) AS points
+             ,(
+               SELECT COUNT(*)
+               FROM ezra_league_season_titles t
+               WHERE t.league_code = lm.league_code
+                 AND t.user_id = lm.user_id
+             ) AS titles_won
         FROM ezra_league_members lm
         JOIN ezra_users u ON u.id = lm.user_id
         LEFT JOIN ezra_league_season_points sp
@@ -1446,6 +1541,7 @@ async function handleLeagueDelete(db, request) {
   }
 
   await db.prepare("DELETE FROM ezra_league_season_points WHERE league_code = ?1").bind(code).run();
+  await db.prepare("DELETE FROM ezra_league_season_titles WHERE league_code = ?1").bind(code).run();
   await db.prepare("DELETE FROM ezra_points_ledger WHERE league_code = ?1").bind(code).run();
   await db.prepare("DELETE FROM ezra_league_seasons WHERE league_code = ?1").bind(code).run();
   await db.prepare("DELETE FROM ezra_league_members WHERE league_code = ?1").bind(code).run();
@@ -1493,6 +1589,58 @@ async function handleLeagueMemberView(db, request, key) {
   const stateRow = await db
     .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
     .bind(userId)
+    .first();
+  const season = currentSevenDaySeasonWindow();
+  await ensureLeagueSeason(db, code, season);
+  const targetCurrentWeek = await db
+    .prepare(
+      `
+      SELECT points
+      FROM ezra_league_season_points
+      WHERE league_code = ?1 AND season_id = ?2 AND user_id = ?3
+      LIMIT 1
+      `
+    )
+    .bind(code, season.seasonId, userId)
+    .first();
+  const targetLifetime = await db
+    .prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1")
+    .bind(userId)
+    .first();
+  const viewerCurrentWeek = await db
+    .prepare(
+      `
+      SELECT points
+      FROM ezra_league_season_points
+      WHERE league_code = ?1 AND season_id = ?2 AND user_id = ?3
+      LIMIT 1
+      `
+    )
+    .bind(code, season.seasonId, session.user_id)
+    .first();
+  const viewerLifetime = await db
+    .prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1")
+    .bind(session.user_id)
+    .first();
+  const targetTitles = await db
+    .prepare(
+      `
+      SELECT COUNT(1) AS c
+      FROM ezra_league_season_titles
+      WHERE league_code = ?1 AND user_id = ?2
+      `
+    )
+    .bind(code, userId)
+    .first();
+  const viewerTitles = await db
+    .prepare(
+      `
+      SELECT COUNT(1) AS c
+      FROM ezra_league_season_titles
+      WHERE league_code = ?1 AND user_id = ?2
+      `
+    )
+    .bind(code, session.user_id)
     .first();
   const state = safeParseJsonText(stateRow?.state_json || "{}");
   const memberId = `acct:${userId}`;
@@ -1546,8 +1694,17 @@ async function handleLeagueMemberView(db, request, key) {
   const dreamTeam = state?.dreamTeam && typeof state.dreamTeam === "object" ? state.dreamTeam : null;
   return json(
     {
-      user: { id: userRow.id, name: userRow.name || "User" },
+      user: { id: userRow.id, name: userRow.name || "User", titlesWon: Math.max(0, Number(targetTitles?.c || 0)) },
       leagueCode: code,
+      points: {
+        currentWeek: Math.max(0, Number(targetCurrentWeek?.points || 0)),
+        total: Math.max(0, Number(targetLifetime?.points || 0)),
+      },
+      viewerPoints: {
+        currentWeek: Math.max(0, Number(viewerCurrentWeek?.points || 0)),
+        total: Math.max(0, Number(viewerLifetime?.points || 0)),
+      },
+      viewerTitlesWon: Math.max(0, Number(viewerTitles?.c || 0)),
       updatedAt: stateRow?.updated_at || null,
       predictions,
       dreamTeam,
