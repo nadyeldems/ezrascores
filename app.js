@@ -242,6 +242,9 @@ const state = {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
     recoveryOpen: false,
+    uiState: "SIGNED_OUT_IDLE",
+    pending: {},
+    errorLog: [],
     syncTimer: null,
     leagueRefreshTimer: null,
     syncing: false,
@@ -388,6 +391,7 @@ const el = {
   accountRecoveryNewPinInput: document.getElementById("account-recovery-new-pin-input"),
   accountRecoverySendBtn: document.getElementById("account-recovery-send-btn"),
   accountRecoveryResetBtn: document.getElementById("account-recovery-reset-btn"),
+  accountRecoveryCancelBtn: document.getElementById("account-recovery-cancel-btn"),
   accountEmailManageInput: document.getElementById("account-email-manage-input"),
   accountEmailSaveBtn: document.getElementById("account-email-save-btn"),
   accountSyncBtn: document.getElementById("account-sync-btn"),
@@ -671,7 +675,103 @@ function accountSignedIn() {
   return Boolean(state.account?.token && state.account?.user?.id);
 }
 
+function accountAnyPending() {
+  return Object.values(state.account?.pending || {}).some(Boolean);
+}
+
+function trackAccountEvent(type, detail = "") {
+  console.debug(`[account:${type}] ${detail}`.trim());
+}
+
+function mapAccountErrorMessage(action, err) {
+  const msg = String(err?.message || err || "").trim();
+  if (!msg) return "Request failed. Please try again.";
+  if (/session expired|unauthorized|401/i.test(msg)) return "Session expired. Please sign in again.";
+  if (/timeout/i.test(msg)) return "Request timed out. Please try again.";
+  if (/429/.test(msg)) return "Too many requests. Please wait a moment and retry.";
+  if (/invalid pin/i.test(msg)) return "PIN is incorrect.";
+  if (/account not found/i.test(msg)) return "Account not found.";
+  if (/already exists|already in use|409/i.test(msg)) {
+    if (action === "save_email") return "That email is already used by another account.";
+    return "That name or email is already in use.";
+  }
+  if (/cloudflare error 500|route failed|500/i.test(msg)) return "Server issue right now. Please retry in a moment.";
+  return msg;
+}
+
+function logAccountErrorAndDetectLoop(action, mappedMessage) {
+  const now = Date.now();
+  const key = `${action}:${mappedMessage}`;
+  const recent = (state.account.errorLog || []).filter((row) => now - Number(row.ts || 0) < 2 * 60 * 1000);
+  recent.push({ key, ts: now });
+  state.account.errorLog = recent;
+  const count = recent.filter((row) => row.key === key).length;
+  return count >= 3;
+}
+
+function setAccountPending(action, pending) {
+  if (!state.account.pending || typeof state.account.pending !== "object") {
+    state.account.pending = {};
+  }
+  state.account.pending[action] = Boolean(pending);
+  updateAccountControlsState();
+}
+
+function updateAccountUiState() {
+  const signedIn = accountSignedIn();
+  const hasPending = accountAnyPending();
+  if (signedIn) {
+    if (state.account.pending?.save_email) {
+      state.account.uiState = "SIGNED_IN_SAVING_EMAIL";
+    } else if (hasPending) {
+      state.account.uiState = "SIGNED_IN_BUSY";
+    } else {
+      state.account.uiState = "SIGNED_IN_READY";
+    }
+    return;
+  }
+  if (state.account.recoveryOpen) {
+    if (state.account.pending?.recovery_send) {
+      state.account.uiState = "RECOVERY_SENDING_CODE";
+    } else if (state.account.pending?.recovery_reset) {
+      state.account.uiState = "RECOVERY_RESETTING_PIN";
+    } else {
+      state.account.uiState = "SIGNED_OUT_RECOVERY_OPEN";
+    }
+    return;
+  }
+  if (state.account.pending?.login) {
+    state.account.uiState = "SIGNING_IN";
+  } else if (state.account.pending?.register) {
+    state.account.uiState = "REGISTERING";
+  } else {
+    state.account.uiState = "SIGNED_OUT_IDLE";
+  }
+}
+
+function updateAccountControlsState() {
+  const busy = accountAnyPending();
+  const signedIn = accountSignedIn();
+  if (el.accountRegisterBtn) el.accountRegisterBtn.disabled = busy || signedIn;
+  if (el.accountLoginBtn) el.accountLoginBtn.disabled = busy || signedIn;
+  if (el.accountForgotBtn) el.accountForgotBtn.disabled = busy || signedIn;
+  if (el.accountRecoverySendBtn) el.accountRecoverySendBtn.disabled = busy || signedIn;
+  if (el.accountRecoveryResetBtn) el.accountRecoveryResetBtn.disabled = busy || signedIn;
+  if (el.accountRecoveryCancelBtn) el.accountRecoveryCancelBtn.disabled = busy;
+  if (el.accountSyncBtn) el.accountSyncBtn.disabled = busy || !signedIn;
+  if (el.accountLogoutBtn) el.accountLogoutBtn.disabled = busy || !signedIn;
+  if (el.accountEmailSaveBtn) el.accountEmailSaveBtn.disabled = busy || !signedIn;
+  if (el.accountNameInput) el.accountNameInput.disabled = busy || signedIn;
+  if (el.accountPinInput) el.accountPinInput.disabled = busy || signedIn;
+  if (el.accountEmailInput) el.accountEmailInput.disabled = busy || signedIn;
+  if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.disabled = busy || signedIn;
+  if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.disabled = busy || signedIn;
+  if (el.accountEmailManageInput) el.accountEmailManageInput.disabled = busy || !signedIn;
+  updateAccountUiState();
+}
+
 function setAccountRecoveryOpen(open) {
+  if (accountSignedIn()) return;
   state.account.recoveryOpen = Boolean(open);
   if (el.accountRecoveryBox) {
     el.accountRecoveryBox.classList.toggle("hidden", !state.account.recoveryOpen);
@@ -708,6 +808,7 @@ function renderAccountUI() {
   }
   renderLifetimePointsPill();
   updateFamilyControlsState();
+  updateAccountControlsState();
 }
 
 function updateFamilyControlsState() {
@@ -2623,13 +2724,36 @@ function applyClubThemeFromTeam(team) {
   document.body.style.setProperty("--club-text-soft", textSoft);
 }
 
+function teamHasPalette(team) {
+  if (!team || typeof team !== "object") return false;
+  return Boolean(normalizeHexColor(team.strColour1) || normalizeHexColor(team.strColour2) || normalizeHexColor(team.strColour3));
+}
+
+async function applyClubThemeFromBadgeUrl(badgeUrl, expectedTeamId = "") {
+  if (!badgeUrl) return;
+  const rgb = await dominantColorFromImage(badgeUrl);
+  if (!rgb || rgb.length !== 3) return;
+  if (expectedTeamId && String(state.favoriteTeamId || "") !== String(expectedTeamId || "")) return;
+  const primary = rgbToHex({ r: rgb[0], g: rgb[1], b: rgb[2] });
+  applyClubThemeFromTeam({ strColour1: primary, strColour2: "", strColour3: "" });
+}
+
 function applyClubThemeFromFavoriteTeam() {
   if (state.uiTheme !== "club") return;
   if (!state.favoriteTeam) {
     clearClubThemeColors();
     return;
   }
-  applyClubThemeFromTeam(state.favoriteTeam);
+  if (teamHasPalette(state.favoriteTeam)) {
+    applyClubThemeFromTeam(state.favoriteTeam);
+    return;
+  }
+  const badgeUrl = state.favoriteTeam.strBadge || state.teamBadgeMap[state.favoriteTeam.strTeam || ""] || "";
+  if (!badgeUrl) {
+    clearClubThemeColors();
+    return;
+  }
+  void applyClubThemeFromBadgeUrl(badgeUrl, state.favoriteTeam.idTeam);
 }
 
 function stopPlayerPopAnimation() {
@@ -5326,6 +5450,26 @@ async function registerAccount() {
   );
 }
 
+async function runAccountAction(action, startText, errorPrefix, task) {
+  setAccountPending(action, true);
+  trackAccountEvent(`${action}_start`);
+  if (startText) setAccountStatus(startText);
+  try {
+    const out = await task();
+    trackAccountEvent(`${action}_success`);
+    return out;
+  } catch (err) {
+    const mapped = mapAccountErrorMessage(action, err);
+    const stuck = logAccountErrorAndDetectLoop(action, mapped);
+    setAccountStatus(stuck ? `${errorPrefix}: ${mapped} Need help? Try Sign Out then Sign In.` : `${errorPrefix}: ${mapped}`, true);
+    trackAccountEvent(`${action}_fail`, mapped);
+    throw err;
+  } finally {
+    setAccountPending(action, false);
+    renderAccountUI();
+  }
+}
+
 async function loginAccount() {
   const name = el.accountNameInput?.value || "";
   const pin = el.accountPinInput?.value || "";
@@ -5500,17 +5644,26 @@ async function fetchAllTeams(leagueId) {
     .filter((team) => team.strTeam);
 }
 
-async function fetchTeamById(teamId) {
+async function fetchTeamById(teamId, options = {}) {
+  const preferApi = Boolean(options?.preferApi);
   const known = findKnownTeamById(teamId);
-  if (known) return known;
   const allTeams = [...(state.teamsByLeague.EPL || []), ...(state.teamsByLeague.CHAMP || [])];
-  const fromLists = allTeams.find((team) => String(team?.idTeam || "") === String(teamId));
-  if (fromLists) return fromLists;
+  const fromLists = allTeams.find((team) => String(team?.idTeam || "") === String(teamId)) || null;
+
+  if (!preferApi) {
+    if (known) return known;
+    if (fromLists) return fromLists;
+  }
+
   const fromApi = await safeLoad(async () => {
     const payload = await apiGetV1(`ezra/team?id=${encodeURIComponent(teamId)}`);
     return payload?.team || null;
   }, null);
-  if (fromApi) return fromApi;
+  if (fromApi) {
+    return { ...(fromLists || {}), ...(known || {}), ...fromApi };
+  }
+  if (known) return known;
+  if (fromLists) return fromLists;
   if (state.favoriteTeam && String(state.favoriteTeam.idTeam || "") === String(teamId)) {
     return state.favoriteTeam;
   }
@@ -7047,6 +7200,7 @@ function buildFavoriteOptions() {
     btn.addEventListener("click", async () => {
       state.favoriteTeamId = team.idTeam;
       state.favoriteTeam = team;
+      applyClubThemeFromFavoriteTeam();
       localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
       if (!localStorage.getItem("ezra_player_pop_scope")) {
         setPlayerPopScope("favorite");
@@ -7513,7 +7667,14 @@ async function renderFavorite() {
     setFavoritePickerDisplay(cachedTeam);
   }
 
-  const team = cachedTeam || (await safeLoad(() => fetchTeamById(state.favoriteTeamId), null));
+  let team = cachedTeam || null;
+  const needDetailedTeam = !team || !teamHasPalette(team) || !String(team?.strLeague || "").trim();
+  if (needDetailedTeam) {
+    const detailedTeam = await safeLoad(() => fetchTeamById(state.favoriteTeamId, { preferApi: true }), null);
+    if (detailedTeam) {
+      team = team ? { ...team, ...detailedTeam } : detailedTeam;
+    }
+  }
   if (!team) {
     clearFavoriteLoadingVisual();
     state.favoriteDataLoading = false;
@@ -7629,6 +7790,9 @@ async function renderFavorite() {
     el.favoriteLogo.classList.remove("hidden");
   }
   await updateFavoriteThemeFromBadge(badgeUrl || "");
+  if (state.uiTheme === "club" && !teamHasPalette(team)) {
+    await applyClubThemeFromBadgeUrl(badgeUrl || "", team.idTeam || "");
+  }
   el.favoriteName.textContent = team.strTeam || "Team";
   const teamPos = getTeamTablePosition(team);
   el.favoriteLeague.textContent = teamPos ? `${team.strLeague || ""}  •  ${teamPos}` : team.strLeague || "";
@@ -8020,23 +8184,13 @@ async function fullRefresh() {
 function attachEvents() {
   if (el.accountRegisterBtn) {
     el.accountRegisterBtn.addEventListener("click", async () => {
-      try {
-        setAccountStatus("Creating account...");
-        await registerAccount();
-      } catch (err) {
-        setAccountStatus(`Create account failed: ${err.message}`, true);
-      }
+      await runAccountAction("register", "Creating account...", "Create account failed", registerAccount).catch(() => null);
     });
   }
 
   if (el.accountLoginBtn) {
     el.accountLoginBtn.addEventListener("click", async () => {
-      try {
-        setAccountStatus("Signing in...");
-        await loginAccount();
-      } catch (err) {
-        setAccountStatus(`Sign in failed: ${err.message}`, true);
-      }
+      await runAccountAction("login", "Signing in...", "Sign in failed", loginAccount).catch(() => null);
     });
   }
 
@@ -8051,40 +8205,33 @@ function attachEvents() {
 
   if (el.accountRecoverySendBtn) {
     el.accountRecoverySendBtn.addEventListener("click", async () => {
-      try {
-        setAccountStatus("Sending recovery code...");
-        await startPinRecovery();
-      } catch (err) {
-        setAccountStatus(`Recovery failed: ${err.message}`, true);
-      }
+      await runAccountAction("recovery_send", "Sending recovery code...", "Recovery failed", startPinRecovery).catch(() => null);
     });
   }
 
   if (el.accountRecoveryResetBtn) {
     el.accountRecoveryResetBtn.addEventListener("click", async () => {
-      try {
-        setAccountStatus("Resetting PIN...");
-        await completePinRecovery();
-      } catch (err) {
-        setAccountStatus(`Reset failed: ${err.message}`, true);
-      }
+      await runAccountAction("recovery_reset", "Resetting PIN...", "Reset failed", completePinRecovery).catch(() => null);
+    });
+  }
+
+  if (el.accountRecoveryCancelBtn) {
+    el.accountRecoveryCancelBtn.addEventListener("click", () => {
+      setAccountRecoveryOpen(false);
+      if (el.accountPinInput) el.accountPinInput.focus();
+      setAccountStatus("Back to sign in.");
     });
   }
 
   if (el.accountLogoutBtn) {
     el.accountLogoutBtn.addEventListener("click", async () => {
-      await logoutAccount();
+      await runAccountAction("logout", "Signing out...", "Sign out failed", logoutAccount).catch(() => null);
     });
   }
 
   if (el.accountEmailSaveBtn) {
     el.accountEmailSaveBtn.addEventListener("click", async () => {
-      try {
-        setAccountStatus("Saving recovery email...");
-        await updateAccountEmail();
-      } catch (err) {
-        setAccountStatus(`Save email failed: ${err.message}`, true);
-      }
+      await runAccountAction("save_email", "Saving recovery email...", "Save email failed", updateAccountEmail).catch(() => null);
     });
   }
 
@@ -8092,18 +8239,13 @@ function attachEvents() {
     el.accountEmailManageInput.addEventListener("keydown", async (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
-      try {
-        setAccountStatus("Saving recovery email...");
-        await updateAccountEmail();
-      } catch (err) {
-        setAccountStatus(`Save email failed: ${err.message}`, true);
-      }
+      await runAccountAction("save_email", "Saving recovery email...", "Save email failed", updateAccountEmail).catch(() => null);
     });
   }
 
   if (el.accountSyncBtn) {
     el.accountSyncBtn.addEventListener("click", async () => {
-      await syncCloudStateNow();
+      await runAccountAction("sync", "Syncing cloud save...", "Sync failed", syncCloudStateNow).catch(() => null);
     });
   }
 
