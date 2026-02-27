@@ -2286,6 +2286,114 @@ async function handleEzraTeamFixturesRoute(context, key) {
   );
 }
 
+function normalizeLeagueId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (TABLE_LEAGUE_IDS.includes(raw)) return raw;
+  if (raw.toLowerCase().includes("premier")) return "4328";
+  if (raw.toLowerCase().includes("championship")) return "4329";
+  return "";
+}
+
+async function handleEzraLeagueRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const leagueId = normalizeLeagueId(url.searchParams.get("id"));
+  if (!leagueId) return json({ league: null }, 200);
+  const payload = await fetchSportsDb("v1", key, `lookupleague.php?id=${encodeURIComponent(leagueId)}`).catch(() => null);
+  const league = firstArray(payload)?.[0] || null;
+  return json({ league }, 200, { "Cache-Control": "public, max-age=300, s-maxage=300" });
+}
+
+async function handleEzraTeamRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const teamId = String(url.searchParams.get("id") || "").trim();
+  if (!teamId) return json({ team: null }, 200);
+
+  const payload = await fetchSportsDb("v1", key, `lookupteam.php?id=${encodeURIComponent(teamId)}`).catch(() => null);
+  const team = firstArray(payload)?.[0] || null;
+  return json({ team }, 200, { "Cache-Control": "public, max-age=300, s-maxage=300" });
+}
+
+async function handleEzraTeamPlayersRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const teamId = String(url.searchParams.get("id") || "").trim();
+  const teamName = String(url.searchParams.get("name") || "").trim();
+
+  let players = [];
+  if (teamId) {
+    const byId = await fetchSportsDb("v1", key, `lookup_all_players.php?id=${encodeURIComponent(teamId)}`).catch(() => null);
+    players = firstArray(byId);
+  }
+  if (!players.length && teamName) {
+    const byName = await fetchSportsDb("v1", key, `searchplayers.php?t=${encodeURIComponent(teamName)}`).catch(() => null);
+    players = firstArray(byName);
+  }
+  return json({ players }, 200, { "Cache-Control": "public, max-age=180, s-maxage=180" });
+}
+
+async function handleEzraPlayerRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const playerId = String(url.searchParams.get("id") || "").trim();
+  if (!playerId) return json({ player: null }, 200);
+  const payload = await fetchSportsDb("v1", key, `lookupplayer.php?id=${encodeURIComponent(playerId)}`).catch(() => null);
+  const player = firstArray(payload)?.[0] || null;
+  return json({ player }, 200, { "Cache-Control": "public, max-age=300, s-maxage=300" });
+}
+
+async function findEventInFixturesCache(db, eventId) {
+  if (!db || !eventId) return null;
+  const row = await db
+    .prepare(
+      `
+      SELECT payload_json
+      FROM ezra_fixtures_cache
+      WHERE event_id = ?1
+      LIMIT 1
+      `
+    )
+    .bind(String(eventId))
+    .first();
+  return safeParseJsonText(row?.payload_json || "");
+}
+
+async function handleEzraEventRoute(context, key) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  const url = new URL(request.url);
+  const eventId = String(url.searchParams.get("id") || "").trim();
+  if (!eventId) return json({ event: null }, 200);
+
+  if (db) {
+    try {
+      await ensureAccountSchema(db);
+      const fromCache = await findEventInFixturesCache(db, eventId);
+      if (fromCache && typeof fromCache === "object") {
+        return json({ event: fromCache }, 200, { "Cache-Control": "public, max-age=60, s-maxage=60" });
+      }
+    } catch {
+      // Continue to upstream fallback.
+    }
+  }
+
+  const payload = await fetchSportsDb("v1", key, `lookupevent.php?id=${encodeURIComponent(eventId)}`).catch(() => null);
+  const event = firstArray(payload)?.[0] || null;
+  return json({ event }, 200, { "Cache-Control": "public, max-age=60, s-maxage=60" });
+}
+
+async function handleEzraEventStatsRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const eventId = String(url.searchParams.get("id") || "").trim();
+  if (!eventId) return json({ eventstats: [] }, 200);
+  const payload = await fetchSportsDb("v1", key, `lookupeventstats.php?id=${encodeURIComponent(eventId)}`).catch(() => null);
+  const eventstats = firstArray(payload);
+  return json({ eventstats }, 200, { "Cache-Control": "public, max-age=60, s-maxage=60" });
+}
+
 function canonicalEventHash(event) {
   const parts = [
     String(event?.idEvent || ""),
@@ -2712,12 +2820,30 @@ export async function onRequest(context) {
     if (version === "v1" && lowerPath === "ezra/fixtures" && request.method === "GET") {
       return handleEzraFixturesRoute(context, key);
     }
-  if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
-    return handleEzraTeamFormRoute(context, key);
-  }
-  if (version === "v1" && lowerPath === "ezra/teamfixtures" && request.method === "GET") {
-    return handleEzraTeamFixturesRoute(context, key);
-  }
+    if (version === "v1" && lowerPath === "ezra/teamform" && request.method === "GET") {
+      return handleEzraTeamFormRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/teamfixtures" && request.method === "GET") {
+      return handleEzraTeamFixturesRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/league" && request.method === "GET") {
+      return handleEzraLeagueRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/team" && request.method === "GET") {
+      return handleEzraTeamRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/teamplayers" && request.method === "GET") {
+      return handleEzraTeamPlayersRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/player" && request.method === "GET") {
+      return handleEzraPlayerRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/event" && request.method === "GET") {
+      return handleEzraEventRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/eventstats" && request.method === "GET") {
+      return handleEzraEventStatsRoute(context, key);
+    }
     if (version === "v1" && lowerPath === "ezra/live/stream") {
       return handleEzraLiveStreamRoute(context, key);
     }

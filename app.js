@@ -2354,28 +2354,20 @@ async function fetchPlayersForTeam(team) {
   if (teamId && Array.isArray(state.teamPlayersCache[teamId])) {
     return state.teamPlayersCache[teamId];
   }
-  const bySearch = await safeLoad(async () => {
-    const data = await apiGetV1(`searchplayers.php?t=${encodeURIComponent(teamName)}`);
-    return resolvePlayers(data);
+  const rows = await safeLoad(async () => {
+    const data = await apiGetV1(
+      `ezra/teamplayers?id=${encodeURIComponent(teamId)}&name=${encodeURIComponent(teamName)}`
+    );
+    return safeArray(data, "players");
   }, []);
-  if (bySearch.length) {
-    if (teamId) state.teamPlayersCache[teamId] = bySearch;
-    return bySearch;
-  }
-
-  const byLookup = await safeLoad(async () => {
-    const data = await apiGetV1(`lookup_all_players.php?id=${encodeURIComponent(teamId)}`);
-    return resolvePlayers(data);
-  }, []);
-  if (teamId) state.teamPlayersCache[teamId] = byLookup;
-  return byLookup;
+  if (teamId) state.teamPlayersCache[teamId] = rows;
+  return rows;
 }
 
 async function fetchPlayerProfile(playerId) {
   if (!playerId) return null;
-  const data = await apiGetV1(`lookupplayer.php?id=${encodeURIComponent(playerId)}`);
-  const rows = firstArrayValue(data);
-  return rows?.[0] || null;
+  const data = await apiGetV1(`ezra/player?id=${encodeURIComponent(playerId)}`);
+  return data?.player || null;
 }
 
 function selectCutoutPlayer(players) {
@@ -5067,13 +5059,8 @@ async function fetchTable(leagueId) {
 }
 
 async function fetchLeagueMeta(leagueId) {
-  const data = await apiGetV1(`lookupleague.php?id=${leagueId}`);
-  return Array.isArray(data?.leagues) && data.leagues[0] ? data.leagues[0] : null;
-}
-
-async function fetchPastLeagueEvents(leagueId) {
-  const data = await apiGetV1(`eventspastleague.php?id=${leagueId}`);
-  return safeArray(data);
+  const data = await apiGetV1(`ezra/league?id=${encodeURIComponent(leagueId)}`);
+  return data?.league || null;
 }
 
 async function fetchTeamFormFromCache(team, n = 5) {
@@ -5108,12 +5095,14 @@ async function fetchAllTeams(leagueId) {
 async function fetchTeamById(teamId) {
   const known = findKnownTeamById(teamId);
   if (known) return known;
-  try {
-    const data = await apiGetV1(`lookupteam.php?id=${teamId}`);
-    if (Array.isArray(data?.teams) && data.teams[0]) return data.teams[0];
-  } catch (err) {
-    console.error(err);
-  }
+  const allTeams = [...(state.teamsByLeague.EPL || []), ...(state.teamsByLeague.CHAMP || [])];
+  const fromLists = allTeams.find((team) => String(team?.idTeam || "") === String(teamId));
+  if (fromLists) return fromLists;
+  const fromApi = await safeLoad(async () => {
+    const payload = await apiGetV1(`ezra/team?id=${encodeURIComponent(teamId)}`);
+    return payload?.team || null;
+  }, null);
+  if (fromApi) return fromApi;
   if (state.favoriteTeam && String(state.favoriteTeam.idTeam || "") === String(teamId)) {
     return state.favoriteTeam;
   }
@@ -5121,12 +5110,22 @@ async function fetchTeamById(teamId) {
 }
 
 async function fetchTeamNextEvents(teamId) {
-  try {
-    const data = await apiGetV1(`eventsnext.php?id=${teamId}`);
-    return safeArray(data);
-  } catch {
-    return [];
-  }
+  const team = findKnownTeamById(teamId) || state.favoriteTeam || null;
+  if (!team) return [];
+  const leagueId = LEAGUES[teamLeagueCode(team)]?.id || "";
+  if (!leagueId) return [];
+  const todayIso = toISODate(new Date());
+  const toIso = addDaysIso(todayIso, 45);
+  const data = await safeLoad(
+    () =>
+      apiGetV1(
+        `ezra/teamfixtures?leagueId=${encodeURIComponent(leagueId)}&teamId=${encodeURIComponent(
+          team.idTeam || ""
+        )}&teamName=${encodeURIComponent(team.strTeam || "")}&from=${encodeURIComponent(todayIso)}&to=${encodeURIComponent(toIso)}&limit=240`
+      ),
+    null
+  );
+  return safeArray(data, "events");
 }
 
 async function fetchTeamWindowFixturesFromCache(team, fromIso, toIso, limit = 240) {
@@ -5143,23 +5142,33 @@ async function fetchTeamWindowFixturesFromCache(team, fromIso, toIso, limit = 24
 }
 
 async function fetchTeamLastEvents(teamId) {
-  try {
-    const data = await apiGetV1(`eventslast.php?id=${teamId}`);
-    return safeArray(data);
-  } catch {
-    return [];
-  }
+  const team = findKnownTeamById(teamId) || state.favoriteTeam || null;
+  if (!team) return [];
+  const leagueId = LEAGUES[teamLeagueCode(team)]?.id || "";
+  if (!leagueId) return [];
+  const todayIso = toISODate(new Date());
+  const fromIso = addDaysIso(todayIso, -45);
+  const data = await safeLoad(
+    () =>
+      apiGetV1(
+        `ezra/teamfixtures?leagueId=${encodeURIComponent(leagueId)}&teamId=${encodeURIComponent(
+          team.idTeam || ""
+        )}&teamName=${encodeURIComponent(team.strTeam || "")}&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(todayIso)}&limit=240`
+      ),
+    null
+  );
+  return safeArray(data, "events");
 }
 
 async function fetchEventById(eventId) {
   if (!eventId) return null;
-  const data = await apiGetV1(`lookupevent.php?id=${eventId}`);
-  return Array.isArray(data?.events) && data.events[0] ? data.events[0] : null;
+  const data = await apiGetV1(`ezra/event?id=${encodeURIComponent(eventId)}`);
+  return data?.event || null;
 }
 
 async function fetchEventStats(eventId) {
   if (!eventId) return [];
-  const data = await apiGetV1(`lookupeventstats.php?id=${eventId}`);
+  const data = await apiGetV1(`ezra/eventstats?id=${encodeURIComponent(eventId)}`);
   return safeArray(data, "eventstats");
 }
 
@@ -6028,6 +6037,15 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
   const nextIso = toISODate(next);
 
   if (dateIso === todayIso) {
+    const todayEmpty = !(state.fixtures.today.EPL.length || state.fixtures.today.CHAMP.length);
+    if (todayEmpty) {
+      const [todayEpl, todayChamp] = await Promise.all([
+        safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, todayIso), []),
+        safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, todayIso), []),
+      ]);
+      state.fixtures.today.EPL = [...todayEpl].sort(fixtureSort);
+      state.fixtures.today.CHAMP = [...todayChamp].sort(fixtureSort);
+    }
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
     state.selectedDateFixtures.EPL = [...state.fixtures.today.EPL];
     state.selectedDateFixtures.CHAMP = [...state.fixtures.today.CHAMP];
@@ -6037,7 +6055,10 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
 
   if (dateIso === prevIso || dateIso === nextIso) {
     const cachedFast = getDateFixtureCache(dateIso);
-    const hasFast = Array.isArray(cachedFast?.EPL) && Array.isArray(cachedFast?.CHAMP);
+    const hasFast =
+      Array.isArray(cachedFast?.EPL) &&
+      Array.isArray(cachedFast?.CHAMP) &&
+      ((cachedFast?.EPL?.length || 0) + (cachedFast?.CHAMP?.length || 0) > 0);
     if (hasFast) {
       if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
       state.selectedDateFixtures.EPL = [...(cachedFast?.EPL || [])].sort(fixtureSort);
