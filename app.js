@@ -277,6 +277,7 @@ const state = {
   settingsOpen: false,
   accountMenuOpen: false,
   familyOptionsOpen: false,
+  popQuizQuestActive: false,
   focusedFixtureKey: "",
   openFixtureKey: "",
   eventDetailCache: {},
@@ -393,6 +394,7 @@ const el = {
   accountRecoveryResetBtn: document.getElementById("account-recovery-reset-btn"),
   accountRecoveryCancelBtn: document.getElementById("account-recovery-cancel-btn"),
   accountEmailManageInput: document.getElementById("account-email-manage-input"),
+  accountHelper: document.getElementById("account-helper"),
   accountEmailSaveBtn: document.getElementById("account-email-save-btn"),
   accountSyncBtn: document.getElementById("account-sync-btn"),
   accountLogoutBtn: document.getElementById("account-logout-btn"),
@@ -788,6 +790,19 @@ function setAccountStatus(text, isError = false) {
   el.accountStatus.classList.toggle("error", Boolean(isError));
 }
 
+function renderAccountHelper() {
+  if (!el.accountHelper) return;
+  if (accountSignedIn()) {
+    el.accountHelper.textContent = "Signed in. You can sync, update recovery email, or sign out.";
+    return;
+  }
+  if (state.account.recoveryOpen) {
+    el.accountHelper.textContent = "Forgot PIN: enter name + recovery email, send code, then set a new PIN.";
+    return;
+  }
+  el.accountHelper.textContent = "Create account or sign in. Recovery email is optional but required for PIN reset.";
+}
+
 function renderAccountUI() {
   if (!el.accountAuthSignedOut || !el.accountAuthSignedIn || !el.accountUserLabel) return;
   const signedIn = accountSignedIn();
@@ -807,6 +822,7 @@ function renderAccountUI() {
     setAccountRecoveryOpen(Boolean(state.account.recoveryOpen));
   }
   renderLifetimePointsPill();
+  renderAccountHelper();
   updateFamilyControlsState();
   updateAccountControlsState();
 }
@@ -1146,6 +1162,7 @@ async function startQuestRandomPlayer() {
 }
 
 async function startPopQuizQuest() {
+  state.popQuizQuestActive = true;
   if (!state.playerPopEnabled) {
     setPlayerPopEnabled(true);
   }
@@ -1157,6 +1174,12 @@ function registerPopQuizCorrectAnswer() {
   const daily = todayQuestState();
   daily.popCorrect = Number(daily.popCorrect || 0) + 1;
   if (daily.popCorrect >= 5) {
+    if (state.popQuizQuestActive) {
+      hidePlayerPopLayer();
+      setPlayerPopEnabled(false);
+      state.popQuizQuestActive = false;
+      triggerMissionGoalFx("quest-pop-5");
+    }
     completeQuest("quest-pop-5");
   } else {
     persistLocalMetaState();
@@ -1287,11 +1310,18 @@ function answerClubQuiz(optionIndex) {
   const chosen = Number(optionIndex);
   const correct = Number(question.answerIndex);
   const isCorrect = chosen === correct;
+  if (!isCorrect) {
+    state.clubQuizUi.feedback = "Not quite. Try again.";
+    state.clubQuizUi.feedbackMode = "wrong";
+    renderClubQuizPanel();
+    return;
+  }
+
   quiz.answered = Math.min(3, Number(quiz.answered || 0) + 1);
-  if (isCorrect) quiz.correct = Number(quiz.correct || 0) + 1;
-  state.clubQuizUi.feedback = isCorrect ? "Correct!" : `Answer: ${question.options[correct] || "Unknown"}`;
-  state.clubQuizUi.feedbackMode = isCorrect ? "correct" : "wrong";
-  if (quiz.answered >= 3) {
+  quiz.correct = Math.min(3, Number(quiz.correct || 0) + 1);
+  state.clubQuizUi.feedback = "Correct!";
+  state.clubQuizUi.feedbackMode = "correct";
+  if (quiz.correct >= 3) {
     quiz.completed = true;
     completeQuest("quest-club-quiz-3");
   } else {
@@ -4773,6 +4803,7 @@ function setPlayerPopEnabled(enabled) {
   localStorage.setItem("ezra_player_pop_enabled", state.playerPopEnabled ? "1" : "0");
   setPlayerPopButtonState();
   if (!state.playerPopEnabled) {
+    state.popQuizQuestActive = false;
     hidePlayerPopLayer();
     scheduleCloudStateSync();
     return;
@@ -6906,12 +6937,20 @@ function startLiveStream() {
 function setMobileTab(tab) {
   const safe = ["fixtures", "table", "fun"].includes(tab) ? tab : "fixtures";
   state.mobileTab = safe;
+  closeFavoritePickerMenu();
+  setSettingsMenuOpen(false);
+  setAccountMenuOpen(false);
+  setNotificationsOpen(false);
   renderMobileSectionLayout();
 }
 
 function setMainTab(tab) {
   const safe = ["home", "play", "predict", "squad", "tables"].includes(tab) ? tab : "home";
   state.mainTab = safe;
+  closeFavoritePickerMenu();
+  setSettingsMenuOpen(false);
+  setAccountMenuOpen(false);
+  setNotificationsOpen(false);
   renderMobileSectionLayout();
   renderFixtures();
   renderTables();

@@ -408,7 +408,7 @@ async function sendRecoveryEmail(env, email, code) {
     body: JSON.stringify({
       from,
       to: [email],
-      subject: "EZRASCORES PIN reset code",
+      subject: "SAVED by the goalie! Here's your reset code",
       text: `Your EZRASCORES reset code is ${code}. It expires in 15 minutes.`,
     }),
   });

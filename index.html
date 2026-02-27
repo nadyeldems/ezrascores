@@ -98,10 +98,10 @@
                     <button id="account-forgot-btn" class="btn" type="button">Forgot PIN?</button>
                   </div>
                   <div id="account-recovery-box" class="account-recovery-box hidden">
-                    <input id="account-recovery-code-input" class="account-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-digit code" />
+                    <input id="account-recovery-code-input" class="account-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Recovery code from email (6 digits)" />
                     <input id="account-recovery-new-pin-input" class="account-input" type="password" maxlength="24" placeholder="New PIN / passcode" />
                     <div class="account-actions">
-                      <button id="account-recovery-send-btn" class="btn" type="button">Send Code</button>
+                      <button id="account-recovery-send-btn" class="btn" type="button">Send Reset Code</button>
                       <button id="account-recovery-reset-btn" class="btn" type="button">Reset PIN</button>
                       <button id="account-recovery-cancel-btn" class="btn" type="button">Back to Sign In</button>
                     </div>
@@ -116,6 +116,7 @@
                     <button id="account-logout-btn" class="btn" type="button">Sign Out</button>
                   </div>
                 </div>
+                <p id="account-helper" class="settings-note muted">Create account or sign in. Recovery email is optional but required for PIN reset.</p>
                 <p id="account-status" class="settings-note muted" role="status" aria-live="polite">Logged out. Existing features still work locally.</p>
               </div>
             </div>
