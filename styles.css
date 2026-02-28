@@ -2033,6 +2033,13 @@ body.league-member-overlay-open::before {
   line-height: 1;
 }
 
+.account-toggle-avatar,
+.league-member-avatar img,
+.member-profile-avatar img,
+.account-avatar-preview {
+  border-radius: 999px;
+}
+
 .avatar-editor {
   border: 1px dashed var(--line-soft);
   border-radius: 0.65rem;

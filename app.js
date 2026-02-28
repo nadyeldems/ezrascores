@@ -136,6 +136,302 @@ const AVATAR_PALETTES = {
   bootsColor: ["#111111", "#FFFFFF", "#E14D2A", "#2B88D8", "#37A060", "#F39A1D"],
 };
 
+const AVATAR_3D = {
+  loading: false,
+  ready: false,
+  failed: false,
+  THREE: null,
+  cache: new Map(),
+  pending: new Map(),
+};
+
+function encodeAvatarData(value) {
+  try {
+    return btoa(JSON.stringify(value));
+  } catch {
+    return "";
+  }
+}
+
+function decodeAvatarData(value) {
+  try {
+    return JSON.parse(atob(String(value || "")));
+  } catch {
+    return null;
+  }
+}
+
+async function ensureThree() {
+  if (AVATAR_3D.ready || AVATAR_3D.failed) return AVATAR_3D.THREE;
+  if (AVATAR_3D.loading) {
+    return new Promise((resolve) => {
+      const timer = setInterval(() => {
+        if (!AVATAR_3D.loading) {
+          clearInterval(timer);
+          resolve(AVATAR_3D.THREE);
+        }
+      }, 40);
+    });
+  }
+  AVATAR_3D.loading = true;
+  try {
+    const mod = await import("https://unpkg.com/three@0.162.0/build/three.module.js");
+    AVATAR_3D.THREE = mod;
+    AVATAR_3D.ready = true;
+    AVATAR_3D.loading = false;
+    return mod;
+  } catch (err) {
+    console.warn("Avatar 3D: failed to load Three.js", err);
+    AVATAR_3D.failed = true;
+    AVATAR_3D.loading = false;
+    return null;
+  }
+}
+
+function avatar3DKey(avatar, seed, size) {
+  return `${seed}:${size}:${JSON.stringify(avatar)}`;
+}
+
+function dispose3DObject(obj) {
+  if (!obj) return;
+  obj.traverse?.((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose && m.dispose());
+      else if (child.material.dispose) child.material.dispose();
+    }
+  });
+}
+
+function buildAvatar3DGroup(THREE, avatar) {
+  const group = new THREE.Group();
+  const skin = new THREE.Color(avatar.skinColor);
+  const hair = new THREE.Color(avatar.hairColor);
+  const eye = new THREE.Color(avatar.eyeColor);
+  const kit = new THREE.Color(avatar.kitColor1);
+  const kitAccent = new THREE.Color(avatar.kitColor2);
+  const boots = new THREE.Color(avatar.bootsColor);
+
+  const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.4, metalness: 0.05 });
+  const hairMat = new THREE.MeshStandardMaterial({ color: hair, roughness: 0.55, metalness: 0.05 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: eye, roughness: 0.2, metalness: 0.1 });
+  const kitMat = new THREE.MeshStandardMaterial({ color: kit, roughness: 0.35, metalness: 0.12 });
+  const kitAccentMat = new THREE.MeshStandardMaterial({ color: kitAccent, roughness: 0.35, metalness: 0.1 });
+  const bootsMat = new THREE.MeshStandardMaterial({ color: boots, roughness: 0.45, metalness: 0.2 });
+
+  const headGeometry = avatar.headShape === "square"
+    ? new THREE.BoxGeometry(0.78, 0.88, 0.76, 3, 3, 3)
+    : new THREE.SphereGeometry(0.46, 32, 32);
+  const head = new THREE.Mesh(headGeometry, skinMat);
+  if (avatar.headShape === "oval") head.scale.set(1, 1.12, 0.95);
+  if (avatar.headShape === "square") head.scale.set(1, 1, 0.85);
+  head.position.set(0, 0.68, 0);
+  group.add(head);
+
+  const earGeo = new THREE.SphereGeometry(0.08, 16, 16);
+  const earL = new THREE.Mesh(earGeo, skinMat);
+  const earR = new THREE.Mesh(earGeo, skinMat);
+  earL.position.set(-0.47, 0.68, 0);
+  earR.position.set(0.47, 0.68, 0);
+  group.add(earL, earR);
+
+  if (avatar.hairStyle !== "bald") {
+    if (avatar.hairStyle === "spike") {
+      const spike = new THREE.ConeGeometry(0.36, 0.35, 6);
+      const hairMesh = new THREE.Mesh(spike, hairMat);
+      hairMesh.position.set(0, 1.05, 0.05);
+      group.add(hairMesh);
+    } else if (avatar.hairStyle === "curly") {
+      const curlGeo = new THREE.SphereGeometry(0.16, 18, 18);
+      for (let i = 0; i < 5; i += 1) {
+        const curl = new THREE.Mesh(curlGeo, hairMat);
+        curl.position.set(-0.24 + i * 0.12, 1.0 + (i % 2 === 0 ? 0.05 : -0.02), 0.1);
+        group.add(curl);
+      }
+      const cap = new THREE.SphereGeometry(0.38, 24, 24);
+      const capMesh = new THREE.Mesh(cap, hairMat);
+      capMesh.scale.set(1.1, 0.55, 1);
+      capMesh.position.set(0, 0.93, 0.05);
+      group.add(capMesh);
+    } else if (avatar.hairStyle === "fade") {
+      const cap = new THREE.SphereGeometry(0.4, 24, 24);
+      const capMesh = new THREE.Mesh(cap, hairMat);
+      capMesh.scale.set(1.06, 0.5, 1);
+      capMesh.position.set(0, 0.95, 0.05);
+      group.add(capMesh);
+    } else {
+      const cap = new THREE.SphereGeometry(0.42, 24, 24);
+      const capMesh = new THREE.Mesh(cap, hairMat);
+      capMesh.scale.set(1.05, 0.6, 1);
+      capMesh.position.set(0, 0.96, 0.04);
+      group.add(capMesh);
+    }
+  }
+
+  const eyeGeo = new THREE.SphereGeometry(0.05, 16, 16);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.16, 0.72, 0.41);
+  eyeR.position.set(0.16, 0.72, 0.41);
+  group.add(eyeL, eyeR);
+
+  const mouthGeo = avatar.mouth === "flat"
+    ? new THREE.BoxGeometry(0.18, 0.03, 0.02)
+    : new THREE.TorusGeometry(0.09, 0.02, 8, 18, avatar.mouth === "open" ? Math.PI : Math.PI * 0.7);
+  const mouthMat = new THREE.MeshStandardMaterial({ color: 0x2a1208, roughness: 0.4 });
+  const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+  mouth.position.set(0, 0.55, 0.43);
+  if (avatar.mouth !== "flat") mouth.rotation.set(Math.PI, 0, 0);
+  group.add(mouth);
+
+  const torsoGeo = new THREE.CapsuleGeometry(0.38, 0.6, 6, 14);
+  const torso = new THREE.Mesh(torsoGeo, kitMat);
+  torso.position.set(0, 0, 0);
+  group.add(torso);
+
+  const sleeveGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.36, 14);
+  const sleeveL = new THREE.Mesh(sleeveGeo, kitAccentMat);
+  const sleeveR = new THREE.Mesh(sleeveGeo, kitAccentMat);
+  sleeveL.position.set(-0.5, 0.1, 0);
+  sleeveR.position.set(0.5, 0.1, 0);
+  sleeveL.rotation.z = Math.PI / 3;
+  sleeveR.rotation.z = -Math.PI / 3;
+  if (avatar.kitStyle !== "plain") group.add(sleeveL, sleeveR);
+
+  const armGeo = new THREE.CylinderGeometry(0.08, 0.09, 0.4, 10);
+  const armL = new THREE.Mesh(armGeo, skinMat);
+  const armR = new THREE.Mesh(armGeo, skinMat);
+  armL.position.set(-0.62, -0.06, 0);
+  armR.position.set(0.62, -0.06, 0);
+  armL.rotation.z = Math.PI / 3;
+  armR.rotation.z = -Math.PI / 3;
+  group.add(armL, armR);
+
+  const legGeo = new THREE.CylinderGeometry(0.12, 0.13, 0.42, 12);
+  const legL = new THREE.Mesh(legGeo, skinMat);
+  const legR = new THREE.Mesh(legGeo, skinMat);
+  legL.position.set(-0.18, -0.62, 0);
+  legR.position.set(0.18, -0.62, 0);
+  group.add(legL, legR);
+
+  const bootGeo = new THREE.BoxGeometry(0.2, 0.1, 0.32);
+  const bootL = new THREE.Mesh(bootGeo, bootsMat);
+  const bootR = new THREE.Mesh(bootGeo, bootsMat);
+  bootL.position.set(-0.18, -0.85, 0.1);
+  bootR.position.set(0.18, -0.85, 0.1);
+  group.add(bootL, bootR);
+
+  if (avatar.kitStyle !== "plain") {
+    const stripeMat = kitAccentMat;
+    if (avatar.kitStyle === "stripes" || avatar.kitStyle === "hoops") {
+      const stripeGeo = new THREE.PlaneGeometry(0.52, 0.16);
+      const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+      stripe.position.set(0, 0.12, 0.41);
+      group.add(stripe);
+      if (avatar.kitStyle === "hoops") {
+        const stripe2 = stripe.clone();
+        stripe2.position.set(0, -0.06, 0.41);
+        group.add(stripe2);
+      }
+    }
+    if (avatar.kitStyle === "diamond") {
+      const diamondGeo = new THREE.OctahedronGeometry(0.15);
+      const diamond = new THREE.Mesh(diamondGeo, stripeMat);
+      diamond.position.set(0, 0.08, 0.42);
+      group.add(diamond);
+    }
+  }
+
+  const ballGeo = new THREE.SphereGeometry(0.28, 24, 24);
+  const ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color: 0xf6f6f6, roughness: 0.3, metalness: 0.05 }));
+  ball.position.set(0.72, -0.08, 0.38);
+  const patchGeo = new THREE.SphereGeometry(0.1, 10, 10);
+  const patchMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.35 });
+  const patch = new THREE.Mesh(patchGeo, patchMat);
+  patch.position.set(0.08, 0.06, 0.25);
+  ball.add(patch);
+  group.add(ball);
+
+  return group;
+}
+
+async function renderAvatar3DDataUri(avatar, seed, size) {
+  const THREE = await ensureThree();
+  if (!THREE) return null;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(size * dpr));
+  canvas.height = Math.max(1, Math.round(size * dpr));
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(size, size, false);
+  renderer.setPixelRatio(dpr);
+  renderer.setClearColor(0x000000, 0);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 10);
+  camera.position.set(0, 0.25, 3.2);
+  camera.lookAt(0, 0.2, 0);
+
+  const hemi = new THREE.HemisphereLight(0xfff2dc, 0x1f140c, 0.9);
+  const key = new THREE.DirectionalLight(0xffffff, 0.9);
+  key.position.set(1.2, 1.4, 1.4);
+  const fill = new THREE.DirectionalLight(0xffc98e, 0.35);
+  fill.position.set(-1.2, 0.4, 0.8);
+  scene.add(hemi, key, fill);
+
+  const group = buildAvatar3DGroup(THREE, avatar);
+  group.position.set(0, -0.1, 0);
+  group.rotation.y = -0.15;
+  scene.add(group);
+
+  renderer.render(scene, camera);
+  const data = canvas.toDataURL("image/png");
+
+  dispose3DObject(group);
+  renderer.dispose();
+  return data;
+}
+
+let avatarUpgradeQueued = false;
+function scheduleAvatar3DUpgrade() {
+  if (avatarUpgradeQueued) return;
+  avatarUpgradeQueued = true;
+  requestAnimationFrame(() => {
+    avatarUpgradeQueued = false;
+    upgradeAvatarImages3D();
+  });
+}
+
+function upgradeAvatarImages3D() {
+  if (AVATAR_3D.failed) return;
+  const imgs = [...document.querySelectorAll("img[data-avatar-config]")];
+  imgs.forEach((img) => {
+    const configEncoded = img.dataset.avatarConfig || "";
+    const seed = img.dataset.avatarSeed || "user";
+    const size = Number(img.dataset.avatarSize || img.width || 96);
+    if (!configEncoded) return;
+    const avatar = decodeAvatarData(configEncoded);
+    if (!avatar) return;
+    const key = avatar3DKey(avatar, seed, size);
+    if (AVATAR_3D.cache.has(key)) {
+      img.src = AVATAR_3D.cache.get(key);
+      return;
+    }
+    if (AVATAR_3D.pending.has(key)) return;
+    const task = renderAvatar3DDataUri(avatar, seed, size)
+      .then((data) => {
+        if (!data) return;
+        AVATAR_3D.cache.set(key, data);
+        img.src = data;
+      })
+      .catch(() => null)
+      .finally(() => {
+        AVATAR_3D.pending.delete(key);
+      });
+    AVATAR_3D.pending.set(key, task);
+  });
+}
+
 function clampAvatarColor(value, fallback, paletteKey = "") {
   const raw = String(value || "").trim();
   const normalized = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toUpperCase() : "";
@@ -1165,11 +1461,18 @@ function writeAvatarEditorState(avatar) {
   if (el.avatarBootsColorInput) el.avatarBootsColorInput.value = safe.bootsColor;
   if (el.accountAvatarPreview) {
     el.accountAvatarPreview.src = avatarSvgDataUri(safe, seed, 116);
+    el.accountAvatarPreview.dataset.avatarConfig = encodeAvatarData(safe);
+    el.accountAvatarPreview.dataset.avatarSeed = seed;
+    el.accountAvatarPreview.dataset.avatarSize = "116";
   }
   if (accountSignedIn() && el.accountToggleAvatar && !el.accountToggleAvatar.classList.contains("hidden")) {
     el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
+    el.accountToggleAvatar.dataset.avatarConfig = encodeAvatarData(safe);
+    el.accountToggleAvatar.dataset.avatarSeed = seed;
+    el.accountToggleAvatar.dataset.avatarSize = "80";
   }
   applyAvatarStyleLocks();
+  scheduleAvatar3DUpgrade();
 }
 
 function renderAccountAvatarButton() {
@@ -1177,14 +1480,19 @@ function renderAccountAvatarButton() {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   const safe = currentAccountAvatar();
   el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
+  el.accountToggleAvatar.dataset.avatarConfig = encodeAvatarData(safe);
+  el.accountToggleAvatar.dataset.avatarSeed = seed;
+  el.accountToggleAvatar.dataset.avatarSize = "80";
   el.accountToggleAvatar.classList.remove("hidden");
   el.accountToggleAvatarFallback.classList.add("hidden");
+  scheduleAvatar3DUpgrade();
 }
 
 function avatarBadgeMarkup(avatar, name, sizeClass = "member-avatar") {
   const seed = name || "user";
   const safe = sanitizeAvatarConfig(avatar, seed);
-  return `<span class="${sizeClass}"><img src="${avatarSvgDataUri(safe, seed, 88)}" alt="${escapeHtml(name || "User")} avatar" /></span>`;
+  const encoded = encodeAvatarData(safe);
+  return `<span class="${sizeClass}"><img src="${avatarSvgDataUri(safe, seed, 88)}" data-avatar-config="${encoded}" data-avatar-seed="${escapeHtml(seed)}" data-avatar-size="88" alt="${escapeHtml(name || "User")} avatar" /></span>`;
 }
 
 function renderAccountHelper() {
@@ -1273,6 +1581,7 @@ function renderAccountUI() {
   renderAccountHelper();
   updateFamilyControlsState();
   updateAccountControlsState();
+  scheduleAvatar3DUpgrade();
 }
 
 function updateFamilyControlsState() {
@@ -2950,6 +3259,7 @@ function renderLeagueMemberView() {
       renderLeagueMemberView();
     });
   }
+  scheduleAvatar3DUpgrade();
 }
 
 async function openLeagueMemberView(userId, displayName) {
@@ -3079,6 +3389,7 @@ function renderFamilyLeaguePanel() {
     el.familyMembers.innerHTML = `<div class="empty">No members found for this league yet.</div>`;
     return;
   }
+  scheduleAvatar3DUpgrade();
   let displayStandings = standings.slice();
   if (compactHomeMode && !state.familyLeague.homeExpanded) {
     const signedInId = String(state.account.user?.id || "");
@@ -4539,8 +4850,9 @@ function renderSquadPanel() {
       if (opening) {
         onSquadPlayerExplored(player);
         renderMissionsPanel();
-        renderFamilyLeaguePanel();
-      }
+  renderFamilyLeaguePanel();
+  scheduleAvatar3DUpgrade();
+}
       if (!opening || !player.idPlayer) return;
       const cached = state.playerProfileCache[player.idPlayer];
       if (cached?.loading || cached?.loaded) return;
