@@ -271,6 +271,94 @@ function dispose3DObject(obj) {
   });
 }
 
+function createFabricTexture(THREE, baseColor, accentColor = "", style = "plain") {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, size, size);
+
+  const accent = accentColor || baseColor;
+  if (style === "stripes") {
+    ctx.fillStyle = accent;
+    for (let x = 0; x < size; x += 40) ctx.fillRect(x, 0, 16, size);
+  } else if (style === "hoops") {
+    ctx.fillStyle = accent;
+    for (let y = 0; y < size; y += 42) ctx.fillRect(0, y, size, 14);
+  } else if (style === "diamond") {
+    ctx.fillStyle = accent;
+    for (let y = 32; y < size; y += 64) {
+      for (let x = 32; x < size; x += 64) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-12, -12, 24, 24);
+        ctx.restore();
+      }
+    }
+  } else if (style === "total90") {
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2 + 20, 70, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.stroke();
+    ctx.fillStyle = accent;
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2 + 20, 10, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (style === "sleeves") {
+    ctx.fillStyle = accent;
+    ctx.fillRect(0, 24, size, 18);
+    ctx.fillRect(0, size - 42, size, 18);
+  }
+
+  // subtle fabric noise
+  ctx.globalAlpha = 0.08;
+  for (let i = 0; i < 4000; i += 1) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    ctx.fillStyle = Math.random() > 0.5 ? "#000" : "#fff";
+    ctx.fillRect(x, y, 1, 1);
+  }
+  ctx.globalAlpha = 1;
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function createHairTexture(THREE, baseColor) {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 40; i += 1) {
+    const x = Math.random() * size;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.bezierCurveTo(x + 12, size * 0.3, x - 8, size * 0.7, x + 4, size);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 function buildAvatar3DGroup(THREE, avatar) {
   const group = new THREE.Group();
   const skin = new THREE.Color(avatar.skinColor);
@@ -281,11 +369,20 @@ function buildAvatar3DGroup(THREE, avatar) {
   const boots = new THREE.Color(avatar.bootsColor);
 
   const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.35, metalness: 0.05 });
-  const hairMat = new THREE.MeshStandardMaterial({ color: hair, roughness: 0.55, metalness: 0.05 });
+  const hairMat = new THREE.MeshPhysicalMaterial({ color: hair, roughness: 0.45, metalness: 0.05, clearcoat: 0.6, clearcoatRoughness: 0.35 });
   const eyeMat = new THREE.MeshStandardMaterial({ color: eye, roughness: 0.2, metalness: 0.1 });
   const kitMat = new THREE.MeshStandardMaterial({ color: kit, roughness: 0.32, metalness: 0.1 });
   const kitAccentMat = new THREE.MeshStandardMaterial({ color: kitAccent, roughness: 0.32, metalness: 0.1, side: THREE.DoubleSide });
   const bootsMat = new THREE.MeshStandardMaterial({ color: boots, roughness: 0.45, metalness: 0.2 });
+  const hairTex = createHairTexture(THREE, avatar.hairColor);
+  hairMat.map = hairTex;
+  hairMat.needsUpdate = true;
+  const kitTex = createFabricTexture(THREE, avatar.kitColor1, avatar.kitColor2, avatar.kitStyle);
+  kitMat.map = kitTex;
+  kitMat.needsUpdate = true;
+  const accentTex = createFabricTexture(THREE, avatar.kitColor2, avatar.kitColor1, "plain");
+  kitAccentMat.map = accentTex;
+  kitAccentMat.needsUpdate = true;
 
   const headGeometry = avatar.headShape === "square"
     ? new THREE.BoxGeometry(0.9, 0.96, 0.84, 3, 3, 3)
@@ -468,33 +565,7 @@ function buildAvatar3DGroup(THREE, avatar) {
   bootR.position.set(0.16, -0.82, 0.12);
   group.add(bootL, bootR);
 
-  if (avatar.kitStyle !== "plain") {
-    const stripeMat = kitAccentMat;
-    if (avatar.kitStyle === "stripes" || avatar.kitStyle === "hoops") {
-      const stripeGeo = new THREE.PlaneGeometry(0.5, 0.14);
-      const stripe = new THREE.Mesh(stripeGeo, stripeMat);
-      stripe.position.set(0, 0.14, 0.44);
-      group.add(stripe);
-      if (avatar.kitStyle === "hoops") {
-        const stripe2 = stripe.clone();
-        stripe2.position.set(0, -0.02, 0.44);
-        group.add(stripe2);
-      }
-    }
-    if (avatar.kitStyle === "diamond") {
-      const diamondGeo = new THREE.OctahedronGeometry(0.16);
-      const diamond = new THREE.Mesh(diamondGeo, stripeMat);
-      diamond.position.set(0, 0.12, 0.45);
-      group.add(diamond);
-    }
-    if (avatar.kitStyle === "total90") {
-      const arcGeo = new THREE.TorusGeometry(0.18, 0.02, 8, 28, Math.PI * 1.1);
-      const arc = new THREE.Mesh(arcGeo, stripeMat);
-      arc.rotation.set(Math.PI / 2, 0, Math.PI);
-      arc.position.set(0, 0.1, 0.44);
-      group.add(arc);
-    }
-  }
+  // kit styles are now texture-driven (see createFabricTexture)
 
   const ballGeo = new THREE.SphereGeometry(0.26, 24, 24);
   const ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color: 0xf6f6f6, roughness: 0.3, metalness: 0.05 }));
@@ -526,18 +597,23 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
   camera.position.set(0, 0.35, 3.0);
   camera.lookAt(0, 0.35, 0);
 
-  const hemi = new THREE.HemisphereLight(0xfff2dc, 0x1f140c, 0.9);
+  const hemi = new THREE.HemisphereLight(0xfff2dc, 0x1f140c, 1.0);
   const key = new THREE.DirectionalLight(0xffffff, 0.9);
   key.position.set(1.2, 1.4, 1.4);
-  const fill = new THREE.DirectionalLight(0xffc98e, 0.35);
+  const fill = new THREE.DirectionalLight(0xffc98e, 0.45);
   fill.position.set(-1.2, 0.4, 0.8);
-  scene.add(hemi, key, fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.2);
+  rim.position.set(-0.8, 1.2, -1.4);
+  scene.add(hemi, key, fill, rim);
 
   const group = buildAvatar3DGroup(THREE, avatar);
   group.position.set(0, -0.05, 0);
   group.rotation.y = -0.18;
   scene.add(group);
 
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
   renderer.render(scene, camera);
   const data = canvas.toDataURL("image/png");
 
