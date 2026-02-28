@@ -290,6 +290,11 @@ const AVATAR_3D = {
   ready: false,
   failed: false,
   THREE: null,
+  FBXLoader: null,
+  baseModel: null,
+  baseModelReady: false,
+  baseModelLoading: false,
+  baseModelFailed: false,
   cache: new Map(),
   pending: new Map(),
 };
@@ -325,7 +330,9 @@ async function ensureThree() {
   AVATAR_3D.loading = true;
   try {
     const mod = await import("https://unpkg.com/three@0.162.0/build/three.module.js");
+    const fbxModule = await import("https://unpkg.com/three@0.162.0/examples/jsm/loaders/FBXLoader.js");
     AVATAR_3D.THREE = mod;
+    AVATAR_3D.FBXLoader = fbxModule.FBXLoader;
     AVATAR_3D.ready = true;
     AVATAR_3D.loading = false;
     return mod;
@@ -335,6 +342,111 @@ async function ensureThree() {
     AVATAR_3D.loading = false;
     return null;
   }
+}
+
+function normalizeAvatarBaseModel(THREE, root) {
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  if (size.y <= 0.0001) return root;
+
+  root.position.sub(center);
+  const targetHeight = 2.34;
+  const scale = targetHeight / size.y;
+  root.scale.setScalar(scale);
+
+  const finalBox = new THREE.Box3().setFromObject(root);
+  const minY = finalBox.min.y;
+  root.position.y += -0.84 - minY;
+  root.position.z += 0.02;
+  return root;
+}
+
+function recolorAvatarBaseModel(model, avatar) {
+  const skin = new AVATAR_3D.THREE.Color(avatar.skinColor);
+  const hair = new AVATAR_3D.THREE.Color(avatar.hairColor);
+  const boots = new AVATAR_3D.THREE.Color(avatar.bootsColor);
+  const kit1 = new AVATAR_3D.THREE.Color(avatar.kitColor1);
+  const kit2 = new AVATAR_3D.THREE.Color(avatar.kitColor2);
+  const shorts = new AVATAR_3D.THREE.Color(avatar.shortsColor || avatar.kitColor2);
+  const socks = new AVATAR_3D.THREE.Color(avatar.socksColor || avatar.kitColor1);
+
+  const setMatColor = (mat, color, roughness = null, metalness = null) => {
+    if (!mat || !mat.color) return;
+    mat.color.copy(color);
+    if (roughness !== null) mat.roughness = roughness;
+    if (metalness !== null) mat.metalness = metalness;
+    mat.needsUpdate = true;
+  };
+
+  model.traverse((node) => {
+    if (!node.isMesh && !node.isSkinnedMesh) return;
+    if (!node.material) return;
+
+    const mats = Array.isArray(node.material) ? node.material : [node.material];
+    const lower = `${node.name || ""} ${node.material?.name || ""}`.toLowerCase();
+    mats.forEach((srcMat, idx) => {
+      const mat = srcMat?.clone ? srcMat.clone() : srcMat;
+      if (!mat) return;
+      mat.skinning = Boolean(node.isSkinnedMesh);
+
+      if (/(hair|brow|beard)/.test(lower)) setMatColor(mat, hair, 0.58, 0.04);
+      else if (/(face|head|skin|arm|hand|leg|ear|neck)/.test(lower)) setMatColor(mat, skin, 0.44, 0.03);
+      else if (/(boot|shoe|cleat)/.test(lower)) setMatColor(mat, boots, 0.5, 0.16);
+      else if (/(short)/.test(lower)) setMatColor(mat, shorts, 0.36, 0.07);
+      else if (/(sock)/.test(lower)) setMatColor(mat, socks, 0.43, 0.04);
+      else if (/(stripe|trim|accent|sleeve|collar)/.test(lower)) setMatColor(mat, kit2, 0.35, 0.07);
+      else if (/(shirt|jersey|kit|torso|body|top)/.test(lower)) setMatColor(mat, kit1, 0.35, 0.07);
+      else if (!mat.map) setMatColor(mat, kit1, 0.38, 0.06);
+
+      mats[idx] = mat;
+    });
+    node.material = Array.isArray(node.material) ? mats : mats[0];
+  });
+}
+
+async function ensureAvatarBaseModel() {
+  if (AVATAR_3D.baseModelReady) return AVATAR_3D.baseModel;
+  if (AVATAR_3D.baseModelFailed) return null;
+  if (AVATAR_3D.baseModelLoading) {
+    return new Promise((resolve) => {
+      const timer = setInterval(() => {
+        if (!AVATAR_3D.baseModelLoading) {
+          clearInterval(timer);
+          resolve(AVATAR_3D.baseModel || null);
+        }
+      }, 40);
+    });
+  }
+  const THREE = await ensureThree();
+  if (!THREE || !AVATAR_3D.FBXLoader) return null;
+  AVATAR_3D.baseModelLoading = true;
+  try {
+    const loader = new AVATAR_3D.FBXLoader();
+    const model = await loader.loadAsync("/assets/avatar/Soccer.fbx");
+    AVATAR_3D.baseModel = normalizeAvatarBaseModel(THREE, model);
+    AVATAR_3D.baseModelReady = true;
+    AVATAR_3D.baseModelLoading = false;
+    return AVATAR_3D.baseModel;
+  } catch (err) {
+    console.warn("Avatar 3D: failed to load base FBX, using procedural fallback", err);
+    AVATAR_3D.baseModelFailed = true;
+    AVATAR_3D.baseModelLoading = false;
+    return null;
+  }
+}
+
+function buildAvatarBaseModelInstance(avatar) {
+  if (!AVATAR_3D.baseModel) return null;
+  const clone = AVATAR_3D.baseModel.clone(true);
+  recolorAvatarBaseModel(clone, avatar);
+  // Mild personality cues without deforming rig.
+  const moodTilt = avatar.brow === "focused" ? 0.02 : avatar.brow === "cheeky" ? -0.018 : 0;
+  clone.rotation.z = moodTilt;
+  clone.rotation.y = avatar.brow === "cheeky" ? -0.05 : 0;
+  return clone;
 }
 
 function avatar3DKey(avatar, seed, size) {
@@ -936,6 +1048,7 @@ function buildAvatar3DGroup(THREE, avatar) {
 async function renderAvatar3DDataUri(avatar, seed, size) {
   const THREE = await ensureThree();
   if (!THREE) return null;
+  await ensureAvatarBaseModel();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(size * dpr));
@@ -959,7 +1072,7 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
   rim.position.set(-0.8, 1.2, -1.4);
   scene.add(hemi, key, fill, rim);
 
-  const group = buildAvatar3DGroup(THREE, avatar);
+  const group = buildAvatarBaseModelInstance(avatar) || buildAvatar3DGroup(THREE, avatar);
   group.position.set(0, -0.06, 0);
   group.rotation.y = -0.06;
   scene.add(group);
