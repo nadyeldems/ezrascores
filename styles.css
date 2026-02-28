@@ -2018,13 +2018,13 @@ body.league-member-overlay-open::before {
 }
 
 .account-toggle-avatar {
-  width: 2.08rem;
-  height: 2.08rem;
+  width: 2.2rem;
+  height: 2.2rem;
   border-radius: 999px;
   border: 1px solid var(--line-soft);
-  object-fit: contain;
+  object-fit: cover;
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.15), #0f0703 70%);
-  padding: 0.06rem;
+  padding: 0.03rem;
   display: block;
 }
 
@@ -2074,6 +2074,12 @@ body.league-member-overlay-open::before {
 
 .avatar-editor-field .account-input {
   min-height: 1.85rem;
+  pointer-events: auto;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  -webkit-appearance: menulist;
+  appearance: menulist;
 }
 
 .avatar-color-input {
@@ -2116,13 +2122,13 @@ body.league-member-overlay-open::before {
 }
 
 .league-member-avatar {
-  width: 1.8rem;
-  height: 1.8rem;
+  width: 2.05rem;
+  height: 2.05rem;
 }
 
 .member-profile-avatar {
-  width: 2.2rem;
-  height: 2.2rem;
+  width: 2.5rem;
+  height: 2.5rem;
 }
 
 .league-member-avatar img,

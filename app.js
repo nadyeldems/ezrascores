@@ -118,12 +118,6 @@ const AVATAR_OPTIONS = {
   bootsStyle: ["classic", "speed", "high"],
 };
 
-const AVATAR_STYLE_LOCKS = {
-  hairStyle: { spike: 80, curly: 140 },
-  kitStyle: { diamond: 120, stripes: 180, hoops: 240, total90: 320 },
-  bootsStyle: { speed: 100, high: 220 },
-};
-
 const AVATAR_UNLOCK_TRACK = [
   { key: "starter", label: "Starter Pack", points: 0, icon: "⭐" },
   { key: "speed", label: "Speed Boots", points: 100, icon: "⚡" },
@@ -163,36 +157,14 @@ function accountLifetimePoints() {
   return Number.isFinite(raw) ? Math.max(0, raw) : 0;
 }
 
-function avatarOptionMinPoints(field, value) {
-  return Number(AVATAR_STYLE_LOCKS?.[field]?.[value] || 0);
-}
-
-function isAvatarOptionUnlocked(field, value, points) {
-  return points >= avatarOptionMinPoints(field, value);
-}
-
 function applyAvatarStyleLocks() {
-  if (!accountSignedIn()) return;
-  const points = accountLifetimePoints();
-  const lockable = [
-    { el: el.avatarHairStyleInput, field: "hairStyle", options: AVATAR_OPTIONS.hairStyle },
-    { el: el.avatarKitStyleInput, field: "kitStyle", options: AVATAR_OPTIONS.kitStyle },
-    { el: el.avatarBootsStyleInput, field: "bootsStyle", options: AVATAR_OPTIONS.bootsStyle },
-  ];
-  lockable.forEach((item) => {
-    const select = item.el;
+  const lockable = [el.avatarHairStyleInput, el.avatarKitStyleInput, el.avatarBootsStyleInput];
+  lockable.forEach((select) => {
     if (!select) return;
-    const unlockedValues = item.options.filter((v) => isAvatarOptionUnlocked(item.field, v, points));
-    const fallback = unlockedValues[0] || item.options[0];
-    if (!isAvatarOptionUnlocked(item.field, select.value, points)) {
-      select.value = fallback;
-    }
     [...select.options].forEach((opt) => {
-      const requirement = avatarOptionMinPoints(item.field, opt.value);
-      const unlocked = points >= requirement;
       if (!opt.dataset.baseLabel) opt.dataset.baseLabel = opt.textContent || opt.value;
-      opt.disabled = !unlocked;
-      opt.textContent = unlocked || requirement <= 0 ? opt.dataset.baseLabel : `${opt.dataset.baseLabel} 🔒 ${requirement} pts`;
+      opt.disabled = false;
+      opt.textContent = opt.dataset.baseLabel;
     });
   });
 }
@@ -207,7 +179,7 @@ function renderAvatarUnlockRail() {
   }).join("");
   el.avatarUnlockRail.innerHTML = `
     <div class="avatar-unlock-head">
-      <span>Unlock Track</span>
+      <span>Unlock Track (coming soon)</span>
       <span class="muted">${next ? `${Math.max(0, next.points - points)} pts to ${next.label}` : "All listed tiers unlocked"}</span>
     </div>
     <div class="avatar-unlock-chips">${chips}</div>
@@ -259,46 +231,50 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
   const a = sanitizeAvatarConfig(input, seed);
   const head =
     a.headShape === "oval"
-      ? `<ellipse cx="50" cy="40" rx="17" ry="19" fill="${a.skinColor}"/>`
+      ? `<ellipse cx="50" cy="35.5" rx="14.8" ry="16.5" fill="url(#skinGrad)"/>`
       : a.headShape === "square"
-        ? `<rect x="33" y="22" width="34" height="36" rx="7" fill="${a.skinColor}"/>`
-        : `<circle cx="50" cy="40" r="18" fill="${a.skinColor}"/>`;
+        ? `<rect x="35.2" y="19" width="29.6" height="32.4" rx="7" fill="url(#skinGrad)"/>`
+        : `<circle cx="50" cy="35.5" r="15.9" fill="url(#skinGrad)"/>`;
+
+  const earCaps = `<ellipse cx="34.8" cy="36.4" rx="1.9" ry="3.3" fill="${a.skinColor}" opacity="0.85"/><ellipse cx="65.2" cy="36.4" rx="1.9" ry="3.3" fill="${a.skinColor}" opacity="0.85"/>`;
+
   const hair =
     a.hairStyle === "bald"
       ? ""
       : a.hairStyle === "fade"
-        ? `<rect x="34" y="18" width="32" height="10" rx="5" fill="${a.hairColor}"/><rect x="35" y="24" width="6" height="16" rx="3" fill="${a.hairColor}" opacity="0.65"/><rect x="59" y="24" width="6" height="16" rx="3" fill="${a.hairColor}" opacity="0.65"/>`
+        ? `<path d="M34.6 25 C39 16.8 61 16.8 65.4 25 L65.4 31.6 C60.6 28.8 39.4 28.8 34.6 31.6 Z" fill="${a.hairColor}"/><rect x="35.3" y="29.7" width="4.8" height="10.8" rx="2.2" fill="${a.hairColor}" opacity="0.55"/><rect x="59.9" y="29.7" width="4.8" height="10.8" rx="2.2" fill="${a.hairColor}" opacity="0.55"/>`
         : a.hairStyle === "spike"
-          ? `<path d="M33 28 L37 15 L43 26 L49 14 L55 26 L61 15 L67 28 Z" fill="${a.hairColor}"/>`
+          ? `<path d="M34 29 L36.5 16.5 L42.2 24 L46.8 14.3 L52.7 23 L57.6 14.8 L63.5 25.2 L66 30.3 L66 33.2 C61.4 30 38.6 30 34 33.2 Z" fill="${a.hairColor}"/>`
           : a.hairStyle === "curly"
-            ? `<circle cx="37" cy="25" r="6" fill="${a.hairColor}"/><circle cx="45" cy="21" r="7" fill="${a.hairColor}"/><circle cx="55" cy="21" r="7" fill="${a.hairColor}"/><circle cx="63" cy="25" r="6" fill="${a.hairColor}"/>`
-            : `<rect x="33" y="17" width="34" height="12" rx="6" fill="${a.hairColor}"/>`;
+            ? `<circle cx="38.4" cy="24.6" r="5.5" fill="${a.hairColor}"/><circle cx="45.4" cy="21.4" r="6.3" fill="${a.hairColor}"/><circle cx="54.6" cy="21.2" r="6.4" fill="${a.hairColor}"/><circle cx="61.5" cy="24.3" r="5.4" fill="${a.hairColor}"/><rect x="35.4" y="23.7" width="29.2" height="9" rx="4.4" fill="${a.hairColor}"/>`
+            : `<path d="M34.2 25.6 C38.2 16.6 61.8 16.6 65.8 25.6 L65.8 32.4 C61 29.1 39 29.1 34.2 32.4 Z" fill="${a.hairColor}"/>`;
+
   const mouth =
     a.mouth === "open"
-      ? `<ellipse cx="50" cy="47" rx="5" ry="3.5" fill="#2A1208"/>`
+      ? `<ellipse cx="50" cy="43.8" rx="4.2" ry="2.8" fill="#2A1208"/><ellipse cx="50" cy="43.9" rx="2.4" ry="1.4" fill="#6D2A21" opacity="0.55"/>`
       : a.mouth === "flat"
-        ? `<line x1="45" y1="48" x2="55" y2="48" stroke="#2A1208" stroke-width="2" stroke-linecap="round"/>`
-        : `<path d="M44 47 Q50 52 56 47" stroke="#2A1208" stroke-width="2" fill="none" stroke-linecap="round"/>`;
+        ? `<line x1="45.2" y1="43.8" x2="54.8" y2="43.8" stroke="#2A1208" stroke-width="1.75" stroke-linecap="round"/>`
+        : `<path d="M44.9 42.8 Q50 47.5 55.1 42.8" stroke="#2A1208" stroke-width="1.75" fill="none" stroke-linecap="round"/>`;
 
   let kitPattern = "";
   if (a.kitStyle === "sleeves") {
-    kitPattern = `<rect x="24" y="63" width="10" height="14" fill="${a.kitColor2}"/><rect x="66" y="63" width="10" height="14" fill="${a.kitColor2}"/>`;
+    kitPattern = `<rect x="22.8" y="58.5" width="10.8" height="15.2" rx="2.8" fill="${a.kitColor2}" opacity="0.92"/><rect x="66.4" y="58.5" width="10.8" height="15.2" rx="2.8" fill="${a.kitColor2}" opacity="0.92"/>`;
   } else if (a.kitStyle === "diamond") {
-    kitPattern = `<path d="M50 59 L58 67 L50 75 L42 67 Z" fill="${a.kitColor2}"/>`;
+    kitPattern = `<path d="M50 58.4 L60.8 68.3 L50 78.2 L39.2 68.3 Z" fill="${a.kitColor2}" opacity="0.94"/>`;
   } else if (a.kitStyle === "stripes") {
-    kitPattern = `<rect x="37" y="58" width="4" height="22" fill="${a.kitColor2}"/><rect x="46" y="58" width="4" height="22" fill="${a.kitColor2}"/><rect x="55" y="58" width="4" height="22" fill="${a.kitColor2}"/>`;
+    kitPattern = `<rect x="33.3" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/><rect x="43.9" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/><rect x="54.5" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/><rect x="65.1" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/>`;
   } else if (a.kitStyle === "hoops") {
-    kitPattern = `<rect x="28" y="62" width="44" height="4" fill="${a.kitColor2}"/><rect x="28" y="70" width="44" height="4" fill="${a.kitColor2}"/>`;
+    kitPattern = `<rect x="25.2" y="60" width="49.6" height="4.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="25.2" y="68.6" width="49.6" height="4.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="25.2" y="77.2" width="49.6" height="3.8" fill="${a.kitColor2}" opacity="0.9"/>`;
   } else if (a.kitStyle === "total90") {
-    kitPattern = `<path d="M30 70 C40 58, 60 58, 70 70" stroke="${a.kitColor2}" stroke-width="5" fill="none"/><circle cx="50" cy="70" r="3" fill="${a.kitColor2}"/>`;
+    kitPattern = `<path d="M27 71 C35.5 57.8 64.5 57.8 73 71" stroke="${a.kitColor2}" stroke-width="5.4" fill="none"/><circle cx="50" cy="70.9" r="3.3" fill="${a.kitColor2}"/><path d="M35.4 64.2 L41 61.9" stroke="${a.kitColor2}" stroke-width="2.3"/><path d="M65 64.2 L59.2 61.9" stroke="${a.kitColor2}" stroke-width="2.3"/>`;
   }
 
   const boots =
     a.bootsStyle === "speed"
-      ? `<rect x="34" y="84" width="14" height="4" rx="2" fill="${a.bootsColor}"/><rect x="52" y="84" width="14" height="4" rx="2" fill="${a.bootsColor}"/>`
+      ? `<rect x="31.8" y="86" width="15.9" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="52.3" y="86" width="15.9" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="46.2" y="86.7" width="3.4" height="1.6" rx="0.8" fill="rgba(255,255,255,0.35)"/><rect x="66.6" y="86.7" width="3.4" height="1.6" rx="0.8" fill="rgba(255,255,255,0.35)"/>`
       : a.bootsStyle === "high"
-        ? `<rect x="34" y="80" width="14" height="8" rx="2" fill="${a.bootsColor}"/><rect x="52" y="80" width="14" height="8" rx="2" fill="${a.bootsColor}"/>`
-        : `<ellipse cx="41" cy="86" rx="7" ry="3" fill="${a.bootsColor}"/><ellipse cx="59" cy="86" rx="7" ry="3" fill="${a.bootsColor}"/>`;
+        ? `<rect x="32.2" y="81.1" width="15.1" height="9.1" rx="2.5" fill="${a.bootsColor}"/><rect x="52.7" y="81.1" width="15.1" height="9.1" rx="2.5" fill="${a.bootsColor}"/><rect x="33.2" y="82.4" width="13.1" height="1.3" rx="0.6" fill="rgba(255,255,255,0.24)"/><rect x="53.7" y="82.4" width="13.1" height="1.3" rx="0.6" fill="rgba(255,255,255,0.24)"/>`
+        : `<ellipse cx="39.8" cy="87.1" rx="7.7" ry="3.4" fill="${a.bootsColor}"/><ellipse cx="60.2" cy="87.1" rx="7.7" ry="3.4" fill="${a.bootsColor}"/>`;
 
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
@@ -307,24 +283,39 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
       <stop offset="0%" stop-color="#2A1608" />
       <stop offset="100%" stop-color="#0D0602" />
     </radialGradient>
+    <linearGradient id="skinGrad" x1="45%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="${a.skinColor}" />
+      <stop offset="100%" stop-color="${a.skinColor}" />
+    </linearGradient>
     <linearGradient id="kitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="${a.kitColor1}" />
       <stop offset="100%" stop-color="${a.kitColor2}" />
     </linearGradient>
   </defs>
   <rect x="0" y="0" width="100" height="100" rx="24" fill="url(#bgGlow)"/>
-  <rect x="5" y="5" width="90" height="90" rx="20" fill="none" stroke="rgba(255,171,59,0.24)" stroke-width="2"/>
-  <circle cx="50" cy="51" r="40" fill="rgba(255,255,255,0.03)" />
-  <rect x="28" y="58" width="44" height="22" rx="9" fill="url(#kitGrad)"/>
-  <rect x="28" y="58" width="44" height="22" rx="9" fill="none" stroke="rgba(0,0,0,0.28)" stroke-width="1.2"/>
+  <rect x="3.5" y="3.5" width="93" height="93" rx="22" fill="none" stroke="rgba(255,171,59,0.33)" stroke-width="2"/>
+  <rect x="7" y="7" width="86" height="86" rx="19.5" fill="rgba(255,255,255,0.025)"/>
+  <circle cx="50" cy="52" r="40.5" fill="rgba(255,255,255,0.03)" />
+  <path d="M18.8 81 C27.6 67.2 39.9 61.8 50 61.8 C60.1 61.8 72.4 67.2 81.2 81 L81.2 92.8 L18.8 92.8 Z" fill="url(#kitGrad)"/>
+  <path d="M21 80.2 C30 68.6 41.3 63.6 50 63.6 C58.7 63.6 70 68.6 79 80.2" stroke="rgba(0,0,0,0.28)" stroke-width="1.45" fill="none"/>
+  <rect x="24.6" y="57.3" width="50.8" height="24.8" rx="11.2" fill="url(#kitGrad)" opacity="0.95"/>
+  <rect x="24.6" y="57.3" width="50.8" height="24.8" rx="11.2" fill="none" stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/>
   ${kitPattern}
+  <rect x="45.3" y="51.4" width="9.4" height="9.5" rx="3.7" fill="${a.skinColor}" />
+  <circle cx="34.7" cy="66.9" r="4.55" fill="${a.skinColor}" opacity="0.96"/>
+  <circle cx="65.3" cy="66.9" r="4.55" fill="${a.skinColor}" opacity="0.96"/>
   ${boots}
+  ${earCaps}
   ${head}
-  <circle cx="50" cy="40" r="18.5" fill="none" stroke="rgba(0,0,0,0.12)" stroke-width="1"/>
+  <circle cx="50" cy="40" r="18" fill="none" stroke="rgba(0,0,0,0.16)" stroke-width="1"/>
   ${hair}
-  <rect x="41" y="51" width="18" height="5" rx="2.5" fill="${a.skinColor}" />
-  <circle cx="44" cy="40" r="2.3" fill="${a.eyeColor}"/>
-  <circle cx="56" cy="40" r="2.3" fill="${a.eyeColor}"/>
+  <path d="M41.5 33.8 Q44 31.9 46.5 33.8" stroke="#2D1A12" stroke-width="1.22" fill="none" stroke-linecap="round"/>
+  <path d="M53.5 33.8 Q56 31.9 58.5 33.8" stroke="#2D1A12" stroke-width="1.22" fill="none" stroke-linecap="round"/>
+  <circle cx="44.3" cy="39.1" r="2.42" fill="${a.eyeColor}"/>
+  <circle cx="55.7" cy="39.1" r="2.42" fill="${a.eyeColor}"/>
+  <circle cx="45" cy="38.2" r="0.55" fill="#fff" opacity="0.85"/>
+  <circle cx="56.4" cy="38.2" r="0.55" fill="#fff" opacity="0.85"/>
+  <path d="M50 39.8 L49.2 41.7 L50.4 41.7" stroke="rgba(42,18,8,0.58)" stroke-width="0.92" fill="none" stroke-linecap="round"/>
   ${mouth}
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -1046,6 +1037,7 @@ function updateAccountUiState() {
 
 function updateAccountControlsState() {
   const busy = accountAnyPending() || Boolean(state.account.bootstrapInFlight);
+  const avatarBusy = !accountSignedIn() || Boolean(state.account.pending?.save_avatar);
   const signedIn = accountSignedIn();
   if (el.accountRegisterBtn) el.accountRegisterBtn.disabled = busy || signedIn;
   if (el.accountLoginBtn) el.accountLoginBtn.disabled = busy || signedIn;
@@ -1062,8 +1054,8 @@ function updateAccountControlsState() {
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.disabled = busy || signedIn;
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.disabled = busy || signedIn;
   if (el.accountEmailManageInput) el.accountEmailManageInput.disabled = busy || !signedIn;
-  if (el.accountAvatarSaveBtn) el.accountAvatarSaveBtn.disabled = busy || !signedIn;
-  if (el.accountAvatarRandomBtn) el.accountAvatarRandomBtn.disabled = busy || !signedIn;
+  if (el.accountAvatarSaveBtn) el.accountAvatarSaveBtn.disabled = avatarBusy;
+  if (el.accountAvatarRandomBtn) el.accountAvatarRandomBtn.disabled = avatarBusy;
   const avatarInputs = [
     el.avatarHairStyleInput,
     el.avatarHeadShapeInput,
@@ -1078,7 +1070,12 @@ function updateAccountControlsState() {
     el.avatarBootsColorInput,
   ];
   avatarInputs.forEach((input) => {
-    if (input) input.disabled = busy || !signedIn;
+    if (!input) return;
+    input.disabled = avatarBusy;
+    if (!avatarBusy) {
+      input.removeAttribute("disabled");
+      input.style.pointerEvents = "auto";
+    }
   });
   updateAccountUiState();
 }
@@ -1221,6 +1218,25 @@ function renderAccountUI() {
     }
     writeAvatarEditorState(currentAccountAvatar());
     applyAvatarStyleLocks();
+    const avatarInputs = [
+      el.avatarHairStyleInput,
+      el.avatarHeadShapeInput,
+      el.avatarMouthStyleInput,
+      el.avatarKitStyleInput,
+      el.avatarBootsStyleInput,
+      el.avatarSkinColorInput,
+      el.avatarHairColorInput,
+      el.avatarEyeColorInput,
+      el.avatarKitColor1Input,
+      el.avatarKitColor2Input,
+      el.avatarBootsColorInput,
+    ];
+    avatarInputs.forEach((input) => {
+      if (!input) return;
+      input.disabled = false;
+      input.removeAttribute("disabled");
+      input.style.pointerEvents = "auto";
+    });
     setAccountRecoveryOpen(false);
   } else {
     writeAvatarEditorState(defaultAvatarConfig("ezra"));
