@@ -111,7 +111,7 @@ function defaultHigherLowerState() {
 }
 
 const AVATAR_OPTIONS = {
-  hairStyle: ["short", "fade", "spike", "curly", "bald"],
+  hairStyle: ["short", "fade", "spike", "curly", "long", "bun", "bald"],
   headShape: ["round", "oval", "square"],
   mouth: ["smile", "flat", "open"],
   kitStyle: ["plain", "sleeves", "diamond", "stripes", "hoops", "total90"],
@@ -135,6 +135,74 @@ const AVATAR_PALETTES = {
   kitColor2: ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#E8E1D2"],
   bootsColor: ["#111111", "#FFFFFF", "#E14D2A", "#2B88D8", "#37A060", "#F39A1D"],
 };
+
+const DEFAULT_AVATAR_TEMPLATES = [
+  {
+    hairStyle: "short",
+    headShape: "oval",
+    mouth: "smile",
+    skinColor: "#F8D5B5",
+    hairColor: "#3B2518",
+    eyeColor: "#36506C",
+    kitColor1: "#F39A1D",
+    kitColor2: "#1B2233",
+    kitStyle: "stripes",
+    bootsStyle: "classic",
+    bootsColor: "#111111",
+  },
+  {
+    hairStyle: "fade",
+    headShape: "square",
+    mouth: "flat",
+    skinColor: "#A8724A",
+    hairColor: "#17100B",
+    eyeColor: "#201712",
+    kitColor1: "#E14D2A",
+    kitColor2: "#111111",
+    kitStyle: "sleeves",
+    bootsStyle: "speed",
+    bootsColor: "#FFFFFF",
+  },
+  {
+    hairStyle: "curly",
+    headShape: "round",
+    mouth: "smile",
+    skinColor: "#6E452C",
+    hairColor: "#17100B",
+    eyeColor: "#356346",
+    kitColor1: "#2B88D8",
+    kitColor2: "#E8E1D2",
+    kitStyle: "hoops",
+    bootsStyle: "high",
+    bootsColor: "#F39A1D",
+  },
+  {
+    hairStyle: "long",
+    headShape: "oval",
+    mouth: "smile",
+    skinColor: "#D9A173",
+    hairColor: "#9D734F",
+    eyeColor: "#3B2A1C",
+    kitColor1: "#37A060",
+    kitColor2: "#1B2233",
+    kitStyle: "diamond",
+    bootsStyle: "classic",
+    bootsColor: "#111111",
+  },
+  {
+    hairStyle: "bun",
+    headShape: "round",
+    mouth: "open",
+    skinColor: "#EEC19A",
+    hairColor: "#D9B8A8",
+    eyeColor: "#4A4A4A",
+    kitColor1: "#A35BE6",
+    kitColor2: "#E8E1D2",
+    kitStyle: "total90",
+    bootsStyle: "speed",
+    bootsColor: "#E14D2A",
+  },
+];
 
 const AVATAR_3D = {
   loading: false,
@@ -212,143 +280,229 @@ function buildAvatar3DGroup(THREE, avatar) {
   const kitAccent = new THREE.Color(avatar.kitColor2);
   const boots = new THREE.Color(avatar.bootsColor);
 
-  const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.4, metalness: 0.05 });
+  const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.35, metalness: 0.05 });
   const hairMat = new THREE.MeshStandardMaterial({ color: hair, roughness: 0.55, metalness: 0.05 });
   const eyeMat = new THREE.MeshStandardMaterial({ color: eye, roughness: 0.2, metalness: 0.1 });
-  const kitMat = new THREE.MeshStandardMaterial({ color: kit, roughness: 0.35, metalness: 0.12 });
-  const kitAccentMat = new THREE.MeshStandardMaterial({ color: kitAccent, roughness: 0.35, metalness: 0.1 });
+  const kitMat = new THREE.MeshStandardMaterial({ color: kit, roughness: 0.32, metalness: 0.1 });
+  const kitAccentMat = new THREE.MeshStandardMaterial({ color: kitAccent, roughness: 0.32, metalness: 0.1, side: THREE.DoubleSide });
   const bootsMat = new THREE.MeshStandardMaterial({ color: boots, roughness: 0.45, metalness: 0.2 });
 
   const headGeometry = avatar.headShape === "square"
-    ? new THREE.BoxGeometry(0.78, 0.88, 0.76, 3, 3, 3)
-    : new THREE.SphereGeometry(0.46, 32, 32);
+    ? new THREE.BoxGeometry(0.9, 0.96, 0.84, 3, 3, 3)
+    : new THREE.SphereGeometry(0.54, 32, 32);
   const head = new THREE.Mesh(headGeometry, skinMat);
-  if (avatar.headShape === "oval") head.scale.set(1, 1.12, 0.95);
-  if (avatar.headShape === "square") head.scale.set(1, 1, 0.85);
-  head.position.set(0, 0.68, 0);
+  if (avatar.headShape === "oval") head.scale.set(1.05, 1.18, 0.95);
+  if (avatar.headShape === "square") head.scale.set(1, 1, 0.88);
+  head.position.set(0, 0.9, 0);
   group.add(head);
 
-  const earGeo = new THREE.SphereGeometry(0.08, 16, 16);
+  const earGeo = new THREE.SphereGeometry(0.09, 16, 16);
   const earL = new THREE.Mesh(earGeo, skinMat);
   const earR = new THREE.Mesh(earGeo, skinMat);
-  earL.position.set(-0.47, 0.68, 0);
-  earR.position.set(0.47, 0.68, 0);
+  earL.position.set(-0.56, 0.86, 0.02);
+  earR.position.set(0.56, 0.86, 0.02);
   group.add(earL, earR);
 
   if (avatar.hairStyle !== "bald") {
     if (avatar.hairStyle === "spike") {
-      const spike = new THREE.ConeGeometry(0.36, 0.35, 6);
+      const spike = new THREE.ConeGeometry(0.44, 0.42, 6);
       const hairMesh = new THREE.Mesh(spike, hairMat);
-      hairMesh.position.set(0, 1.05, 0.05);
+      hairMesh.position.set(0, 1.25, 0.06);
       group.add(hairMesh);
+      const fringe = new THREE.SphereGeometry(0.2, 16, 16);
+      const fringeMesh = new THREE.Mesh(fringe, hairMat);
+      fringeMesh.scale.set(1.2, 0.4, 0.9);
+      fringeMesh.position.set(0, 1.05, 0.28);
+      group.add(fringeMesh);
     } else if (avatar.hairStyle === "curly") {
-      const curlGeo = new THREE.SphereGeometry(0.16, 18, 18);
+      const curlGeo = new THREE.SphereGeometry(0.18, 18, 18);
       for (let i = 0; i < 5; i += 1) {
         const curl = new THREE.Mesh(curlGeo, hairMat);
-        curl.position.set(-0.24 + i * 0.12, 1.0 + (i % 2 === 0 ? 0.05 : -0.02), 0.1);
+        curl.position.set(-0.3 + i * 0.15, 1.18 + (i % 2 === 0 ? 0.06 : -0.02), 0.1);
         group.add(curl);
       }
-      const cap = new THREE.SphereGeometry(0.38, 24, 24);
+      const cap = new THREE.SphereGeometry(0.46, 24, 24);
       const capMesh = new THREE.Mesh(cap, hairMat);
-      capMesh.scale.set(1.1, 0.55, 1);
-      capMesh.position.set(0, 0.93, 0.05);
+      capMesh.scale.set(1.12, 0.58, 1);
+      capMesh.position.set(0, 1.08, 0.05);
       group.add(capMesh);
     } else if (avatar.hairStyle === "fade") {
-      const cap = new THREE.SphereGeometry(0.4, 24, 24);
+      const cap = new THREE.SphereGeometry(0.48, 24, 24);
       const capMesh = new THREE.Mesh(cap, hairMat);
-      capMesh.scale.set(1.06, 0.5, 1);
-      capMesh.position.set(0, 0.95, 0.05);
+      capMesh.scale.set(1.06, 0.52, 1);
+      capMesh.position.set(0, 1.1, 0.05);
       group.add(capMesh);
-    } else {
-      const cap = new THREE.SphereGeometry(0.42, 24, 24);
+      const fadeBand = new THREE.SphereGeometry(0.5, 24, 24);
+      const bandMesh = new THREE.Mesh(fadeBand, hairMat);
+      bandMesh.scale.set(1.05, 0.34, 1);
+      bandMesh.position.set(0, 0.98, 0.02);
+      bandMesh.material = hairMat.clone();
+      bandMesh.material.opacity = 0.75;
+      bandMesh.material.transparent = true;
+      group.add(bandMesh);
+    } else if (avatar.hairStyle === "long") {
+      const cap = new THREE.SphereGeometry(0.5, 24, 24);
       const capMesh = new THREE.Mesh(cap, hairMat);
-      capMesh.scale.set(1.05, 0.6, 1);
-      capMesh.position.set(0, 0.96, 0.04);
+      capMesh.scale.set(1.08, 0.62, 1);
+      capMesh.position.set(0, 1.12, 0.05);
+      group.add(capMesh);
+      const backGeo = new THREE.SphereGeometry(0.46, 24, 24);
+      const backMesh = new THREE.Mesh(backGeo, hairMat);
+      backMesh.scale.set(1.2, 1.05, 0.9);
+      backMesh.position.set(0, 0.7, -0.2);
+      group.add(backMesh);
+      const sideGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.5, 18);
+      const sideL = new THREE.Mesh(sideGeo, hairMat);
+      const sideR = new THREE.Mesh(sideGeo, hairMat);
+      sideL.position.set(-0.46, 0.66, 0.05);
+      sideR.position.set(0.46, 0.66, 0.05);
+      sideL.rotation.z = Math.PI / 10;
+      sideR.rotation.z = -Math.PI / 10;
+      group.add(sideL, sideR);
+    } else if (avatar.hairStyle === "bun") {
+      const cap = new THREE.SphereGeometry(0.48, 24, 24);
+      const capMesh = new THREE.Mesh(cap, hairMat);
+      capMesh.scale.set(1.06, 0.55, 1);
+      capMesh.position.set(0, 1.08, 0.05);
+      group.add(capMesh);
+      const bun = new THREE.SphereGeometry(0.2, 18, 18);
+      const bunMesh = new THREE.Mesh(bun, hairMat);
+      bunMesh.position.set(0, 1.36, -0.05);
+      group.add(bunMesh);
+    } else {
+      const cap = new THREE.SphereGeometry(0.5, 24, 24);
+      const capMesh = new THREE.Mesh(cap, hairMat);
+      capMesh.scale.set(1.08, 0.6, 1);
+      capMesh.position.set(0, 1.1, 0.05);
       group.add(capMesh);
     }
   }
 
-  const eyeGeo = new THREE.SphereGeometry(0.05, 16, 16);
+  const eyeGeo = new THREE.SphereGeometry(0.065, 16, 16);
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
   const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(-0.16, 0.72, 0.41);
-  eyeR.position.set(0.16, 0.72, 0.41);
+  eyeL.position.set(-0.19, 0.9, 0.52);
+  eyeR.position.set(0.19, 0.9, 0.52);
+  const browGeo = new THREE.BoxGeometry(0.16, 0.04, 0.04);
+  const browMat = hairMat.clone();
+  const browL = new THREE.Mesh(browGeo, browMat);
+  const browR = new THREE.Mesh(browGeo, browMat);
+  browL.position.set(-0.19, 0.99, 0.47);
+  browR.position.set(0.19, 0.99, 0.47);
+  browL.rotation.z = -0.08;
+  browR.rotation.z = 0.08;
+  const highlightGeo = new THREE.SphereGeometry(0.02, 10, 10);
+  const highlightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1, metalness: 0.1 });
+  const hiL = new THREE.Mesh(highlightGeo, highlightMat);
+  const hiR = new THREE.Mesh(highlightGeo, highlightMat);
+  hiL.position.set(-0.16, 0.94, 0.56);
+  hiR.position.set(0.22, 0.94, 0.56);
+  const cheekGeo = new THREE.SphereGeometry(0.06, 10, 10);
+  const cheekMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.4, metalness: 0.05 });
+  const cheekL = new THREE.Mesh(cheekGeo, cheekMat);
+  const cheekR = new THREE.Mesh(cheekGeo, cheekMat);
+  cheekL.position.set(-0.26, 0.77, 0.5);
+  cheekR.position.set(0.26, 0.77, 0.5);
+  group.add(hiL, hiR, browL, browR, cheekL, cheekR);
   group.add(eyeL, eyeR);
 
   const mouthGeo = avatar.mouth === "flat"
-    ? new THREE.BoxGeometry(0.18, 0.03, 0.02)
-    : new THREE.TorusGeometry(0.09, 0.02, 8, 18, avatar.mouth === "open" ? Math.PI : Math.PI * 0.7);
+    ? new THREE.BoxGeometry(0.22, 0.035, 0.02)
+    : new THREE.TorusGeometry(0.12, 0.025, 8, 18, avatar.mouth === "open" ? Math.PI : Math.PI * 0.7);
   const mouthMat = new THREE.MeshStandardMaterial({ color: 0x2a1208, roughness: 0.4 });
   const mouth = new THREE.Mesh(mouthGeo, mouthMat);
-  mouth.position.set(0, 0.55, 0.43);
+  mouth.position.set(0, 0.67, 0.55);
   if (avatar.mouth !== "flat") mouth.rotation.set(Math.PI, 0, 0);
   group.add(mouth);
 
-  const torsoGeo = new THREE.CapsuleGeometry(0.38, 0.6, 6, 14);
+  const torsoGeo = new THREE.CapsuleGeometry(0.32, 0.48, 6, 14);
   const torso = new THREE.Mesh(torsoGeo, kitMat);
-  torso.position.set(0, 0, 0);
+  torso.position.set(0, 0.05, 0);
   group.add(torso);
 
-  const sleeveGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.36, 14);
-  const sleeveL = new THREE.Mesh(sleeveGeo, kitAccentMat);
-  const sleeveR = new THREE.Mesh(sleeveGeo, kitAccentMat);
-  sleeveL.position.set(-0.5, 0.1, 0);
-  sleeveR.position.set(0.5, 0.1, 0);
+  const sleeveGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.3, 14);
+  const sleeveMat = avatar.kitStyle === "sleeves" ? kitAccentMat : kitMat;
+  const sleeveL = new THREE.Mesh(sleeveGeo, sleeveMat);
+  const sleeveR = new THREE.Mesh(sleeveGeo, sleeveMat);
+  sleeveL.position.set(-0.47, 0.1, 0);
+  sleeveR.position.set(0.47, 0.1, 0);
   sleeveL.rotation.z = Math.PI / 3;
   sleeveR.rotation.z = -Math.PI / 3;
-  if (avatar.kitStyle !== "plain") group.add(sleeveL, sleeveR);
+  group.add(sleeveL, sleeveR);
+  if (avatar.kitStyle === "sleeves") {
+    const bandGeo = new THREE.TorusGeometry(0.08, 0.015, 10, 20);
+    const bandL = new THREE.Mesh(bandGeo, kitAccentMat);
+    const bandR = new THREE.Mesh(bandGeo, kitAccentMat);
+    bandL.position.set(-0.59, 0.03, 0.05);
+    bandR.position.set(0.59, 0.03, 0.05);
+    bandL.rotation.set(Math.PI / 2, 0, 0);
+    bandR.rotation.set(Math.PI / 2, 0, 0);
+    group.add(bandL, bandR);
+  }
 
-  const armGeo = new THREE.CylinderGeometry(0.08, 0.09, 0.4, 10);
+  const armGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.32, 10);
   const armL = new THREE.Mesh(armGeo, skinMat);
   const armR = new THREE.Mesh(armGeo, skinMat);
-  armL.position.set(-0.62, -0.06, 0);
-  armR.position.set(0.62, -0.06, 0);
+  armL.position.set(-0.58, -0.06, 0);
+  armR.position.set(0.58, -0.06, 0);
   armL.rotation.z = Math.PI / 3;
   armR.rotation.z = -Math.PI / 3;
   group.add(armL, armR);
 
-  const legGeo = new THREE.CylinderGeometry(0.12, 0.13, 0.42, 12);
+  const shortsGeo = new THREE.CapsuleGeometry(0.24, 0.18, 4, 10);
+  const shorts = new THREE.Mesh(shortsGeo, kitAccentMat);
+  shorts.position.set(0, -0.28, 0);
+  group.add(shorts);
+
+  const legGeo = new THREE.CylinderGeometry(0.1, 0.11, 0.36, 12);
   const legL = new THREE.Mesh(legGeo, skinMat);
   const legR = new THREE.Mesh(legGeo, skinMat);
-  legL.position.set(-0.18, -0.62, 0);
-  legR.position.set(0.18, -0.62, 0);
+  legL.position.set(-0.16, -0.62, 0);
+  legR.position.set(0.16, -0.62, 0);
   group.add(legL, legR);
 
-  const bootGeo = new THREE.BoxGeometry(0.2, 0.1, 0.32);
+  const bootGeo = new THREE.BoxGeometry(0.2, 0.1, 0.34);
   const bootL = new THREE.Mesh(bootGeo, bootsMat);
   const bootR = new THREE.Mesh(bootGeo, bootsMat);
-  bootL.position.set(-0.18, -0.85, 0.1);
-  bootR.position.set(0.18, -0.85, 0.1);
+  bootL.position.set(-0.16, -0.82, 0.12);
+  bootR.position.set(0.16, -0.82, 0.12);
   group.add(bootL, bootR);
 
   if (avatar.kitStyle !== "plain") {
     const stripeMat = kitAccentMat;
     if (avatar.kitStyle === "stripes" || avatar.kitStyle === "hoops") {
-      const stripeGeo = new THREE.PlaneGeometry(0.52, 0.16);
+      const stripeGeo = new THREE.PlaneGeometry(0.5, 0.14);
       const stripe = new THREE.Mesh(stripeGeo, stripeMat);
-      stripe.position.set(0, 0.12, 0.41);
+      stripe.position.set(0, 0.14, 0.44);
       group.add(stripe);
       if (avatar.kitStyle === "hoops") {
         const stripe2 = stripe.clone();
-        stripe2.position.set(0, -0.06, 0.41);
+        stripe2.position.set(0, -0.02, 0.44);
         group.add(stripe2);
       }
     }
     if (avatar.kitStyle === "diamond") {
-      const diamondGeo = new THREE.OctahedronGeometry(0.15);
+      const diamondGeo = new THREE.OctahedronGeometry(0.16);
       const diamond = new THREE.Mesh(diamondGeo, stripeMat);
-      diamond.position.set(0, 0.08, 0.42);
+      diamond.position.set(0, 0.12, 0.45);
       group.add(diamond);
+    }
+    if (avatar.kitStyle === "total90") {
+      const arcGeo = new THREE.TorusGeometry(0.18, 0.02, 8, 28, Math.PI * 1.1);
+      const arc = new THREE.Mesh(arcGeo, stripeMat);
+      arc.rotation.set(Math.PI / 2, 0, Math.PI);
+      arc.position.set(0, 0.1, 0.44);
+      group.add(arc);
     }
   }
 
-  const ballGeo = new THREE.SphereGeometry(0.28, 24, 24);
+  const ballGeo = new THREE.SphereGeometry(0.26, 24, 24);
   const ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color: 0xf6f6f6, roughness: 0.3, metalness: 0.05 }));
-  ball.position.set(0.72, -0.08, 0.38);
+  ball.position.set(0.72, -0.05, 0.45);
   const patchGeo = new THREE.SphereGeometry(0.1, 10, 10);
   const patchMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.35 });
   const patch = new THREE.Mesh(patchGeo, patchMat);
-  patch.position.set(0.08, 0.06, 0.25);
+  patch.position.set(0.08, 0.06, 0.2);
   ball.add(patch);
   group.add(ball);
 
@@ -369,8 +523,8 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 10);
-  camera.position.set(0, 0.25, 3.2);
-  camera.lookAt(0, 0.2, 0);
+  camera.position.set(0, 0.35, 3.0);
+  camera.lookAt(0, 0.35, 0);
 
   const hemi = new THREE.HemisphereLight(0xfff2dc, 0x1f140c, 0.9);
   const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -380,8 +534,8 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
   scene.add(hemi, key, fill);
 
   const group = buildAvatar3DGroup(THREE, avatar);
-  group.position.set(0, -0.1, 0);
-  group.rotation.y = -0.15;
+  group.position.set(0, -0.05, 0);
+  group.rotation.y = -0.18;
   scene.add(group);
 
   renderer.render(scene, camera);
@@ -489,7 +643,7 @@ function defaultAvatarConfig(seed = "") {
   const hairPalette = AVATAR_PALETTES.hairColor;
   const eyePalette = AVATAR_PALETTES.eyeColor;
   const bootsPalette = AVATAR_PALETTES.bootsColor;
-  return {
+  const base = {
     hairStyle: AVATAR_OPTIONS.hairStyle[avatarSeedIndex(`${seed}:hair`, AVATAR_OPTIONS.hairStyle.length)],
     headShape: AVATAR_OPTIONS.headShape[avatarSeedIndex(`${seed}:head`, AVATAR_OPTIONS.headShape.length)],
     eyeColor: eyePalette[avatarSeedIndex(`${seed}:eye`, eyePalette.length)],
@@ -502,6 +656,8 @@ function defaultAvatarConfig(seed = "") {
     bootsStyle: AVATAR_OPTIONS.bootsStyle[avatarSeedIndex(`${seed}:boots`, AVATAR_OPTIONS.bootsStyle.length)],
     bootsColor: bootsPalette[avatarSeedIndex(`${seed}:bootsColor`, bootsPalette.length)],
   };
+  const template = DEFAULT_AVATAR_TEMPLATES[avatarSeedIndex(`${seed}:template`, DEFAULT_AVATAR_TEMPLATES.length)];
+  return template ? { ...base, ...template } : base;
 }
 
 function sanitizeAvatarConfig(input, seed = "") {
@@ -534,6 +690,10 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
           ? `<path d="M33.3 29 L35.6 15.8 L41.6 24.3 L46.7 13.6 L52.9 23.9 L58 14.2 L64.2 25.6 L66.7 30.4 L66.7 33.2 C61.7 30 38.3 30 33.3 33.2 Z" fill="url(#hairGrad)"/><path d="M46.8 18.8 L50 13.6 L53.2 18.8" stroke="rgba(255,255,255,0.2)" stroke-width="0.9" fill="none"/>`
           : a.hairStyle === "curly"
             ? `<circle cx="38.5" cy="24.7" r="5.6" fill="url(#hairGrad)"/><circle cx="45.3" cy="21.4" r="6.5" fill="url(#hairGrad)"/><circle cx="54.7" cy="21.4" r="6.5" fill="url(#hairGrad)"/><circle cx="61.5" cy="24.7" r="5.6" fill="url(#hairGrad)"/><rect x="35.2" y="23.8" width="29.6" height="9.6" rx="4.6" fill="url(#hairGrad)"/>`
+            : a.hairStyle === "long"
+              ? `<path d="M31.8 26 C35.8 16.8 64.2 16.8 68.2 26 L68.2 38 C63.4 34 36.6 34 31.8 38 Z" fill="url(#hairGrad)"/><path d="M32.2 36 C34.6 50 36.8 62 50 66 C63.2 62 65.4 50 67.8 36" fill="url(#hairGrad)" opacity="0.95"/>`
+              : a.hairStyle === "bun"
+                ? `<path d="M33.4 26 C37.4 16.6 62.6 16.6 66.6 26 L66.6 32.4 C62 29 38 29 33.4 32.4 Z" fill="url(#hairGrad)"/><circle cx="50" cy="16.8" r="6.3" fill="url(#hairGrad)"/><circle cx="50" cy="16.8" r="3.2" fill="rgba(255,255,255,0.15)"/>`
             : `<path d="M33.5 25.3 C37.4 16.4 62.6 16.4 66.5 25.3 L66.5 32.3 C61.9 28.9 38.1 28.9 33.5 32.3 Z" fill="url(#hairGrad)"/><path d="M36.8 24.4 C41.2 20.1 58.8 20.1 63.2 24.4" stroke="rgba(255,255,255,0.18)" stroke-width="1.2" fill="none"/>`;
 
   const faceShape =

@@ -2057,13 +2057,13 @@ body.league-member-overlay-open::before {
 }
 
 .account-avatar-preview {
-  width: 3rem;
-  height: 3rem;
+  width: 3.4rem;
+  height: 3.4rem;
   border-radius: 999px;
   border: 1px solid var(--amber-soft);
-  background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.16), #0f0703 72%);
-  object-fit: contain;
-  padding: 0.1rem;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.22), #0f0703 72%);
+  object-fit: cover;
+  padding: 0.04rem;
 }
 
 .avatar-editor-grid {
