@@ -207,13 +207,13 @@ const DEFAULT_AVATAR_TEMPLATES = [
     skinColor: "#F8D5B5",
     hairColor: "#3B2518",
     eyeColor: "#36506C",
-    kitColor1: "#F39A1D",
+    kitColor1: "#2B88D8",
     kitColor2: "#1B2233",
-    kitStyle: "stripes",
+    kitStyle: "plain",
     bootsStyle: "classic",
-    bootsColor: "#111111",
+    bootsColor: "#FFFFFF",
     shortsColor: "#1B2233",
-    socksColor: "#E8E1D2",
+    socksColor: "#2B88D8",
   },
   {
     hairStyle: "fade",
@@ -224,13 +224,13 @@ const DEFAULT_AVATAR_TEMPLATES = [
     skinColor: "#A8724A",
     hairColor: "#17100B",
     eyeColor: "#201712",
-    kitColor1: "#E14D2A",
+    kitColor1: "#37A060",
     kitColor2: "#111111",
-    kitStyle: "sleeves",
+    kitStyle: "plain",
     bootsStyle: "speed",
     bootsColor: "#FFFFFF",
     shortsColor: "#111111",
-    socksColor: "#FFFFFF",
+    socksColor: "#37A060",
   },
   {
     hairStyle: "curly",
@@ -241,12 +241,12 @@ const DEFAULT_AVATAR_TEMPLATES = [
     skinColor: "#6E452C",
     hairColor: "#17100B",
     eyeColor: "#356346",
-    kitColor1: "#2B88D8",
-    kitColor2: "#E8E1D2",
-    kitStyle: "hoops",
-    bootsStyle: "high",
-    bootsColor: "#F39A1D",
-    shortsColor: "#E8E1D2",
+    kitColor1: "#A35BE6",
+    kitColor2: "#1A1032",
+    kitStyle: "plain",
+    bootsStyle: "classic",
+    bootsColor: "#FFFFFF",
+    shortsColor: "#1A1032",
     socksColor: "#2B88D8",
   },
   {
@@ -258,13 +258,13 @@ const DEFAULT_AVATAR_TEMPLATES = [
     skinColor: "#D9A173",
     hairColor: "#9D734F",
     eyeColor: "#3B2A1C",
-    kitColor1: "#37A060",
+    kitColor1: "#DE5C8E",
     kitColor2: "#1B2233",
-    kitStyle: "diamond",
+    kitStyle: "plain",
     bootsStyle: "classic",
-    bootsColor: "#111111",
+    bootsColor: "#FFFFFF",
     shortsColor: "#1B2233",
-    socksColor: "#37A060",
+    socksColor: "#DE5C8E",
   },
   {
     hairStyle: "bun",
@@ -275,13 +275,13 @@ const DEFAULT_AVATAR_TEMPLATES = [
     skinColor: "#EEC19A",
     hairColor: "#D9B8A8",
     eyeColor: "#4A4A4A",
-    kitColor1: "#A35BE6",
-    kitColor2: "#E8E1D2",
-    kitStyle: "total90",
-    bootsStyle: "speed",
-    bootsColor: "#E14D2A",
-    shortsColor: "#E8E1D2",
-    socksColor: "#A35BE6",
+    kitColor1: "#F39A1D",
+    kitColor2: "#2A1408",
+    kitStyle: "plain",
+    bootsStyle: "classic",
+    bootsColor: "#FFFFFF",
+    shortsColor: "#2A1408",
+    socksColor: "#F39A1D",
   },
 ];
 
@@ -578,12 +578,12 @@ function buildAvatar3DGroup(THREE, avatar) {
   legMat.needsUpdate = true;
 
   const headGeometry = avatar.headShape === "square"
-    ? new THREE.BoxGeometry(0.98, 1.02, 0.9, 4, 4, 4)
-    : new THREE.SphereGeometry(0.58, 40, 40);
+    ? new THREE.BoxGeometry(0.76, 0.8, 0.72, 4, 4, 4)
+    : new THREE.SphereGeometry(0.46, 36, 36);
   const head = new THREE.Mesh(headGeometry, skinMat);
-  if (avatar.headShape === "oval") head.scale.set(1.08, 1.22, 0.95);
-  if (avatar.headShape === "square") head.scale.set(1, 1, 0.9);
-  head.position.set(0, 1.02, 0.02);
+  if (avatar.headShape === "oval") head.scale.set(1.02, 1.18, 0.92);
+  if (avatar.headShape === "square") head.scale.set(1, 1, 0.88);
+  head.position.set(0, 1.05, 0.01);
   group.add(head);
   const glowMat = new THREE.MeshPhysicalMaterial({
     color: skin,
@@ -598,16 +598,16 @@ function buildAvatar3DGroup(THREE, avatar) {
   headGlow.position.copy(head.position);
   group.add(headGlow);
 
-  const earGeo = new THREE.SphereGeometry(0.09, 16, 16);
+  const earGeo = new THREE.SphereGeometry(0.07, 14, 14);
   const earL = new THREE.Mesh(earGeo, skinMat);
   const earR = new THREE.Mesh(earGeo, skinMat);
-  earL.position.set(-0.6, 0.95, 0.02);
-  earR.position.set(0.6, 0.95, 0.02);
+  earL.position.set(-0.47, 1.02, 0.01);
+  earR.position.set(0.47, 1.02, 0.01);
   group.add(earL, earR);
 
-  const neckGeo = new THREE.CylinderGeometry(0.14, 0.16, 0.18, 16);
+  const neckGeo = new THREE.CylinderGeometry(0.1, 0.11, 0.2, 16);
   const neck = new THREE.Mesh(neckGeo, skinMat);
-  neck.position.set(0, 0.62, 0.04);
+  neck.position.set(0, 0.63, 0.02);
   group.add(neck);
 
   if (avatar.hairStyle !== "bald") {
@@ -707,41 +707,41 @@ function buildAvatar3DGroup(THREE, avatar) {
     }
   }
 
-  const eyeWhiteGeo = new THREE.SphereGeometry(0.09, 18, 18);
-  const irisGeo = new THREE.SphereGeometry(0.045, 16, 16);
-  const pupilGeo = new THREE.SphereGeometry(0.025, 14, 14);
+  const eyeWhiteGeo = new THREE.SphereGeometry(0.07, 16, 16);
+  const irisGeo = new THREE.SphereGeometry(0.034, 14, 14);
+  const pupilGeo = new THREE.SphereGeometry(0.018, 12, 12);
   const eyeL = new THREE.Mesh(eyeWhiteGeo, scleraMat);
   const eyeR = new THREE.Mesh(eyeWhiteGeo, scleraMat);
-  eyeL.position.set(-0.21, 0.98, 0.56);
-  eyeR.position.set(0.21, 0.98, 0.56);
+  eyeL.position.set(-0.15, 1.04, 0.45);
+  eyeR.position.set(0.15, 1.04, 0.45);
   const irisL = new THREE.Mesh(irisGeo, irisMat);
   const irisR = new THREE.Mesh(irisGeo, irisMat);
-  irisL.position.set(-0.21, 0.98, 0.63);
-  irisR.position.set(0.21, 0.98, 0.63);
+  irisL.position.set(-0.15, 1.04, 0.5);
+  irisR.position.set(0.15, 1.04, 0.5);
   const pupilL = new THREE.Mesh(pupilGeo, pupilMat);
   const pupilR = new THREE.Mesh(pupilGeo, pupilMat);
-  pupilL.position.set(-0.21, 0.98, 0.66);
-  pupilR.position.set(0.21, 0.98, 0.66);
-  const browGeo = new THREE.BoxGeometry(0.18, 0.04, 0.04);
+  pupilL.position.set(-0.15, 1.04, 0.52);
+  pupilR.position.set(0.15, 1.04, 0.52);
+  const browGeo = new THREE.BoxGeometry(0.13, 0.03, 0.03);
   const browMat = hairMat.clone();
   const browL = new THREE.Mesh(browGeo, browMat);
   const browR = new THREE.Mesh(browGeo, browMat);
-  browL.position.set(-0.2, 1.08, 0.5);
-  browR.position.set(0.2, 1.08, 0.5);
+  browL.position.set(-0.15, 1.13, 0.42);
+  browR.position.set(0.15, 1.13, 0.42);
   browL.rotation.z = -0.08 + browTilt;
   browR.rotation.z = 0.08 - browTilt;
   const highlightGeo = new THREE.SphereGeometry(0.02, 10, 10);
   const highlightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.08, metalness: 0.1 });
   const hiL = new THREE.Mesh(highlightGeo, highlightMat);
   const hiR = new THREE.Mesh(highlightGeo, highlightMat);
-  hiL.position.set(-0.17, 1.02, 0.64);
-  hiR.position.set(0.24, 1.02, 0.64);
-  const cheekGeo = new THREE.SphereGeometry(0.06, 10, 10);
+  hiL.position.set(-0.12, 1.06, 0.49);
+  hiR.position.set(0.18, 1.06, 0.49);
+  const cheekGeo = new THREE.SphereGeometry(0.045, 10, 10);
   const cheekMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.4, metalness: 0.05 });
   const cheekL = new THREE.Mesh(cheekGeo, cheekMat);
   const cheekR = new THREE.Mesh(cheekGeo, cheekMat);
-  cheekL.position.set(-0.28, 0.82, 0.54);
-  cheekR.position.set(0.28, 0.82, 0.54);
+  cheekL.position.set(-0.24, 0.9, 0.43);
+  cheekR.position.set(0.24, 0.9, 0.43);
   let noseGeo;
   if (avatar.noseStyle === "straight") {
     noseGeo = new THREE.CapsuleGeometry(0.028, 0.075, 6, 10);
@@ -751,10 +751,10 @@ function buildAvatar3DGroup(THREE, avatar) {
     noseGeo = new THREE.SphereGeometry(0.052, 16, 16);
   }
   const nose = new THREE.Mesh(noseGeo, skinMat);
-  nose.position.set(0, 0.9, 0.64);
+  nose.position.set(0, 0.97, 0.49);
   if (avatar.noseStyle === "straight") {
     nose.rotation.x = Math.PI / 2.8;
-    nose.position.z = 0.625;
+    nose.position.z = 0.47;
   }
   group.add(hiL, hiR, browL, browR, cheekL, cheekR);
   group.add(eyeL, eyeR, irisL, irisR, pupilL, pupilR, nose);
@@ -762,96 +762,86 @@ function buildAvatar3DGroup(THREE, avatar) {
   const mouthMat = new THREE.MeshStandardMaterial({ color: 0x2a1208, roughness: 0.4 });
   const mouthGroup = new THREE.Group();
   if (avatar.mouth === "flat") {
-    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.04, 0.02), mouthMat);
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.03, 0.02), mouthMat);
     mouthGroup.add(mouth);
   } else {
     const sweep = avatar.mouth === "open" ? Math.PI : Math.PI * 0.75;
-    const arc = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.028, 8, 20, sweep), mouthMat);
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.02, 8, 20, sweep), mouthMat);
     arc.rotation.set(Math.PI, 0, 0);
     mouthGroup.add(arc);
     if (avatar.mouth === "open") {
-      const inner = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), new THREE.MeshStandardMaterial({ color: 0xd64a43, roughness: 0.3 }));
+      const inner = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 12), new THREE.MeshStandardMaterial({ color: 0xd64a43, roughness: 0.3 }));
       inner.position.set(0, -0.035, 0.03);
       mouthGroup.add(inner);
     }
   }
-  mouthGroup.position.set(0, 0.74, 0.62);
+  mouthGroup.position.set(0, 0.84, 0.49);
   group.add(mouthGroup);
 
   const bodyGroup = new THREE.Group();
-  const torsoGeo = new THREE.CapsuleGeometry(0.37, 0.6, 8, 18);
+  const torsoGeo = new THREE.CapsuleGeometry(0.29, 0.88, 8, 18);
   const torso = new THREE.Mesh(torsoGeo, kitMat);
-  torso.position.set(0, 0.03, 0.01);
+  torso.position.set(0, -0.03, 0.01);
   bodyGroup.add(torso);
-  const chestPlate = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.46), kitAccentMat);
-  chestPlate.position.set(0, 0.24, 0.14);
+  const chestPlate = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.14, 0.32), kitAccentMat);
+  chestPlate.position.set(0, 0.14, 0.11);
   chestPlate.material.opacity = 0.45;
   chestPlate.material.transparent = true;
   bodyGroup.add(chestPlate);
 
-  const sleeveGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.34, 14);
+  const sleeveGeo = new THREE.CylinderGeometry(0.08, 0.09, 0.24, 14);
   const sleeveMat = avatar.kitStyle === "sleeves" ? kitAccentMat : kitMat;
   const sleeveL = new THREE.Mesh(sleeveGeo, sleeveMat);
   const sleeveR = new THREE.Mesh(sleeveGeo, sleeveMat);
-  sleeveL.position.set(-0.52, 0.1, 0.02);
-  sleeveR.position.set(0.52, 0.1, 0.02);
-  sleeveL.rotation.z = Math.PI / 3;
-  sleeveR.rotation.z = -Math.PI / 3;
+  sleeveL.position.set(-0.38, 0.18, 0.02);
+  sleeveR.position.set(0.38, 0.18, 0.02);
+  sleeveL.rotation.z = Math.PI / 2.4;
+  sleeveR.rotation.z = -Math.PI / 2.4;
   bodyGroup.add(sleeveL, sleeveR);
   if (avatar.kitStyle === "sleeves") {
     const bandGeo = new THREE.TorusGeometry(0.08, 0.015, 10, 20);
     const bandL = new THREE.Mesh(bandGeo, kitAccentMat);
     const bandR = new THREE.Mesh(bandGeo, kitAccentMat);
-    bandL.position.set(-0.58, 0.01, 0.05);
-    bandR.position.set(0.58, 0.01, 0.05);
+    bandL.position.set(-0.43, 0.09, 0.05);
+    bandR.position.set(0.43, 0.09, 0.05);
     bandL.rotation.set(Math.PI / 2, 0, 0);
     bandR.rotation.set(Math.PI / 2, 0, 0);
     bodyGroup.add(bandL, bandR);
   }
 
-  const armGeo = new THREE.CylinderGeometry(0.076, 0.088, 0.38, 12);
+  const armGeo = new THREE.CylinderGeometry(0.058, 0.066, 0.66, 12);
   const armL = new THREE.Mesh(armGeo, skinMat);
   const armR = new THREE.Mesh(armGeo, skinMat);
-  armL.position.set(-0.64, -0.02, 0.04);
-  armR.position.set(0.64, -0.02, 0.04);
-  armL.rotation.z = Math.PI / 6;
-  armR.rotation.z = -Math.PI / 6;
+  armL.position.set(-0.45, -0.18, 0.03);
+  armR.position.set(0.45, -0.18, 0.03);
+  armL.rotation.z = Math.PI / 20;
+  armR.rotation.z = -Math.PI / 20;
   bodyGroup.add(armL, armR);
-  const handGeo = new THREE.SphereGeometry(0.09, 16, 16);
+  const handGeo = new THREE.SphereGeometry(0.065, 14, 14);
   const handL = new THREE.Mesh(handGeo, skinMat);
   const handR = new THREE.Mesh(handGeo, skinMat);
-  handL.position.set(-0.75, -0.2, 0.06);
-  handR.position.set(0.75, -0.2, 0.06);
+  handL.position.set(-0.45, -0.54, 0.04);
+  handR.position.set(0.45, -0.54, 0.04);
   bodyGroup.add(handL, handR);
 
   // Legs use a single textured material to represent skin + socks (no detached sock meshes).
-  const legGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.78, 16);
+  const legGeo = new THREE.CylinderGeometry(0.09, 0.1, 1.22, 16);
   const legL = new THREE.Mesh(legGeo, legMat);
   const legR = new THREE.Mesh(legGeo, legMat);
-  legL.position.set(-0.18, -0.73, 0.02);
-  legR.position.set(0.18, -0.73, 0.02);
+  legL.position.set(-0.12, -1.03, 0.02);
+  legR.position.set(0.12, -1.03, 0.02);
   bodyGroup.add(legL, legR);
 
-  const bootGeo = new THREE.BoxGeometry(0.22, 0.12, 0.36);
+  const bootGeo = new THREE.BoxGeometry(0.18, 0.1, 0.28);
   const bootL = new THREE.Mesh(bootGeo, bootsMat);
   const bootR = new THREE.Mesh(bootGeo, bootsMat);
-  bootL.position.set(-0.18, -1.15, 0.12);
-  bootR.position.set(0.18, -1.15, 0.12);
+  bootL.position.set(-0.12, -1.7, 0.08);
+  bootR.position.set(0.12, -1.7, 0.08);
   bodyGroup.add(bootL, bootR);
 
   // kit styles are now texture-driven (see createFabricTexture)
 
-  const ballGeo = new THREE.SphereGeometry(0.26, 24, 24);
-  const ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color: 0xf6f6f6, roughness: 0.3, metalness: 0.05 }));
-  ball.position.set(0.68, -0.08, 0.42);
-  const patchGeo = new THREE.SphereGeometry(0.1, 10, 10);
-  const patchMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.35 });
-  const patch = new THREE.Mesh(patchGeo, patchMat);
-  patch.position.set(0.08, 0.06, 0.2);
-  ball.add(patch);
-  bodyGroup.add(ball);
-
-  bodyGroup.position.set(0, -0.08, 0);
+  bodyGroup.position.set(0, 0.06, 0);
   bodyGroup.scale.set(1, 1, 1);
   group.add(bodyGroup);
 
@@ -871,9 +861,9 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 12);
-  camera.position.set(0, 0.1, 3.6);
-  camera.lookAt(0, -0.1, 0);
+  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 12);
+  camera.position.set(0, -0.08, 4.25);
+  camera.lookAt(0, -0.32, 0);
 
   const hemi = new THREE.HemisphereLight(0xfff2dc, 0x1f140c, 1.0);
   const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -885,8 +875,8 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
   scene.add(hemi, key, fill, rim);
 
   const group = buildAvatar3DGroup(THREE, avatar);
-  group.position.set(0, -0.05, 0);
-  group.rotation.y = -0.18;
+  group.position.set(0, -0.03, 0);
+  group.rotation.y = -0.08;
   scene.add(group);
 
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1285,28 +1275,25 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
     <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
       <feDropShadow dx="0" dy="1.6" stdDeviation="1.6" flood-color="#000" flood-opacity="0.35"/>
     </filter>
-    <filter id="ballShadow" x="-30%" y="-30%" width="170%" height="170%">
-      <feDropShadow dx="0.8" dy="1.8" stdDeviation="1.2" flood-color="#000" flood-opacity="0.4"/>
-    </filter>
   </defs>
   <rect x="0" y="0" width="100" height="100" rx="24" fill="url(#bgGlow)"/>
   <rect x="3.5" y="3.5" width="93" height="93" rx="21.6" fill="none" stroke="rgba(255,171,59,0.36)" stroke-width="2"/>
   <ellipse cx="44" cy="50" rx="34" ry="40" fill="rgba(255,255,255,0.03)"/>
   <g filter="url(#softShadow)">
-    <path d="M18.8 82 C27.8 67.8 39.7 61.9 50 61.9 C60.3 61.9 72.2 67.8 81.2 82 L81.2 93 L18.8 93 Z" fill="url(#kitGrad)"/>
-    <rect x="24.2" y="57.1" width="51.6" height="25.2" rx="11.6" fill="url(#kitGrad)"/>
-    <rect x="24.2" y="57.1" width="51.6" height="25.2" rx="11.6" fill="none" stroke="rgba(0,0,0,0.33)" stroke-width="1.2"/>
-    <path d="M24.8 68.8 C33.4 66.2 66.6 66.2 75.2 68.8" stroke="rgba(255,255,255,0.12)" stroke-width="1.3" fill="none"/>
+    <path d="M27 82 C31 70.3 40 64.2 50 64.2 C60 64.2 69 70.3 73 82 L73 93 L27 93 Z" fill="url(#kitGrad)"/>
+    <rect x="29.4" y="57.1" width="41.2" height="23.8" rx="9.2" fill="url(#kitGrad)"/>
+    <rect x="29.4" y="57.1" width="41.2" height="23.8" rx="9.2" fill="none" stroke="rgba(0,0,0,0.33)" stroke-width="1"/>
+    <path d="M30.4 68.8 C37.3 66.9 62.7 66.9 69.6 68.8" stroke="rgba(255,255,255,0.12)" stroke-width="1.1" fill="none"/>
   </g>
   ${kitPattern}
   ${shorts}
-  <rect x="45.1" y="51.2" width="9.8" height="9.8" rx="3.9" fill="${a.skinColor}"/>
-  <circle cx="34.6" cy="67" r="4.7" fill="${a.skinColor}" opacity="0.96"/>
-  <circle cx="65.4" cy="67" r="4.7" fill="${a.skinColor}" opacity="0.96"/>
+  <rect x="46.1" y="51.5" width="7.8" height="8.6" rx="3.1" fill="${a.skinColor}"/>
+  <rect x="31.8" y="64.4" width="4.4" height="18.2" rx="2.2" fill="${a.skinColor}" opacity="0.96"/>
+  <rect x="63.8" y="64.4" width="4.4" height="18.2" rx="2.2" fill="${a.skinColor}" opacity="0.96"/>
   ${socks}
   ${boots}
-  <ellipse cx="34.8" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
-  <ellipse cx="65.2" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
+  <ellipse cx="37.4" cy="36.2" rx="1.8" ry="3.1" fill="${a.skinColor}" opacity="0.84"/>
+  <ellipse cx="62.6" cy="36.2" rx="1.8" ry="3.1" fill="${a.skinColor}" opacity="0.84"/>
   ${faceShape}
   ${browLeft}
   ${browRight}
@@ -1321,15 +1308,6 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
   <circle cx="56.4" cy="38.3" r="0.56" fill="#fff" opacity="0.88"/>
   ${nose}
   ${mouth}
-  <g transform="translate(69,64)" filter="url(#ballShadow)">
-    <circle cx="0" cy="0" r="13.6" fill="#f6f6f6"/>
-    <path d="M-4.2 -7 L0 -9.8 L4.2 -7 L3.6 -2.2 L-3.6 -2.2 Z" fill="#2a2a2a"/>
-    <path d="M-12 -1 C-8 -2 -5 -4 -3.2 -7.3" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
-    <path d="M12 -1 C8 -2 5 -4 3.2 -7.3" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
-    <path d="M-10 6 C-6.6 5.2 -4.3 3.1 -3.1 0" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
-    <path d="M10 6 C6.6 5.2 4.3 3.1 3.1 0" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
-    <circle cx="-4.8" cy="-5.5" r="1.8" fill="rgba(255,255,255,0.6)"/>
-  </g>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
