@@ -290,14 +290,29 @@ const AVATAR_3D = {
   ready: false,
   failed: false,
   THREE: null,
-  FBXLoader: null,
-  baseModel: null,
-  baseModelReady: false,
-  baseModelLoading: false,
-  baseModelFailed: false,
+  GLTFLoader: null,
+  SkeletonUtils: null,
+  models: new Map(),
+  loadingModels: new Map(),
+  failedModels: new Set(),
   cache: new Map(),
   pending: new Map(),
 };
+
+const AVATAR_MODEL_VARIANTS = [
+  { id: "steady-boy", path: "/assets/avatar/models/steady-boy.glb", type: "boy", pose: "steady" },
+  { id: "cute-girl", path: "/assets/avatar/models/cute-girl.glb", type: "girl", pose: "steady" },
+  { id: "dribbling-girl", path: "/assets/avatar/models/dribbling-girl.glb", type: "girl", pose: "dribble" },
+  { id: "shooting-girl", path: "/assets/avatar/models/shooting-girl.glb", type: "girl", pose: "shoot" },
+  { id: "heading-girl", path: "/assets/avatar/models/heading-girl.glb", type: "girl", pose: "header" },
+  { id: "celebrate-girl", path: "/assets/avatar/models/celebrate-girl.glb", type: "girl", pose: "celebrate" },
+  { id: "tackle-boy", path: "/assets/avatar/models/tackle-boy.glb", type: "boy", pose: "tackle" },
+  { id: "heading-boy", path: "/assets/avatar/models/heading-boy.glb", type: "boy", pose: "header" },
+  { id: "catching-boy", path: "/assets/avatar/models/catching-boy.glb", type: "boy", pose: "catch" },
+  { id: "winning-boy", path: "/assets/avatar/models/winning-boy.glb", type: "boy", pose: "celebrate" },
+  { id: "slide-winning-boy", path: "/assets/avatar/models/slide-winning-boy.glb", type: "boy", pose: "celebrate" },
+  { id: "celebrate-boy", path: "/assets/avatar/models/celebrate-boy.glb", type: "boy", pose: "celebrate" },
+];
 
 function encodeAvatarData(value) {
   try {
@@ -330,9 +345,11 @@ async function ensureThree() {
   AVATAR_3D.loading = true;
   try {
     const mod = await import("https://unpkg.com/three@0.162.0/build/three.module.js");
-    const fbxModule = await import("https://unpkg.com/three@0.162.0/examples/jsm/loaders/FBXLoader.js");
+    const gltfModule = await import("https://unpkg.com/three@0.162.0/examples/jsm/loaders/GLTFLoader.js");
+    const skeletonModule = await import("https://unpkg.com/three@0.162.0/examples/jsm/utils/SkeletonUtils.js");
     AVATAR_3D.THREE = mod;
-    AVATAR_3D.FBXLoader = fbxModule.FBXLoader;
+    AVATAR_3D.GLTFLoader = gltfModule.GLTFLoader;
+    AVATAR_3D.SkeletonUtils = skeletonModule;
     AVATAR_3D.ready = true;
     AVATAR_3D.loading = false;
     return mod;
@@ -362,6 +379,14 @@ function normalizeAvatarBaseModel(THREE, root) {
   root.position.y += -0.84 - minY;
   root.position.z += 0.02;
   return root;
+}
+
+function chooseAvatarModelVariant(avatar, seed = "") {
+  const safe = sanitizeAvatarConfig(avatar, seed);
+  const prefersGirl = safe.hairStyle === "long" || safe.hairStyle === "bun";
+  if (safe.brow === "focused") return prefersGirl ? "shooting-girl" : "tackle-boy";
+  if (safe.brow === "cheeky") return prefersGirl ? "celebrate-girl" : "winning-boy";
+  return prefersGirl ? "cute-girl" : "steady-boy";
 }
 
 function recolorAvatarBaseModel(model, avatar) {
@@ -407,40 +432,42 @@ function recolorAvatarBaseModel(model, avatar) {
   });
 }
 
-async function ensureAvatarBaseModel() {
-  if (AVATAR_3D.baseModelReady) return AVATAR_3D.baseModel;
-  if (AVATAR_3D.baseModelFailed) return null;
-  if (AVATAR_3D.baseModelLoading) {
-    return new Promise((resolve) => {
-      const timer = setInterval(() => {
-        if (!AVATAR_3D.baseModelLoading) {
-          clearInterval(timer);
-          resolve(AVATAR_3D.baseModel || null);
-        }
-      }, 40);
-    });
-  }
+async function ensureAvatarBaseModel(variantId = "steady-boy") {
+  if (AVATAR_3D.models.has(variantId)) return AVATAR_3D.models.get(variantId);
+  if (AVATAR_3D.failedModels.has(variantId)) return null;
+  if (AVATAR_3D.loadingModels.has(variantId)) return AVATAR_3D.loadingModels.get(variantId);
+
   const THREE = await ensureThree();
-  if (!THREE || !AVATAR_3D.FBXLoader) return null;
-  AVATAR_3D.baseModelLoading = true;
-  try {
-    const loader = new AVATAR_3D.FBXLoader();
-    const model = await loader.loadAsync("/assets/avatar/Soccer.fbx");
-    AVATAR_3D.baseModel = normalizeAvatarBaseModel(THREE, model);
-    AVATAR_3D.baseModelReady = true;
-    AVATAR_3D.baseModelLoading = false;
-    return AVATAR_3D.baseModel;
-  } catch (err) {
-    console.warn("Avatar 3D: failed to load base FBX, using procedural fallback", err);
-    AVATAR_3D.baseModelFailed = true;
-    AVATAR_3D.baseModelLoading = false;
-    return null;
-  }
+  if (!THREE || !AVATAR_3D.GLTFLoader) return null;
+  const variant = AVATAR_MODEL_VARIANTS.find((v) => v.id === variantId) || AVATAR_MODEL_VARIANTS[0];
+  if (!variant) return null;
+
+  const task = (async () => {
+    try {
+      const loader = new AVATAR_3D.GLTFLoader();
+      const gltf = await loader.loadAsync(variant.path);
+      const root = gltf?.scene || gltf?.scenes?.[0] || null;
+      if (!root) throw new Error("GLB has no scene");
+      const normalized = normalizeAvatarBaseModel(THREE, root);
+      AVATAR_3D.models.set(variant.id, normalized);
+      return normalized;
+    } catch (err) {
+      console.warn(`Avatar 3D: failed to load GLB ${variant.id}`, err);
+      AVATAR_3D.failedModels.add(variant.id);
+      return null;
+    } finally {
+      AVATAR_3D.loadingModels.delete(variant.id);
+    }
+  })();
+  AVATAR_3D.loadingModels.set(variant.id, task);
+  return task;
 }
 
-function buildAvatarBaseModelInstance(avatar) {
-  if (!AVATAR_3D.baseModel) return null;
-  const clone = AVATAR_3D.baseModel.clone(true);
+function buildAvatarBaseModelInstance(avatar, variantId = "steady-boy") {
+  const model = AVATAR_3D.models.get(variantId);
+  if (!model) return null;
+  const cloneFn = AVATAR_3D.SkeletonUtils?.clone;
+  const clone = typeof cloneFn === "function" ? cloneFn(model) : model.clone(true);
   recolorAvatarBaseModel(clone, avatar);
   // Mild personality cues without deforming rig.
   const moodTilt = avatar.brow === "focused" ? 0.02 : avatar.brow === "cheeky" ? -0.018 : 0;
@@ -1048,7 +1075,9 @@ function buildAvatar3DGroup(THREE, avatar) {
 async function renderAvatar3DDataUri(avatar, seed, size) {
   const THREE = await ensureThree();
   if (!THREE) return null;
-  await ensureAvatarBaseModel();
+  const variantId = chooseAvatarModelVariant(avatar, seed);
+  const baseModel = await ensureAvatarBaseModel(variantId);
+  if (!baseModel) return avatarStaticFallbackUrl(avatar, seed, size);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(size * dpr));
@@ -1072,7 +1101,11 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
   rim.position.set(-0.8, 1.2, -1.4);
   scene.add(hemi, key, fill, rim);
 
-  const group = buildAvatarBaseModelInstance(avatar) || buildAvatar3DGroup(THREE, avatar);
+  const group = buildAvatarBaseModelInstance(avatar, variantId);
+  if (!group) {
+    renderer.dispose();
+    return avatarStaticFallbackUrl(avatar, seed, size);
+  }
   group.position.set(0, -0.06, 0);
   group.rotation.y = -0.06;
   scene.add(group);
@@ -1116,7 +1149,10 @@ function upgradeAvatarImages3D() {
     if (AVATAR_3D.pending.has(key)) return;
     const task = renderAvatar3DDataUri(avatar, seed, size)
       .then((data) => {
-        if (!data) return;
+        if (!data) {
+          img.src = avatarStaticFallbackUrl(avatar, seed, size);
+          return;
+        }
         AVATAR_3D.cache.set(key, data);
         img.src = data;
       })
@@ -1370,133 +1406,35 @@ function sanitizeAvatarConfig(input, seed = "") {
 }
 
 function avatarSvgDataUri(input, seed = "", size = 96) {
+  return avatarStaticFallbackUrl(input, seed, size);
+}
+
+function avatarStaticTemplateIndex(input, seed = "") {
   const a = sanitizeAvatarConfig(input, seed);
-  const browTilt =
-    a.brow === "focused" ? 0.22 : a.brow === "cheeky" ? -0.06 : -0.16;
-  const hair =
-    a.hairStyle === "bald"
-      ? ""
-      : a.hairStyle === "fade"
-        ? `<path d="M33.8 24.7 C38.2 16.1 61.8 16.1 66.2 24.7 L66.2 31.8 C62.1 28.9 37.9 28.9 33.8 31.8 Z" fill="url(#hairGrad)"/><path d="M35.5 30.2 C39.8 28.5 60.2 28.5 64.5 30.2" stroke="rgba(255,255,255,0.15)" stroke-width="1.1" fill="none"/>`
-        : a.hairStyle === "spike"
-          ? `<path d="M33.3 29 L35.6 15.8 L41.6 24.3 L46.7 13.6 L52.9 23.9 L58 14.2 L64.2 25.6 L66.7 30.4 L66.7 33.2 C61.7 30 38.3 30 33.3 33.2 Z" fill="url(#hairGrad)"/><path d="M46.8 18.8 L50 13.6 L53.2 18.8" stroke="rgba(255,255,255,0.2)" stroke-width="0.9" fill="none"/>`
-          : a.hairStyle === "curly"
-            ? `<circle cx="38.5" cy="24.7" r="5.6" fill="url(#hairGrad)"/><circle cx="45.3" cy="21.4" r="6.5" fill="url(#hairGrad)"/><circle cx="54.7" cy="21.4" r="6.5" fill="url(#hairGrad)"/><circle cx="61.5" cy="24.7" r="5.6" fill="url(#hairGrad)"/><rect x="35.2" y="23.8" width="29.6" height="9.6" rx="4.6" fill="url(#hairGrad)"/>`
-            : a.hairStyle === "long"
-              ? `<path d="M31.8 26 C35.8 16.8 64.2 16.8 68.2 26 L68.2 38 C63.4 34 36.6 34 31.8 38 Z" fill="url(#hairGrad)"/><path d="M32.2 36 C34.6 50 36.8 62 50 66 C63.2 62 65.4 50 67.8 36" fill="url(#hairGrad)" opacity="0.95"/>`
-              : a.hairStyle === "bun"
-                ? `<path d="M33.4 26 C37.4 16.6 62.6 16.6 66.6 26 L66.6 32.4 C62 29 38 29 33.4 32.4 Z" fill="url(#hairGrad)"/><circle cx="50" cy="16.8" r="6.3" fill="url(#hairGrad)"/><circle cx="50" cy="16.8" r="3.2" fill="rgba(255,255,255,0.15)"/>`
-            : `<path d="M33.5 25.3 C37.4 16.4 62.6 16.4 66.5 25.3 L66.5 32.3 C61.9 28.9 38.1 28.9 33.5 32.3 Z" fill="url(#hairGrad)"/><path d="M36.8 24.4 C41.2 20.1 58.8 20.1 63.2 24.4" stroke="rgba(255,255,255,0.18)" stroke-width="1.2" fill="none"/>`;
+  const baseScores = DEFAULT_AVATAR_TEMPLATES.map((tpl) => {
+    let score = 0;
+    if (tpl.hairStyle === a.hairStyle) score += 2;
+    if (tpl.headShape === a.headShape) score += 2;
+    if (tpl.mouth === a.mouth) score += 1;
+    if (tpl.brow === a.brow) score += 1;
+    if (tpl.kitStyle === a.kitStyle) score += 2;
+    return score;
+  });
+  let maxScore = -Infinity;
+  let index = 0;
+  baseScores.forEach((s, i) => {
+    if (s > maxScore) {
+      maxScore = s;
+      index = i;
+    }
+  });
+  return index;
+}
 
-  const faceShape =
-    a.headShape === "oval"
-      ? `<ellipse cx="50" cy="35.8" rx="14.6" ry="16.7" fill="url(#skinGrad)"/>`
-      : a.headShape === "square"
-        ? `<rect x="35.4" y="19.3" width="29.2" height="33.1" rx="7.2" fill="url(#skinGrad)"/>`
-        : `<circle cx="50" cy="35.8" r="15.8" fill="url(#skinGrad)"/>`;
-
-  const mouth =
-    a.mouth === "open"
-      ? `<ellipse cx="50" cy="44.2" rx="4.4" ry="3" fill="#2A1208"/><ellipse cx="50" cy="44.7" rx="2.6" ry="1.5" fill="#E45446"/><rect x="47.9" y="42.2" width="4.2" height="1" rx="0.5" fill="#fff" opacity="0.9"/>`
-      : a.mouth === "flat"
-        ? `<line x1="45.2" y1="44" x2="54.8" y2="44" stroke="#2A1208" stroke-width="1.8" stroke-linecap="round"/>`
-        : `<path d="M44.6 43.3 Q50 48.4 55.4 43.3" stroke="#2A1208" stroke-width="1.8" fill="none" stroke-linecap="round"/>`;
-  const nose =
-    a.noseStyle === "straight"
-      ? `<path d="M49.8 39.8 L48.8 42.9 L50.9 43.2" stroke="rgba(42,18,8,0.62)" stroke-width="1.2" fill="none" stroke-linecap="round"/>`
-      : a.noseStyle === "round"
-        ? `<circle cx="50" cy="41.3" r="1.35" fill="rgba(42,18,8,0.30)"/><path d="M48.9 41.2 Q50 42.2 51.1 41.2" stroke="rgba(42,18,8,0.55)" stroke-width="0.9" fill="none" stroke-linecap="round"/>`
-        : `<ellipse cx="50" cy="41.2" rx="1.25" ry="1" fill="rgba(42,18,8,0.22)"/>`;
-
-  let kitPattern = "";
-  if (a.kitStyle === "sleeves") {
-    kitPattern = `<rect x="22.5" y="59.1" width="11.2" height="16" rx="3.1" fill="${a.kitColor2}" opacity="0.92"/><rect x="66.3" y="59.1" width="11.2" height="16" rx="3.1" fill="${a.kitColor2}" opacity="0.92"/>`;
-  } else if (a.kitStyle === "diamond") {
-    kitPattern = `<path d="M50 58.4 L61 68.5 L50 78.6 L39 68.5 Z" fill="${a.kitColor2}" opacity="0.96"/>`;
-  } else if (a.kitStyle === "stripes") {
-    kitPattern = `<rect x="33.1" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="43.9" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="54.7" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="65.5" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/>`;
-  } else if (a.kitStyle === "hoops") {
-    kitPattern = `<rect x="24.8" y="59.8" width="50.4" height="4.9" fill="${a.kitColor2}" opacity="0.95"/><rect x="24.8" y="68.7" width="50.4" height="4.9" fill="${a.kitColor2}" opacity="0.95"/><rect x="24.8" y="77.6" width="50.4" height="3.6" fill="${a.kitColor2}" opacity="0.9"/>`;
-  } else if (a.kitStyle === "total90") {
-    kitPattern = `<path d="M26.8 71 C35.4 57.7 64.6 57.7 73.2 71" stroke="${a.kitColor2}" stroke-width="5.6" fill="none"/><circle cx="50" cy="71" r="3.4" fill="${a.kitColor2}"/><path d="M35.5 64.2 L40.9 62" stroke="${a.kitColor2}" stroke-width="2.4"/><path d="M64.5 64.2 L59.1 62" stroke="${a.kitColor2}" stroke-width="2.4"/>`;
-  }
-
-  const boots =
-    a.bootsStyle === "speed"
-      ? `<rect x="31.7" y="86.1" width="16" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="52.3" y="86.1" width="16" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="45.9" y="86.8" width="3.5" height="1.5" rx="0.7" fill="rgba(255,255,255,0.34)"/><rect x="66.5" y="86.8" width="3.5" height="1.5" rx="0.7" fill="rgba(255,255,255,0.34)"/>`
-      : a.bootsStyle === "high"
-        ? `<rect x="32.1" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="52.6" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="33.2" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/><rect x="53.7" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/>`
-        : `<ellipse cx="39.8" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/><ellipse cx="60.2" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/>`;
-
-  const shorts = `<path d="M36 72.2 C40.8 69.2 59.2 69.2 64 72.2 L64 82 C59.4 83.4 40.6 83.4 36 82 Z" fill="${a.shortsColor}"/><rect x="36.4" y="74.6" width="27.2" height="7.2" rx="3.2" fill="rgba(255,255,255,0.08)"/>`;
-  const socks = `<rect x="34.2" y="82.6" width="10.6" height="6.8" rx="2.2" fill="${a.socksColor}"/><rect x="55.2" y="82.6" width="10.6" height="6.8" rx="2.2" fill="${a.socksColor}"/><rect x="34.2" y="84.6" width="10.6" height="1.4" rx="0.7" fill="rgba(255,255,255,0.26)"/><rect x="55.2" y="84.6" width="10.6" height="1.4" rx="0.7" fill="rgba(255,255,255,0.26)"/>`;
-
-  const browLeft = `<g transform="translate(42 36) rotate(${(-browTilt * 90).toFixed(1)})"><rect x="-6" y="-1" width="12" height="2.2" rx="1.1" fill="rgba(31,16,8,0.7)"/></g>`;
-  const browRight = `<g transform="translate(58 36) rotate(${(browTilt * 90).toFixed(1)})"><rect x="-6" y="-1" width="12" height="2.2" rx="1.1" fill="rgba(31,16,8,0.7)"/></g>`;
-
-  const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
-  <defs>
-    <radialGradient id="bgGlow" cx="28%" cy="20%" r="88%">
-      <stop offset="0%" stop-color="#3A230F"/>
-      <stop offset="45%" stop-color="#1A0F07"/>
-      <stop offset="100%" stop-color="#0A0502"/>
-    </radialGradient>
-    <linearGradient id="skinGrad" x1="42%" y1="0%" x2="58%" y2="100%">
-      <stop offset="0%" stop-color="${a.skinColor}"/>
-      <stop offset="68%" stop-color="${a.skinColor}"/>
-      <stop offset="100%" stop-color="rgba(0,0,0,0.24)"/>
-    </linearGradient>
-    <linearGradient id="hairGrad" x1="32%" y1="0%" x2="64%" y2="100%">
-      <stop offset="0%" stop-color="${a.hairColor}"/>
-      <stop offset="100%" stop-color="rgba(0,0,0,0.32)"/>
-    </linearGradient>
-    <linearGradient id="kitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${a.kitColor1}"/>
-      <stop offset="100%" stop-color="${a.kitColor2}"/>
-    </linearGradient>
-    <radialGradient id="faceGlow" cx="42%" cy="28%" r="66%">
-      <stop offset="0%" stop-color="rgba(255,255,255,0.33)"/>
-      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
-    </radialGradient>
-    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="1.6" stdDeviation="1.6" flood-color="#000" flood-opacity="0.35"/>
-    </filter>
-  </defs>
-  <rect x="0" y="0" width="100" height="100" rx="24" fill="url(#bgGlow)"/>
-  <rect x="3.5" y="3.5" width="93" height="93" rx="21.6" fill="none" stroke="rgba(255,171,59,0.36)" stroke-width="2"/>
-  <ellipse cx="44" cy="50" rx="34" ry="40" fill="rgba(255,255,255,0.03)"/>
-  <g filter="url(#softShadow)">
-    <path d="M27 82 C31 70.3 40 64.2 50 64.2 C60 64.2 69 70.3 73 82 L73 93 L27 93 Z" fill="url(#kitGrad)"/>
-    <rect x="29.4" y="57.1" width="41.2" height="23.8" rx="9.2" fill="url(#kitGrad)"/>
-    <rect x="29.4" y="57.1" width="41.2" height="23.8" rx="9.2" fill="none" stroke="rgba(0,0,0,0.33)" stroke-width="1"/>
-    <path d="M30.4 68.8 C37.3 66.9 62.7 66.9 69.6 68.8" stroke="rgba(255,255,255,0.12)" stroke-width="1.1" fill="none"/>
-  </g>
-  ${kitPattern}
-  ${shorts}
-  <rect x="46.1" y="51.5" width="7.8" height="8.6" rx="3.1" fill="${a.skinColor}"/>
-  <rect x="31.8" y="64.4" width="4.4" height="18.2" rx="2.2" fill="${a.skinColor}" opacity="0.96"/>
-  <rect x="63.8" y="64.4" width="4.4" height="18.2" rx="2.2" fill="${a.skinColor}" opacity="0.96"/>
-  ${socks}
-  ${boots}
-  <ellipse cx="37.4" cy="36.2" rx="1.8" ry="3.1" fill="${a.skinColor}" opacity="0.84"/>
-  <ellipse cx="62.6" cy="36.2" rx="1.8" ry="3.1" fill="${a.skinColor}" opacity="0.84"/>
-  ${faceShape}
-  ${browLeft}
-  ${browRight}
-  <ellipse cx="46.6" cy="30.3" rx="7.8" ry="5.4" fill="url(#faceGlow)"/>
-  <circle cx="50" cy="40" r="17.9" fill="none" stroke="rgba(0,0,0,0.18)" stroke-width="1"/>
-  ${hair}
-  <path d="M41.4 33.8 Q44 31.8 46.6 33.8" stroke="#2D1A12" stroke-width="1.25" fill="none" stroke-linecap="round"/>
-  <path d="M53.4 33.8 Q56 31.8 58.6 33.8" stroke="#2D1A12" stroke-width="1.25" fill="none" stroke-linecap="round"/>
-  <ellipse cx="44.3" cy="39.2" rx="2.45" ry="2.65" fill="${a.eyeColor}"/>
-  <ellipse cx="55.7" cy="39.2" rx="2.45" ry="2.65" fill="${a.eyeColor}"/>
-  <circle cx="45" cy="38.3" r="0.56" fill="#fff" opacity="0.88"/>
-  <circle cx="56.4" cy="38.3" r="0.56" fill="#fff" opacity="0.88"/>
-  ${nose}
-  ${mouth}
-</svg>`;
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+function avatarStaticFallbackUrl(input, seed = "", size = 96) {
+  const idx = avatarStaticTemplateIndex(input, seed);
+  const clamped = Math.max(48, Math.min(512, Number(size) || 96));
+  return `/assets/avatar/fallback-${idx}.svg?w=${clamped}`;
 }
 
 function defaultFamilyLeagueState() {
