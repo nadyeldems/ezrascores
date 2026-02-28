@@ -315,16 +315,17 @@
               <div id="avatar-builder-signedout" class="avatar-builder-signedout muted">
                 Sign in to customize and save your avatar.
               </div>
-              <div id="avatar-builder-signedin" class="avatar-editor hidden">
-                <div class="avatar-editor-head">
-                  <img id="account-avatar-preview" class="account-avatar-preview" alt="Avatar preview" />
+                <div id="avatar-builder-signedin" class="avatar-editor hidden">
+                  <div class="avatar-editor-head">
+                  <img id="account-avatar-preview" class="account-avatar-preview" alt="Avatar preview" data-pin-nopin="true" />
                   <div class="avatar-editor-head-meta">
                     <span class="muted">Profile look</span>
+                    <span id="avatar-save-state" class="avatar-save-state" aria-live="polite">Saved</span>
                     <span class="avatar-head-hint">Auto-saves while you edit.</span>
                   </div>
                 </div>
                 <div class="avatar-hero-preview">
-                  <img id="avatar-hero-img" class="avatar-hero-img" alt="Avatar hero preview" />
+                  <img id="avatar-hero-img" class="avatar-hero-img" alt="Avatar hero preview" data-pin-nopin="true" />
                   <div class="avatar-hero-glow" aria-hidden="true"></div>
                 </div>
                 <div class="avatar-template-strip" aria-label="Starter looks">
@@ -497,7 +498,8 @@
                   <button id="account-avatar-save-btn" class="btn" type="button">Save Avatar</button>
                 </div>
                 <div id="avatar-save-toast" class="avatar-save-toast hidden" aria-live="polite">Avatar saved</div>
-                <div id="avatar-unlock-rail" class="avatar-unlock-rail" aria-live="polite"></div>
+                <button id="avatar-unlock-toggle-btn" class="btn avatar-unlock-toggle-btn" type="button" aria-expanded="false">Show Unlock Track</button>
+                <div id="avatar-unlock-rail" class="avatar-unlock-rail hidden" aria-live="polite"></div>
                 <p class="muted avatar-future-note">Coming soon: unlock special hairstyles, boot styles, kit types and football accessories via milestones.</p>
               </div>
             </article>

@@ -2053,9 +2053,9 @@ body.league-member-overlay-open::before {
 .avatar-editor {
   border: 1px dashed var(--line-soft);
   border-radius: 0.65rem;
-  padding: 0.58rem;
+  padding: 0.66rem;
   display: grid;
-  gap: 0.52rem;
+  gap: 0.62rem;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -2063,39 +2063,46 @@ body.league-member-overlay-open::before {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
+  gap: 0.75rem;
 }
 
 .avatar-hero-preview {
   position: relative;
   border-radius: 1rem;
-  padding: 0.8rem;
+  padding: 0.92rem;
   border: 1px solid var(--line-soft);
   background: radial-gradient(circle at 50% 20%, rgba(255, 196, 102, 0.14), rgba(14, 8, 4, 0.88));
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 13.8rem;
-  overflow: hidden;
+  min-height: 15.8rem;
+  aspect-ratio: 3 / 4;
+  overflow: visible;
+  isolation: isolate;
 }
 
 .avatar-hero-img {
-  width: min(14rem, 76vw);
-  height: min(18.2rem, 86vw);
+  width: min(16.4rem, 86vw);
+  height: min(24rem, 122vw);
   border-radius: 0.75rem;
   object-fit: contain;
-  object-position: center top;
+  object-position: center center;
   border: 2px solid rgba(255, 178, 86, 0.45);
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.2), #0f0703 70%);
   box-shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, 0.45);
+  position: relative;
+  z-index: 1;
+  transform-origin: 50% 62%;
+  animation: avatar-hero-idle 6.2s ease-in-out infinite;
 }
 
 .avatar-hero-glow {
   position: absolute;
-  inset: 6%;
+  inset: 5.5%;
   border-radius: 1rem;
   border: 1px dashed rgba(255, 179, 90, 0.25);
   pointer-events: none;
+  z-index: 0;
 }
 
 .avatar-editor-head-meta {
@@ -2108,6 +2115,29 @@ body.league-member-overlay-open::before {
 .avatar-head-hint {
   font-size: 0.72rem;
   color: var(--text-muted);
+}
+
+.avatar-save-state {
+  font-size: 0.73rem;
+  color: var(--success);
+  border: 1px solid rgba(102, 233, 158, 0.42);
+  border-radius: 0.44rem;
+  background: rgba(20, 58, 36, 0.5);
+  padding: 0.1rem 0.4rem;
+  line-height: 1.2;
+  justify-self: end;
+}
+
+.avatar-save-state.saving {
+  color: #ffd8a6;
+  border-color: rgba(255, 182, 99, 0.45);
+  background: rgba(62, 36, 8, 0.6);
+}
+
+.avatar-save-state.error {
+  color: #ffb3b3;
+  border-color: rgba(255, 120, 120, 0.42);
+  background: rgba(58, 18, 18, 0.58);
 }
 
 .account-avatar-preview {
@@ -2134,6 +2164,20 @@ body.league-member-overlay-open::before {
 
 body[data-motion="minimal"] .account-avatar-preview {
   animation: none;
+}
+
+body[data-motion="minimal"] .avatar-hero-img {
+  animation: none;
+}
+
+@keyframes avatar-hero-idle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.35deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(0.35deg);
+  }
 }
 
 .avatar-editor-grid {
@@ -2178,6 +2222,16 @@ body[data-motion="minimal"] .account-avatar-preview {
   border-top: 1px dashed var(--line-soft);
 }
 
+.avatar-unlock-toggle-btn {
+  justify-self: start;
+  min-height: 1.85rem;
+  font-size: 0.74rem;
+}
+
+.avatar-unlock-rail.hidden {
+  display: none;
+}
+
 #avatar-builder-card .avatar-editor {
   border-style: solid;
   border-color: var(--line);
@@ -2211,6 +2265,7 @@ body[data-motion="minimal"] .account-avatar-preview {
   align-items: center;
   justify-content: center;
   transition: border-color 160ms ease, transform 160ms ease;
+  cursor: pointer;
 }
 
 .avatar-template-btn.active,
@@ -2224,6 +2279,7 @@ body[data-motion="minimal"] .account-avatar-preview {
   height: 3.1rem;
   border-radius: 0.45rem;
   object-fit: contain;
+  object-position: center center;
   background: radial-gradient(circle at 38% 28%, rgba(255, 176, 79, 0.15), #0f0703 70%);
 }
 
@@ -3161,7 +3217,8 @@ body[data-motion="minimal"] .account-avatar-preview {
   }
 
   .avatar-hero-preview {
-    min-height: 11.8rem;
+    min-height: 12.8rem;
+    padding: 0.75rem;
   }
 
   .account-avatar-preview {
