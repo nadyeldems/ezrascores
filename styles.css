@@ -2008,6 +2008,21 @@ body.league-member-overlay-open::before {
   flex-wrap: wrap;
 }
 
+.account-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  margin-top: 0.4rem;
+}
+
+.account-checkbox input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+}
+
 .account-avatar-btn {
   display: inline-flex;
   align-items: center;

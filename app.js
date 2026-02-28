@@ -19,9 +19,17 @@ const LEAGUES = {
 const inflightApiGets = new Map();
 const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
 const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
-const STORED_ACCOUNT_TOKEN = localStorage.getItem("ezra_account_token") || "";
+const STORED_ACCOUNT_TOKEN_SESSION = sessionStorage.getItem("ezra_account_token_session") || "";
+const STORED_ACCOUNT_TOKEN_LOCAL = localStorage.getItem("ezra_account_token") || "";
+const STORED_KEEP_LOGGED_IN = localStorage.getItem("ezra_keep_logged_in") === "1";
+const STORED_ACCOUNT_TOKEN = STORED_ACCOUNT_TOKEN_SESSION || STORED_ACCOUNT_TOKEN_LOCAL || "";
+const EFFECTIVE_KEEP_LOGGED_IN = STORED_ACCOUNT_TOKEN_SESSION ? false : STORED_KEEP_LOGGED_IN;
 const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
-const STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
+let STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
+if (STORED_MAIN_TAB === "squad") {
+  localStorage.setItem("ezra_main_tab", "home");
+  STORED_MAIN_TAB = "home";
+}
 const STORED_MOBILE_TAB = localStorage.getItem("ezra_mobile_tab") || "fixtures";
 const DREAM_TEAM_FORMATIONS = {
   "4-3-3": { DEF: 4, MID: 3, FWD: 3 },
@@ -71,6 +79,55 @@ function parseStoredArray(key, fallback = []) {
     return Array.isArray(parsed) ? parsed : fallback;
   } catch {
     return fallback;
+  }
+}
+
+function storeAccountToken(token, persist) {
+  const safeToken = String(token || "");
+  if (!safeToken) {
+    localStorage.removeItem("ezra_account_token");
+    sessionStorage.removeItem("ezra_account_token_session");
+    localStorage.removeItem("ezra_keep_logged_in");
+    return;
+  }
+  if (persist) {
+    localStorage.setItem("ezra_account_token", safeToken);
+    sessionStorage.removeItem("ezra_account_token_session");
+    localStorage.setItem("ezra_keep_logged_in", "1");
+  } else {
+    sessionStorage.setItem("ezra_account_token_session", safeToken);
+    localStorage.removeItem("ezra_account_token");
+    localStorage.setItem("ezra_keep_logged_in", "0");
+  }
+}
+
+function clearStoredAccountToken() {
+  localStorage.removeItem("ezra_account_token");
+  sessionStorage.removeItem("ezra_account_token_session");
+  localStorage.removeItem("ezra_keep_logged_in");
+}
+
+function resolveKeepLoggedInFromStorage() {
+  if (sessionStorage.getItem("ezra_account_token_session")) return false;
+  if (localStorage.getItem("ezra_account_token")) return true;
+  return localStorage.getItem("ezra_keep_logged_in") === "1";
+}
+
+function getKeepLoggedInSelection() {
+  if (el.accountKeepLoggedIn && !el.accountKeepLoggedIn.classList.contains("hidden")) {
+    return Boolean(el.accountKeepLoggedIn.checked);
+  }
+  if (el.accountKeepLoggedInSignedIn && !el.accountKeepLoggedInSignedIn.classList.contains("hidden")) {
+    return Boolean(el.accountKeepLoggedInSignedIn.checked);
+  }
+  return Boolean(state.account.keepLoggedIn);
+}
+
+function setKeepLoggedInPreference(value, persistToken = true) {
+  state.account.keepLoggedIn = Boolean(value);
+  localStorage.setItem("ezra_keep_logged_in", state.account.keepLoggedIn ? "1" : "0");
+  if (persistToken && accountSignedIn()) {
+    storeAccountToken(state.account.token, state.account.keepLoggedIn);
   }
 }
 
@@ -1273,6 +1330,7 @@ const state = {
     recoveryOpen: false,
     phase: STORED_ACCOUNT_TOKEN ? "RESTORING_SESSION" : "SIGNED_OUT",
     uiState: "SIGNED_OUT_IDLE",
+    keepLoggedIn: EFFECTIVE_KEEP_LOGGED_IN,
     pending: {},
     activeAction: "",
     errorLog: [],
@@ -1419,6 +1477,7 @@ const el = {
   accountNameInput: document.getElementById("account-name-input"),
   accountEmailInput: document.getElementById("account-email-input"),
   accountPinInput: document.getElementById("account-pin-input"),
+  accountKeepLoggedIn: document.getElementById("account-keep-logged-in"),
   accountRegisterBtn: document.getElementById("account-register-btn"),
   accountLoginBtn: document.getElementById("account-login-btn"),
   accountForgotBtn: document.getElementById("account-forgot-btn"),
@@ -1429,6 +1488,7 @@ const el = {
   accountRecoveryResetBtn: document.getElementById("account-recovery-reset-btn"),
   accountRecoveryCancelBtn: document.getElementById("account-recovery-cancel-btn"),
   accountEmailManageInput: document.getElementById("account-email-manage-input"),
+  accountKeepLoggedInSignedIn: document.getElementById("account-keep-logged-in-signedin"),
   accountAvatarPreview: document.getElementById("account-avatar-preview"),
   avatarHeroImg: document.getElementById("avatar-hero-img"),
   avatarBuilderSignedOut: document.getElementById("avatar-builder-signedout"),
@@ -1864,6 +1924,8 @@ function updateAccountControlsState() {
   if (el.accountEmailManageInput) el.accountEmailManageInput.disabled = busy || !signedIn;
   if (el.accountAvatarSaveBtn) el.accountAvatarSaveBtn.disabled = avatarBusy || !signedIn;
   if (el.accountAvatarRandomBtn) el.accountAvatarRandomBtn.disabled = avatarBusy || !signedIn;
+  if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.disabled = busy;
+  if (el.accountKeepLoggedInSignedIn) el.accountKeepLoggedInSignedIn.disabled = busy;
   const avatarInputs = [
     el.avatarHairStyleInput,
     el.avatarHeadShapeInput,
@@ -2079,6 +2141,12 @@ function renderAccountUI() {
   updateAccountControlsState();
   setAvatarTab(state.avatarTab);
   scheduleAvatar3DUpgrade();
+  if (el.accountKeepLoggedIn) {
+    el.accountKeepLoggedIn.checked = Boolean(state.account.keepLoggedIn);
+  }
+  if (el.accountKeepLoggedInSignedIn) {
+    el.accountKeepLoggedInSignedIn.checked = Boolean(state.account.keepLoggedIn);
+  }
 }
 
 function updateFamilyControlsState() {
@@ -3106,7 +3174,7 @@ async function signInFromInviteModal() {
     state.account.user = data.user || null;
     state.account.recoveryOpen = false;
     setAccountPhase("AUTHENTICATED");
-    localStorage.setItem("ezra_account_token", state.account.token);
+    storeAccountToken(state.account.token, state.account.keepLoggedIn);
     await runPostAuthBootstrap("Signed in");
     renderAccountUI();
     renderFamilyLeaguePanel();
@@ -3138,7 +3206,7 @@ async function registerFromInviteModal() {
     state.account.user = data.user || null;
     state.account.recoveryOpen = false;
     setAccountPhase("AUTHENTICATED");
-    localStorage.setItem("ezra_account_token", state.account.token);
+    storeAccountToken(state.account.token, state.account.keepLoggedIn);
     await runPostAuthBootstrap("Account created");
     await safeLoad(() => syncCloudStateNow(), null);
     renderAccountUI();
@@ -7130,6 +7198,9 @@ function scheduleCloudStateSync(delayMs = 1200) {
 
 async function initAccountSession() {
   renderAccountUI();
+  state.account.keepLoggedIn = resolveKeepLoggedInFromStorage();
+  if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.checked = Boolean(state.account.keepLoggedIn);
+  if (el.accountKeepLoggedInSignedIn) el.accountKeepLoggedInSignedIn.checked = Boolean(state.account.keepLoggedIn);
   if (!state.account.token) {
     setAccountPhase("SIGNED_OUT");
     resetAccountScopedLocalState();
@@ -7155,7 +7226,7 @@ async function initAccountSession() {
     state.account.token = "";
     state.account.user = null;
     setAccountPhase("SIGNED_OUT");
-    localStorage.removeItem("ezra_account_token");
+    clearStoredAccountToken();
     renderAccountUI();
     renderFamilyLeaguePanel();
     refreshVisibleFixturePredictionBadges();
@@ -7175,7 +7246,8 @@ async function registerAccount() {
   state.account.user = data.user || null;
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
-  localStorage.setItem("ezra_account_token", state.account.token);
+  state.account.keepLoggedIn = getKeepLoggedInSelection();
+  storeAccountToken(state.account.token, state.account.keepLoggedIn);
   const result = await runPostAuthBootstrap("Account created");
   const partialWarning = Boolean(result?.partialWarning);
   await safeLoad(() => syncCloudStateNow(), null);
@@ -7232,7 +7304,8 @@ async function loginAccount() {
   state.account.user = data.user || null;
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
-  localStorage.setItem("ezra_account_token", state.account.token);
+  state.account.keepLoggedIn = getKeepLoggedInSelection();
+  storeAccountToken(state.account.token, state.account.keepLoggedIn);
   const result = await runPostAuthBootstrap("Signed in");
   const partialWarning = Boolean(result?.partialWarning);
   renderAccountUI();
@@ -7274,7 +7347,8 @@ async function completePinRecovery() {
   state.account.user = data.user || null;
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
-  localStorage.setItem("ezra_account_token", state.account.token);
+  state.account.keepLoggedIn = getKeepLoggedInSelection();
+  storeAccountToken(state.account.token, state.account.keepLoggedIn);
   if (el.accountPinInput) el.accountPinInput.value = "";
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.value = "";
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.value = "";
@@ -7337,7 +7411,7 @@ async function logoutAccount() {
     clearTimeout(state.account.leagueRefreshTimer);
     state.account.leagueRefreshTimer = null;
   }
-  localStorage.removeItem("ezra_account_token");
+  clearStoredAccountToken();
   resetAccountScopedLocalState();
   state.challengeDashboard = null;
   state.challengeDashboardAt = 0;
@@ -10009,6 +10083,20 @@ function attachEvents() {
       setAccountRecoveryOpen(false);
       if (el.accountPinInput) el.accountPinInput.focus();
       setAccountStatus("Back to sign in.");
+    });
+  }
+
+  if (el.accountKeepLoggedIn) {
+    el.accountKeepLoggedIn.addEventListener("change", () => {
+      setKeepLoggedInPreference(Boolean(el.accountKeepLoggedIn.checked), true);
+      renderAccountUI();
+    });
+  }
+
+  if (el.accountKeepLoggedInSignedIn) {
+    el.accountKeepLoggedInSignedIn.addEventListener("change", () => {
+      setKeepLoggedInPreference(Boolean(el.accountKeepLoggedInSignedIn.checked), true);
+      renderAccountUI();
     });
   }
 

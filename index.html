@@ -95,6 +95,10 @@
                   <input id="account-name-input" class="account-input" type="text" maxlength="32" placeholder="Display name" />
                   <input id="account-email-input" class="account-input" type="email" maxlength="254" placeholder="Recovery email (optional)" />
                   <input id="account-pin-input" class="account-input" type="password" maxlength="24" placeholder="PIN / passcode" />
+                  <label class="account-checkbox">
+                    <input id="account-keep-logged-in" type="checkbox" />
+                    Keep me logged in on this device
+                  </label>
                   <div class="account-actions">
                     <button id="account-register-btn" class="btn" type="button">Create Account</button>
                     <button id="account-login-btn" class="btn" type="button">Sign In</button>
@@ -113,6 +117,10 @@
                 <div id="account-auth-signedin" class="account-auth-box hidden">
                   <p id="account-user-label" class="muted">Signed in</p>
                   <input id="account-email-manage-input" class="account-input" type="email" maxlength="254" placeholder="Add recovery email" />
+                  <label class="account-checkbox">
+                    <input id="account-keep-logged-in-signedin" type="checkbox" />
+                    Keep me logged in on this device
+                  </label>
                   <div class="account-actions">
                     <button id="account-email-save-btn" class="btn" type="button">Save Email</button>
                     <button id="account-sync-btn" class="btn" type="button">Sync Save</button>
