@@ -168,6 +168,20 @@ function defaultHigherLowerState() {
 }
 
 const AVATAR_OPTIONS = {
+  variant: [
+    "steady-boy",
+    "cute-girl",
+    "dribbling-girl",
+    "shooting-girl",
+    "heading-girl",
+    "celebrate-girl",
+    "tackle-boy",
+    "heading-boy",
+    "catching-boy",
+    "winning-boy",
+    "slide-winning-boy",
+    "celebrate-boy",
+  ],
   hairStyle: ["short", "fade", "spike", "curly", "long", "bun", "bald"],
   headShape: ["round", "oval", "square"],
   noseStyle: ["button", "straight", "round"],
@@ -199,6 +213,7 @@ const AVATAR_PALETTES = {
 
 const DEFAULT_AVATAR_TEMPLATES = [
   {
+    variant: "steady-boy",
     hairStyle: "short",
     headShape: "oval",
     noseStyle: "button",
@@ -216,6 +231,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#2B88D8",
   },
   {
+    variant: "tackle-boy",
     hairStyle: "fade",
     headShape: "square",
     noseStyle: "straight",
@@ -233,6 +249,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#37A060",
   },
   {
+    variant: "celebrate-boy",
     hairStyle: "curly",
     headShape: "round",
     noseStyle: "round",
@@ -250,6 +267,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#2B88D8",
   },
   {
+    variant: "cute-girl",
     hairStyle: "long",
     headShape: "oval",
     noseStyle: "button",
@@ -267,6 +285,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#DE5C8E",
   },
   {
+    variant: "celebrate-girl",
     hairStyle: "bun",
     headShape: "round",
     noseStyle: "straight",
@@ -383,6 +402,9 @@ function normalizeAvatarBaseModel(THREE, root) {
 
 function chooseAvatarModelVariant(avatar, seed = "") {
   const safe = sanitizeAvatarConfig(avatar, seed);
+  if (AVATAR_OPTIONS.variant.includes(String(safe.variant || ""))) {
+    return safe.variant;
+  }
   const prefersGirl = safe.hairStyle === "long" || safe.hairStyle === "bun";
   if (safe.brow === "focused") return prefersGirl ? "shooting-girl" : "tackle-boy";
   if (safe.brow === "cheeky") return prefersGirl ? "celebrate-girl" : "winning-boy";
@@ -1141,6 +1163,10 @@ function upgradeAvatarImages3D() {
     if (!configEncoded) return;
     const avatar = decodeAvatarData(configEncoded);
     if (!avatar) return;
+    if (size <= 100) {
+      img.src = avatarStaticFallbackUrl(avatar, seed, size);
+      return;
+    }
     const key = avatar3DKey(avatar, seed, size);
     if (AVATAR_3D.cache.has(key)) {
       img.src = AVATAR_3D.cache.get(key);
@@ -1291,6 +1317,24 @@ function accountLifetimePoints() {
 }
 
 function applyAvatarStyleLocks() {
+  const points = accountLifetimePoints();
+  const locks = avatarLockRules(points);
+
+  const variantUnlockAt = {
+    "steady-boy": 0,
+    "cute-girl": 0,
+    "dribbling-girl": 120,
+    "shooting-girl": 120,
+    "heading-boy": 120,
+    "heading-girl": 120,
+    "tackle-boy": 180,
+    "catching-boy": 180,
+    "celebrate-girl": 240,
+    "celebrate-boy": 240,
+    "winning-boy": 320,
+    "slide-winning-boy": 320,
+  };
+
   const applySelectLocks = (select) => {
     if (!select) return;
     [...select.options].forEach((opt) => {
@@ -1305,12 +1349,32 @@ function applyAvatarStyleLocks() {
   applySelectLocks(el.avatarHairStyleInput);
   applySelectLocks(el.avatarKitStyleInput);
   applySelectLocks(el.avatarBootsStyleInput);
+  applySelectLocks(el.avatarVariantInput);
+
+  const lockOption = (select, value, unlockAt) => {
+    if (!select) return;
+    const opt = [...select.options].find((row) => row.value === value);
+    if (!opt) return;
+    opt.disabled = true;
+    opt.textContent = `${opt.dataset.baseLabel} (unlock at ${unlockAt} pts)`;
+    opt.title = opt.textContent;
+  };
+
+  [...locks.hair].forEach((value) => lockOption(el.avatarHairStyleInput, value, 140));
+  [...locks.kit].forEach((value) => lockOption(el.avatarKitStyleInput, value, value === "total90" ? 320 : 180));
+  [...locks.boots].forEach((value) => lockOption(el.avatarBootsStyleInput, value, 100));
+
+  [...locks.variants].forEach((value) => {
+    const unlockAt = Number(variantUnlockAt[value] || 0);
+    lockOption(el.avatarVariantInput, value, unlockAt);
+  });
 }
 
 function avatarLockRules(points) {
   const hairLocked = new Set();
   const kitLocked = new Set();
   const bootsLocked = new Set();
+  const variantLocked = new Set();
   if (points < 100) {
     bootsLocked.add("speed");
     bootsLocked.add("high");
@@ -1323,11 +1387,33 @@ function avatarLockRules(points) {
   } else if (points < 320) {
     ["total90"].forEach((style) => kitLocked.add(style));
   }
-  return { hair: hairLocked, kit: kitLocked, boots: bootsLocked };
+  if (points < 120) {
+    ["dribbling-girl", "shooting-girl", "heading-boy", "heading-girl"].forEach((id) => variantLocked.add(id));
+  }
+  if (points < 180) {
+    ["tackle-boy", "catching-boy"].forEach((id) => variantLocked.add(id));
+  }
+  if (points < 240) {
+    ["celebrate-girl", "celebrate-boy"].forEach((id) => variantLocked.add(id));
+  }
+  if (points < 320) {
+    ["winning-boy", "slide-winning-boy"].forEach((id) => variantLocked.add(id));
+  }
+  return { hair: hairLocked, kit: kitLocked, boots: bootsLocked, variants: variantLocked };
 }
 
 function applyAvatarLocksToConfig(avatar) {
-  return { ...avatar };
+  const points = accountLifetimePoints();
+  const locks = avatarLockRules(points);
+  const safe = { ...avatar };
+  if (locks.hair.has(safe.hairStyle)) safe.hairStyle = "short";
+  if (locks.kit.has(safe.kitStyle)) safe.kitStyle = "plain";
+  if (locks.boots.has(safe.bootsStyle)) safe.bootsStyle = "classic";
+  if (locks.variants.has(safe.variant)) {
+    const fallback = AVATAR_OPTIONS.variant.find((id) => !locks.variants.has(id)) || "steady-boy";
+    safe.variant = fallback;
+  }
+  return safe;
 }
 
 function renderAvatarUnlockRail() {
@@ -1362,6 +1448,7 @@ function defaultAvatarConfig(seed = "") {
   const shortsPalette = AVATAR_PALETTES.shortsColor;
   const socksPalette = AVATAR_PALETTES.socksColor;
   const base = {
+    variant: AVATAR_OPTIONS.variant[avatarSeedIndex(`${seed}:variant`, AVATAR_OPTIONS.variant.length)],
     hairStyle: AVATAR_OPTIONS.hairStyle[avatarSeedIndex(`${seed}:hair`, AVATAR_OPTIONS.hairStyle.length)],
     headShape: AVATAR_OPTIONS.headShape[avatarSeedIndex(`${seed}:head`, AVATAR_OPTIONS.headShape.length)],
     noseStyle: AVATAR_OPTIONS.noseStyle[avatarSeedIndex(`${seed}:nose`, AVATAR_OPTIONS.noseStyle.length)],
@@ -1387,6 +1474,7 @@ function sanitizeAvatarConfig(input, seed = "") {
   const src = input && typeof input === "object" ? input : {};
   const pick = (v, allow, fallback) => (allow.includes(String(v || "")) ? String(v) : fallback);
   return {
+    variant: pick(src.variant, AVATAR_OPTIONS.variant, base.variant),
     hairStyle: pick(src.hairStyle, AVATAR_OPTIONS.hairStyle, base.hairStyle),
     headShape: pick(src.headShape, AVATAR_OPTIONS.headShape, base.headShape),
     noseStyle: pick(src.noseStyle, AVATAR_OPTIONS.noseStyle, base.noseStyle),
@@ -1769,6 +1857,7 @@ const el = {
   avatarTemplatePreviews: [...document.querySelectorAll(".avatar-template-preview")],
   avatarTabButtons: [...document.querySelectorAll(".avatar-tab-btn")],
   avatarPersonalityButtons: [...document.querySelectorAll(".avatar-personality-btn")],
+  avatarVariantInput: document.getElementById("avatar-variant"),
   avatarHairStyleInput: document.getElementById("avatar-hair-style"),
   avatarHeadShapeInput: document.getElementById("avatar-head-shape"),
   avatarNoseStyleInput: document.getElementById("avatar-nose-style"),
@@ -2200,6 +2289,7 @@ function updateAccountControlsState() {
   if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.disabled = busy;
   if (el.accountKeepLoggedInSignedIn) el.accountKeepLoggedInSignedIn.disabled = busy;
   const avatarInputs = [
+    el.avatarVariantInput,
     el.avatarHairStyleInput,
     el.avatarHeadShapeInput,
     el.avatarNoseStyleInput,
@@ -2271,6 +2361,7 @@ function readAvatarEditorState() {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   return sanitizeAvatarConfig(
     {
+      variant: el.avatarVariantInput?.value,
       hairStyle: el.avatarHairStyleInput?.value,
       headShape: el.avatarHeadShapeInput?.value,
       noseStyle: el.avatarNoseStyleInput?.value,
@@ -2294,6 +2385,7 @@ function readAvatarEditorState() {
 function writeAvatarEditorState(avatar) {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   const safe = applyAvatarLocksToConfig(sanitizeAvatarConfig(avatar, seed));
+  if (el.avatarVariantInput) el.avatarVariantInput.value = safe.variant;
   if (el.avatarHairStyleInput) el.avatarHairStyleInput.value = safe.hairStyle;
   if (el.avatarHeadShapeInput) el.avatarHeadShapeInput.value = safe.headShape;
   if (el.avatarNoseStyleInput) el.avatarNoseStyleInput.value = safe.noseStyle;
@@ -2417,6 +2509,7 @@ function renderAccountUI() {
     setAvatarSaveState("saved", "Saved");
     applyAvatarStyleLocks();
     const avatarInputs = [
+      el.avatarVariantInput,
       el.avatarHairStyleInput,
       el.avatarHeadShapeInput,
       el.avatarNoseStyleInput,
@@ -10438,6 +10531,7 @@ function attachEvents() {
   }
 
   const avatarInputs = [
+    el.avatarVariantInput,
     el.avatarHairStyleInput,
     el.avatarHeadShapeInput,
     el.avatarNoseStyleInput,
