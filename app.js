@@ -6606,6 +6606,59 @@ function parseStatusText(event) {
   return (event?.strStatus || event?.strProgress || "").toLowerCase();
 }
 
+function eventStateWeight(event) {
+  const key = eventState(event).key;
+  if (key === "final") return 3;
+  if (key === "live") return 2;
+  if (key === "upcoming") return 1;
+  return 0;
+}
+
+function scoreCompleteness(event) {
+  if (!event) return 0;
+  if (hasScore(event)) return 2;
+  if (event.intHomeScore !== null && event.intHomeScore !== undefined) return 1;
+  if (event.intAwayScore !== null && event.intAwayScore !== undefined) return 1;
+  return 0;
+}
+
+function pickPreferredEvent(primary, secondary) {
+  const a = primary || null;
+  const b = secondary || null;
+  if (a && !b) return a;
+  if (b && !a) return b;
+  if (!a && !b) return null;
+  const aw = eventStateWeight(a);
+  const bw = eventStateWeight(b);
+  if (aw !== bw) return aw > bw ? a : b;
+  const as = scoreCompleteness(a);
+  const bs = scoreCompleteness(b);
+  if (as !== bs) return as > bs ? a : b;
+  return a;
+}
+
+function mergeEventPreferFresh(primary, secondary) {
+  if (!primary && !secondary) return null;
+  const base = primary || {};
+  const detail = secondary || {};
+  const merged = { ...detail, ...base };
+  Object.entries(detail).forEach(([key, value]) => {
+    if (merged[key] === "" || merged[key] === null || merged[key] === undefined) {
+      merged[key] = value;
+    }
+  });
+  const preferred = pickPreferredEvent(base, detail);
+  if (preferred) {
+    ["strStatus", "strProgress", "intHomeScore", "intAwayScore", "strHomeScore", "strAwayScore"].forEach((field) => {
+      const value = preferred[field];
+      if (value !== "" && value !== null && value !== undefined) {
+        merged[field] = value;
+      }
+    });
+  }
+  return merged;
+}
+
 function liveProgressLabel(event) {
   const raw = String(event?.strStatus || event?.strProgress || "").trim();
   if (!raw) return "LIVE";
@@ -8014,7 +8067,7 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   detailsEl.classList.add("loading");
   detailsEl.innerHTML = `${renderDetailRows(baseRows)}<p class="detail-empty">Loading match details...</p>`;
   const rich = await getRichEventData(eventId);
-  const core = { ...(event || {}), ...(rich?.event || {}) };
+  const core = mergeEventPreferFresh(event, rich?.event) || { ...(event || {}), ...(rich?.event || {}) };
   const resolvedState = eventState(core);
   const rows = detailRowsFromEvent(core, resolvedState);
   const statsHtml = renderStatsTable(rich?.stats);
@@ -9466,8 +9519,8 @@ async function renderFavorite() {
     todayEvent?.idEvent ? safeLoad(() => fetchEventById(todayEvent.idEvent), null) : Promise.resolve(null),
     liveEvent?.idEvent ? safeLoad(() => fetchEventById(liveEvent.idEvent), null) : Promise.resolve(null),
   ]);
-  const todayEventDetailed = todayEventDetailedRes || todayEvent;
-  const liveEventDetailed = liveEventDetailedRes || liveEvent;
+  const todayEventDetailed = mergeEventPreferFresh(todayEvent, todayEventDetailedRes);
+  const liveEventDetailed = mergeEventPreferFresh(liveEvent, liveEventDetailedRes);
   const chosenToday = liveEventDetailed || todayEventDetailed;
   const mergedNextEvents = mergeUniqueEvents([...nextEvents, ...cachedWindow]).sort(fixtureSort);
   const todayUpcomingFromNext = mergedNextEvents.find((event) => event.dateEvent === todayIso) || null;
