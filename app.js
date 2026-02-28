@@ -985,7 +985,7 @@ function sanitizeAvatarConfig(input, seed = "") {
 function avatarSvgDataUri(input, seed = "", size = 96) {
   const a = sanitizeAvatarConfig(input, seed);
   const browTilt =
-    avatar.brow === "focused" ? 0.22 : avatar.brow === "cheeky" ? -0.06 : -0.16;
+    a.brow === "focused" ? 0.22 : a.brow === "cheeky" ? -0.06 : -0.16;
   const hair =
     a.hairStyle === "bald"
       ? ""
