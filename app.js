@@ -114,6 +114,7 @@ const AVATAR_OPTIONS = {
   hairStyle: ["short", "fade", "spike", "curly", "long", "bun", "bald"],
   headShape: ["round", "oval", "square"],
   mouth: ["smile", "flat", "open"],
+  brow: ["soft", "focused", "cheeky"],
   kitStyle: ["plain", "sleeves", "diamond", "stripes", "hoops", "total90"],
   bootsStyle: ["classic", "speed", "high"],
 };
@@ -141,6 +142,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     hairStyle: "short",
     headShape: "oval",
     mouth: "smile",
+    brow: "soft",
     skinColor: "#F8D5B5",
     hairColor: "#3B2518",
     eyeColor: "#36506C",
@@ -154,6 +156,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     hairStyle: "fade",
     headShape: "square",
     mouth: "flat",
+    brow: "focused",
     skinColor: "#A8724A",
     hairColor: "#17100B",
     eyeColor: "#201712",
@@ -167,6 +170,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     hairStyle: "curly",
     headShape: "round",
     mouth: "smile",
+    brow: "cheeky",
     skinColor: "#6E452C",
     hairColor: "#17100B",
     eyeColor: "#356346",
@@ -180,6 +184,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     hairStyle: "long",
     headShape: "oval",
     mouth: "smile",
+    brow: "soft",
     skinColor: "#D9A173",
     hairColor: "#9D734F",
     eyeColor: "#3B2A1C",
@@ -193,6 +198,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     hairStyle: "bun",
     headShape: "round",
     mouth: "open",
+    brow: "cheeky",
     skinColor: "#EEC19A",
     hairColor: "#D9B8A8",
     eyeColor: "#4A4A4A",
@@ -361,6 +367,7 @@ function createHairTexture(THREE, baseColor) {
 
 function buildAvatar3DGroup(THREE, avatar) {
   const group = new THREE.Group();
+  const browTilt = avatar.brow === "focused" ? 0.22 : avatar.brow === "cheeky" ? -0.06 : -0.16;
   const skin = new THREE.Color(avatar.skinColor);
   const hair = new THREE.Color(avatar.hairColor);
   const eye = new THREE.Color(avatar.eyeColor);
@@ -537,8 +544,8 @@ function buildAvatar3DGroup(THREE, avatar) {
   const browR = new THREE.Mesh(browGeo, browMat);
   browL.position.set(-0.2, 1.08, 0.5);
   browR.position.set(0.2, 1.08, 0.5);
-  browL.rotation.z = -0.08;
-  browR.rotation.z = 0.08;
+  browL.rotation.z = -0.08 + browTilt;
+  browR.rotation.z = 0.08 - browTilt;
   const highlightGeo = new THREE.SphereGeometry(0.02, 10, 10);
   const highlightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.08, metalness: 0.1 });
   const hiL = new THREE.Mesh(highlightGeo, highlightMat);
@@ -753,7 +760,7 @@ function renderAvatarTemplates() {
     const preview = el.avatarTemplatePreviews[idx];
     if (!template || !preview) return;
     const seed = `template:${idx}`;
-    const safe = sanitizeAvatarConfig(template, seed);
+    const safe = applyAvatarLocksToConfig(sanitizeAvatarConfig(template, seed));
     preview.src = avatarSvgDataUri(safe, seed, 96);
     preview.dataset.avatarConfig = encodeAvatarData(safe);
     preview.dataset.avatarSeed = seed;
@@ -769,6 +776,28 @@ function showAvatarSaveToast() {
   state.avatarSaveToastTimer = setTimeout(() => {
     el.avatarSaveToast?.classList.add("hidden");
   }, 2000);
+}
+
+function setAvatarPersonalityActive(brow) {
+  if (!el.avatarPersonalityButtons.length) return;
+  el.avatarPersonalityButtons.forEach((btn) => {
+    const active = String(btn.dataset.avatarPersonality || "") === String(brow);
+    btn.classList.toggle("active", active);
+  });
+}
+
+function applyPersonalityPreset(preset) {
+  const key = String(preset || "soft");
+  const map = {
+    soft: { mouth: "smile", brow: "soft" },
+    focused: { mouth: "flat", brow: "focused" },
+    cheeky: { mouth: "open", brow: "cheeky" },
+  };
+  const config = map[key] || map.soft;
+  const current = readAvatarEditorState();
+  writeAvatarEditorState({ ...current, ...config });
+  setAvatarPersonalityActive(config.brow);
+  scheduleAvatarAutoSave("personality");
 }
 
 function avatarConfigSignature(avatar) {
@@ -827,15 +856,68 @@ function accountLifetimePoints() {
 }
 
 function applyAvatarStyleLocks() {
-  const lockable = [el.avatarHairStyleInput, el.avatarKitStyleInput, el.avatarBootsStyleInput];
-  lockable.forEach((select) => {
+  const points = accountLifetimePoints();
+  const locks = avatarLockRules(points);
+  const applySelectLocks = (select, lockedValues, labelSuffix, unlockPointsMap) => {
     if (!select) return;
+    const currentValue = select.value;
     [...select.options].forEach((opt) => {
       if (!opt.dataset.baseLabel) opt.dataset.baseLabel = opt.textContent || opt.value;
-      opt.disabled = false;
-      opt.textContent = opt.dataset.baseLabel;
+      const value = String(opt.value || "");
+      const locked = lockedValues.has(value);
+      const isCurrent = value === currentValue;
+      opt.disabled = locked && !isCurrent;
+      opt.textContent = locked ? `${opt.dataset.baseLabel} ${labelSuffix}` : opt.dataset.baseLabel;
+      const unlockPoints = unlockPointsMap?.[value];
+      opt.title = locked && unlockPoints ? `Unlock at ${unlockPoints} pts` : opt.dataset.baseLabel;
     });
+  };
+
+  applySelectLocks(el.avatarHairStyleInput, locks.hair, "🔒", {
+    spike: 140,
+    curly: 140,
+    long: 140,
+    bun: 140,
   });
+  applySelectLocks(el.avatarKitStyleInput, locks.kit, "🔒", {
+    stripes: 180,
+    hoops: 180,
+    diamond: 180,
+    total90: 320,
+  });
+  applySelectLocks(el.avatarBootsStyleInput, locks.boots, "🔒", {
+    speed: 100,
+    high: 100,
+  });
+}
+
+function avatarLockRules(points) {
+  const hairLocked = new Set();
+  const kitLocked = new Set();
+  const bootsLocked = new Set();
+  if (points < 100) {
+    bootsLocked.add("speed");
+    bootsLocked.add("high");
+  }
+  if (points < 140) {
+    ["spike", "curly", "long", "bun"].forEach((style) => hairLocked.add(style));
+  }
+  if (points < 180) {
+    ["stripes", "hoops", "diamond", "total90"].forEach((style) => kitLocked.add(style));
+  } else if (points < 320) {
+    ["total90"].forEach((style) => kitLocked.add(style));
+  }
+  return { hair: hairLocked, kit: kitLocked, boots: bootsLocked };
+}
+
+function applyAvatarLocksToConfig(avatar) {
+  const points = accountLifetimePoints();
+  const locks = avatarLockRules(points);
+  const safe = { ...avatar };
+  if (locks.hair.has(safe.hairStyle)) safe.hairStyle = "short";
+  if (locks.boots.has(safe.bootsStyle)) safe.bootsStyle = "classic";
+  if (locks.kit.has(safe.kitStyle)) safe.kitStyle = "plain";
+  return safe;
 }
 
 function renderAvatarUnlockRail() {
@@ -867,6 +949,7 @@ function defaultAvatarConfig(seed = "") {
     headShape: AVATAR_OPTIONS.headShape[avatarSeedIndex(`${seed}:head`, AVATAR_OPTIONS.headShape.length)],
     eyeColor: eyePalette[avatarSeedIndex(`${seed}:eye`, eyePalette.length)],
     mouth: AVATAR_OPTIONS.mouth[avatarSeedIndex(`${seed}:mouth`, AVATAR_OPTIONS.mouth.length)],
+    brow: AVATAR_OPTIONS.brow[avatarSeedIndex(`${seed}:brow`, AVATAR_OPTIONS.brow.length)],
     skinColor: skinPalette[avatarSeedIndex(`${seed}:skin`, skinPalette.length)],
     hairColor: hairPalette[avatarSeedIndex(`${seed}:haircolor`, hairPalette.length)],
     kitColor1: primaryPalette[avatarSeedIndex(`${seed}:kit1`, primaryPalette.length)],
@@ -888,6 +971,7 @@ function sanitizeAvatarConfig(input, seed = "") {
     headShape: pick(src.headShape, AVATAR_OPTIONS.headShape, base.headShape),
     eyeColor: clampAvatarColor(src.eyeColor, base.eyeColor, "eyeColor"),
     mouth: pick(src.mouth, AVATAR_OPTIONS.mouth, base.mouth),
+    brow: pick(src.brow, AVATAR_OPTIONS.brow, base.brow),
     skinColor: clampAvatarColor(src.skinColor, base.skinColor, "skinColor"),
     hairColor: clampAvatarColor(src.hairColor, base.hairColor, "hairColor"),
     kitColor1: clampAvatarColor(src.kitColor1, base.kitColor1, "kitColor1"),
@@ -900,6 +984,8 @@ function sanitizeAvatarConfig(input, seed = "") {
 
 function avatarSvgDataUri(input, seed = "", size = 96) {
   const a = sanitizeAvatarConfig(input, seed);
+  const browTilt =
+    avatar.brow === "focused" ? 0.22 : avatar.brow === "cheeky" ? -0.06 : -0.16;
   const hair =
     a.hairStyle === "bald"
       ? ""
@@ -948,6 +1034,9 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
       : a.bootsStyle === "high"
         ? `<rect x="32.1" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="52.6" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="33.2" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/><rect x="53.7" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/>`
         : `<ellipse cx="39.8" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/><ellipse cx="60.2" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/>`;
+
+  const browLeft = `<g transform="translate(42 36) rotate(${(-browTilt * 90).toFixed(1)})"><rect x="-6" y="-1" width="12" height="2.2" rx="1.1" fill="rgba(31,16,8,0.7)"/></g>`;
+  const browRight = `<g transform="translate(58 36) rotate(${(browTilt * 90).toFixed(1)})"><rect x="-6" y="-1" width="12" height="2.2" rx="1.1" fill="rgba(31,16,8,0.7)"/></g>`;
 
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
@@ -998,6 +1087,8 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
   <ellipse cx="34.8" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
   <ellipse cx="65.2" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
   ${faceShape}
+  ${browLeft}
+  ${browRight}
   <ellipse cx="46.6" cy="30.3" rx="7.8" ry="5.4" fill="url(#faceGlow)"/>
   <circle cx="50" cy="40" r="17.9" fill="none" stroke="rgba(0,0,0,0.18)" stroke-width="1"/>
   ${hair}
@@ -1128,6 +1219,7 @@ const state = {
   avatarAutoSaveTimer: null,
   avatarDraftHash: "",
   avatarLastSavedHash: "",
+  avatarPersonalityBrow: "soft",
   teamPlayersCache: {},
   playerQuiz: {
     poolKey: "",
@@ -1338,6 +1430,7 @@ const el = {
   accountRecoveryCancelBtn: document.getElementById("account-recovery-cancel-btn"),
   accountEmailManageInput: document.getElementById("account-email-manage-input"),
   accountAvatarPreview: document.getElementById("account-avatar-preview"),
+  avatarHeroImg: document.getElementById("avatar-hero-img"),
   avatarBuilderSignedOut: document.getElementById("avatar-builder-signedout"),
   avatarBuilderSignedIn: document.getElementById("avatar-builder-signedin"),
   accountAvatarSaveBtn: document.getElementById("account-avatar-save-btn"),
@@ -1346,6 +1439,7 @@ const el = {
   avatarTemplateButtons: [...document.querySelectorAll(".avatar-template-btn")],
   avatarTemplatePreviews: [...document.querySelectorAll(".avatar-template-preview")],
   avatarTabButtons: [...document.querySelectorAll(".avatar-tab-btn")],
+  avatarPersonalityButtons: [...document.querySelectorAll(".avatar-personality-btn")],
   avatarHairStyleInput: document.getElementById("avatar-hair-style"),
   avatarHeadShapeInput: document.getElementById("avatar-head-shape"),
   avatarMouthStyleInput: document.getElementById("avatar-mouth-style"),
@@ -1825,6 +1919,7 @@ function readAvatarEditorState() {
       headShape: el.avatarHeadShapeInput?.value,
       eyeColor: el.avatarEyeColorInput?.value,
       mouth: el.avatarMouthStyleInput?.value,
+      brow: state.avatarPersonalityBrow || undefined,
       skinColor: el.avatarSkinColorInput?.value,
       hairColor: el.avatarHairColorInput?.value,
       kitColor1: el.avatarKitColor1Input?.value,
@@ -1839,7 +1934,7 @@ function readAvatarEditorState() {
 
 function writeAvatarEditorState(avatar) {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
-  const safe = sanitizeAvatarConfig(avatar, seed);
+  const safe = applyAvatarLocksToConfig(sanitizeAvatarConfig(avatar, seed));
   if (el.avatarHairStyleInput) el.avatarHairStyleInput.value = safe.hairStyle;
   if (el.avatarHeadShapeInput) el.avatarHeadShapeInput.value = safe.headShape;
   if (el.avatarMouthStyleInput) el.avatarMouthStyleInput.value = safe.mouth;
@@ -1851,11 +1946,19 @@ function writeAvatarEditorState(avatar) {
   if (el.avatarKitColor1Input) el.avatarKitColor1Input.value = safe.kitColor1;
   if (el.avatarKitColor2Input) el.avatarKitColor2Input.value = safe.kitColor2;
   if (el.avatarBootsColorInput) el.avatarBootsColorInput.value = safe.bootsColor;
+  state.avatarPersonalityBrow = safe.brow;
+  setAvatarPersonalityActive(safe.brow);
   if (el.accountAvatarPreview) {
     el.accountAvatarPreview.src = avatarSvgDataUri(safe, seed, 116);
     el.accountAvatarPreview.dataset.avatarConfig = encodeAvatarData(safe);
     el.accountAvatarPreview.dataset.avatarSeed = seed;
     el.accountAvatarPreview.dataset.avatarSize = "116";
+  }
+  if (el.avatarHeroImg) {
+    el.avatarHeroImg.src = avatarSvgDataUri(safe, seed, 220);
+    el.avatarHeroImg.dataset.avatarConfig = encodeAvatarData(safe);
+    el.avatarHeroImg.dataset.avatarSeed = seed;
+    el.avatarHeroImg.dataset.avatarSize = "220";
   }
   if (accountSignedIn() && el.accountToggleAvatar && !el.accountToggleAvatar.classList.contains("hidden")) {
     el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
@@ -9919,6 +10022,14 @@ function attachEvents() {
     el.avatarTabButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         setAvatarTab(btn.dataset.avatarTab || "face");
+      });
+    });
+  }
+
+  if (el.avatarPersonalityButtons.length) {
+    el.avatarPersonalityButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applyPersonalityPreset(btn.dataset.avatarPersonality || "friendly");
       });
     });
   }
