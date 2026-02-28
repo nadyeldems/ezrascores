@@ -229,94 +229,120 @@ function sanitizeAvatarConfig(input, seed = "") {
 
 function avatarSvgDataUri(input, seed = "", size = 96) {
   const a = sanitizeAvatarConfig(input, seed);
-  const head =
-    a.headShape === "oval"
-      ? `<ellipse cx="50" cy="35.5" rx="14.8" ry="16.5" fill="url(#skinGrad)"/>`
-      : a.headShape === "square"
-        ? `<rect x="35.2" y="19" width="29.6" height="32.4" rx="7" fill="url(#skinGrad)"/>`
-        : `<circle cx="50" cy="35.5" r="15.9" fill="url(#skinGrad)"/>`;
-
-  const earCaps = `<ellipse cx="34.8" cy="36.4" rx="1.9" ry="3.3" fill="${a.skinColor}" opacity="0.85"/><ellipse cx="65.2" cy="36.4" rx="1.9" ry="3.3" fill="${a.skinColor}" opacity="0.85"/>`;
-
   const hair =
     a.hairStyle === "bald"
       ? ""
       : a.hairStyle === "fade"
-        ? `<path d="M34.6 25 C39 16.8 61 16.8 65.4 25 L65.4 31.6 C60.6 28.8 39.4 28.8 34.6 31.6 Z" fill="${a.hairColor}"/><rect x="35.3" y="29.7" width="4.8" height="10.8" rx="2.2" fill="${a.hairColor}" opacity="0.55"/><rect x="59.9" y="29.7" width="4.8" height="10.8" rx="2.2" fill="${a.hairColor}" opacity="0.55"/>`
+        ? `<path d="M33.8 24.7 C38.2 16.1 61.8 16.1 66.2 24.7 L66.2 31.8 C62.1 28.9 37.9 28.9 33.8 31.8 Z" fill="url(#hairGrad)"/><path d="M35.5 30.2 C39.8 28.5 60.2 28.5 64.5 30.2" stroke="rgba(255,255,255,0.15)" stroke-width="1.1" fill="none"/>`
         : a.hairStyle === "spike"
-          ? `<path d="M34 29 L36.5 16.5 L42.2 24 L46.8 14.3 L52.7 23 L57.6 14.8 L63.5 25.2 L66 30.3 L66 33.2 C61.4 30 38.6 30 34 33.2 Z" fill="${a.hairColor}"/>`
+          ? `<path d="M33.3 29 L35.6 15.8 L41.6 24.3 L46.7 13.6 L52.9 23.9 L58 14.2 L64.2 25.6 L66.7 30.4 L66.7 33.2 C61.7 30 38.3 30 33.3 33.2 Z" fill="url(#hairGrad)"/><path d="M46.8 18.8 L50 13.6 L53.2 18.8" stroke="rgba(255,255,255,0.2)" stroke-width="0.9" fill="none"/>`
           : a.hairStyle === "curly"
-            ? `<circle cx="38.4" cy="24.6" r="5.5" fill="${a.hairColor}"/><circle cx="45.4" cy="21.4" r="6.3" fill="${a.hairColor}"/><circle cx="54.6" cy="21.2" r="6.4" fill="${a.hairColor}"/><circle cx="61.5" cy="24.3" r="5.4" fill="${a.hairColor}"/><rect x="35.4" y="23.7" width="29.2" height="9" rx="4.4" fill="${a.hairColor}"/>`
-            : `<path d="M34.2 25.6 C38.2 16.6 61.8 16.6 65.8 25.6 L65.8 32.4 C61 29.1 39 29.1 34.2 32.4 Z" fill="${a.hairColor}"/>`;
+            ? `<circle cx="38.5" cy="24.7" r="5.6" fill="url(#hairGrad)"/><circle cx="45.3" cy="21.4" r="6.5" fill="url(#hairGrad)"/><circle cx="54.7" cy="21.4" r="6.5" fill="url(#hairGrad)"/><circle cx="61.5" cy="24.7" r="5.6" fill="url(#hairGrad)"/><rect x="35.2" y="23.8" width="29.6" height="9.6" rx="4.6" fill="url(#hairGrad)"/>`
+            : `<path d="M33.5 25.3 C37.4 16.4 62.6 16.4 66.5 25.3 L66.5 32.3 C61.9 28.9 38.1 28.9 33.5 32.3 Z" fill="url(#hairGrad)"/><path d="M36.8 24.4 C41.2 20.1 58.8 20.1 63.2 24.4" stroke="rgba(255,255,255,0.18)" stroke-width="1.2" fill="none"/>`;
+
+  const faceShape =
+    a.headShape === "oval"
+      ? `<ellipse cx="50" cy="35.8" rx="14.6" ry="16.7" fill="url(#skinGrad)"/>`
+      : a.headShape === "square"
+        ? `<rect x="35.4" y="19.3" width="29.2" height="33.1" rx="7.2" fill="url(#skinGrad)"/>`
+        : `<circle cx="50" cy="35.8" r="15.8" fill="url(#skinGrad)"/>`;
 
   const mouth =
     a.mouth === "open"
-      ? `<ellipse cx="50" cy="43.8" rx="4.2" ry="2.8" fill="#2A1208"/><ellipse cx="50" cy="43.9" rx="2.4" ry="1.4" fill="#6D2A21" opacity="0.55"/>`
+      ? `<ellipse cx="50" cy="44.2" rx="4.4" ry="3" fill="#2A1208"/><ellipse cx="50" cy="44.7" rx="2.6" ry="1.5" fill="#E45446"/><rect x="47.9" y="42.2" width="4.2" height="1" rx="0.5" fill="#fff" opacity="0.9"/>`
       : a.mouth === "flat"
-        ? `<line x1="45.2" y1="43.8" x2="54.8" y2="43.8" stroke="#2A1208" stroke-width="1.75" stroke-linecap="round"/>`
-        : `<path d="M44.9 42.8 Q50 47.5 55.1 42.8" stroke="#2A1208" stroke-width="1.75" fill="none" stroke-linecap="round"/>`;
+        ? `<line x1="45.2" y1="44" x2="54.8" y2="44" stroke="#2A1208" stroke-width="1.8" stroke-linecap="round"/>`
+        : `<path d="M44.6 43.3 Q50 48.4 55.4 43.3" stroke="#2A1208" stroke-width="1.8" fill="none" stroke-linecap="round"/>`;
 
   let kitPattern = "";
   if (a.kitStyle === "sleeves") {
-    kitPattern = `<rect x="22.8" y="58.5" width="10.8" height="15.2" rx="2.8" fill="${a.kitColor2}" opacity="0.92"/><rect x="66.4" y="58.5" width="10.8" height="15.2" rx="2.8" fill="${a.kitColor2}" opacity="0.92"/>`;
+    kitPattern = `<rect x="22.5" y="59.1" width="11.2" height="16" rx="3.1" fill="${a.kitColor2}" opacity="0.92"/><rect x="66.3" y="59.1" width="11.2" height="16" rx="3.1" fill="${a.kitColor2}" opacity="0.92"/>`;
   } else if (a.kitStyle === "diamond") {
-    kitPattern = `<path d="M50 58.4 L60.8 68.3 L50 78.2 L39.2 68.3 Z" fill="${a.kitColor2}" opacity="0.94"/>`;
+    kitPattern = `<path d="M50 58.4 L61 68.5 L50 78.6 L39 68.5 Z" fill="${a.kitColor2}" opacity="0.96"/>`;
   } else if (a.kitStyle === "stripes") {
-    kitPattern = `<rect x="33.3" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/><rect x="43.9" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/><rect x="54.5" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/><rect x="65.1" y="56.8" width="5.2" height="24.8" fill="${a.kitColor2}" opacity="0.94"/>`;
+    kitPattern = `<rect x="33.1" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="43.9" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="54.7" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="65.5" y="56.8" width="5.3" height="24.8" fill="${a.kitColor2}" opacity="0.95"/>`;
   } else if (a.kitStyle === "hoops") {
-    kitPattern = `<rect x="25.2" y="60" width="49.6" height="4.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="25.2" y="68.6" width="49.6" height="4.8" fill="${a.kitColor2}" opacity="0.95"/><rect x="25.2" y="77.2" width="49.6" height="3.8" fill="${a.kitColor2}" opacity="0.9"/>`;
+    kitPattern = `<rect x="24.8" y="59.8" width="50.4" height="4.9" fill="${a.kitColor2}" opacity="0.95"/><rect x="24.8" y="68.7" width="50.4" height="4.9" fill="${a.kitColor2}" opacity="0.95"/><rect x="24.8" y="77.6" width="50.4" height="3.6" fill="${a.kitColor2}" opacity="0.9"/>`;
   } else if (a.kitStyle === "total90") {
-    kitPattern = `<path d="M27 71 C35.5 57.8 64.5 57.8 73 71" stroke="${a.kitColor2}" stroke-width="5.4" fill="none"/><circle cx="50" cy="70.9" r="3.3" fill="${a.kitColor2}"/><path d="M35.4 64.2 L41 61.9" stroke="${a.kitColor2}" stroke-width="2.3"/><path d="M65 64.2 L59.2 61.9" stroke="${a.kitColor2}" stroke-width="2.3"/>`;
+    kitPattern = `<path d="M26.8 71 C35.4 57.7 64.6 57.7 73.2 71" stroke="${a.kitColor2}" stroke-width="5.6" fill="none"/><circle cx="50" cy="71" r="3.4" fill="${a.kitColor2}"/><path d="M35.5 64.2 L40.9 62" stroke="${a.kitColor2}" stroke-width="2.4"/><path d="M64.5 64.2 L59.1 62" stroke="${a.kitColor2}" stroke-width="2.4"/>`;
   }
 
   const boots =
     a.bootsStyle === "speed"
-      ? `<rect x="31.8" y="86" width="15.9" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="52.3" y="86" width="15.9" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="46.2" y="86.7" width="3.4" height="1.6" rx="0.8" fill="rgba(255,255,255,0.35)"/><rect x="66.6" y="86.7" width="3.4" height="1.6" rx="0.8" fill="rgba(255,255,255,0.35)"/>`
+      ? `<rect x="31.7" y="86.1" width="16" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="52.3" y="86.1" width="16" height="4.2" rx="2.1" fill="${a.bootsColor}"/><rect x="45.9" y="86.8" width="3.5" height="1.5" rx="0.7" fill="rgba(255,255,255,0.34)"/><rect x="66.5" y="86.8" width="3.5" height="1.5" rx="0.7" fill="rgba(255,255,255,0.34)"/>`
       : a.bootsStyle === "high"
-        ? `<rect x="32.2" y="81.1" width="15.1" height="9.1" rx="2.5" fill="${a.bootsColor}"/><rect x="52.7" y="81.1" width="15.1" height="9.1" rx="2.5" fill="${a.bootsColor}"/><rect x="33.2" y="82.4" width="13.1" height="1.3" rx="0.6" fill="rgba(255,255,255,0.24)"/><rect x="53.7" y="82.4" width="13.1" height="1.3" rx="0.6" fill="rgba(255,255,255,0.24)"/>`
-        : `<ellipse cx="39.8" cy="87.1" rx="7.7" ry="3.4" fill="${a.bootsColor}"/><ellipse cx="60.2" cy="87.1" rx="7.7" ry="3.4" fill="${a.bootsColor}"/>`;
+        ? `<rect x="32.1" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="52.6" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="33.2" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/><rect x="53.7" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/>`
+        : `<ellipse cx="39.8" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/><ellipse cx="60.2" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/>`;
 
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
   <defs>
-    <radialGradient id="bgGlow" cx="30%" cy="28%" r="78%">
-      <stop offset="0%" stop-color="#2A1608" />
-      <stop offset="100%" stop-color="#0D0602" />
+    <radialGradient id="bgGlow" cx="28%" cy="20%" r="88%">
+      <stop offset="0%" stop-color="#3A230F"/>
+      <stop offset="45%" stop-color="#1A0F07"/>
+      <stop offset="100%" stop-color="#0A0502"/>
     </radialGradient>
-    <linearGradient id="skinGrad" x1="45%" y1="0%" x2="50%" y2="100%">
-      <stop offset="0%" stop-color="${a.skinColor}" />
-      <stop offset="100%" stop-color="${a.skinColor}" />
+    <linearGradient id="skinGrad" x1="42%" y1="0%" x2="58%" y2="100%">
+      <stop offset="0%" stop-color="${a.skinColor}"/>
+      <stop offset="68%" stop-color="${a.skinColor}"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0.24)"/>
+    </linearGradient>
+    <linearGradient id="hairGrad" x1="32%" y1="0%" x2="64%" y2="100%">
+      <stop offset="0%" stop-color="${a.hairColor}"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0.32)"/>
     </linearGradient>
     <linearGradient id="kitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${a.kitColor1}" />
-      <stop offset="100%" stop-color="${a.kitColor2}" />
+      <stop offset="0%" stop-color="${a.kitColor1}"/>
+      <stop offset="100%" stop-color="${a.kitColor2}"/>
+    </linearGradient>
+    <radialGradient id="faceGlow" cx="42%" cy="28%" r="66%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.33)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </radialGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="1.6" stdDeviation="1.6" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="ballShadow" x="-30%" y="-30%" width="170%" height="170%">
+      <feDropShadow dx="0.8" dy="1.8" stdDeviation="1.2" flood-color="#000" flood-opacity="0.4"/>
     </linearGradient>
   </defs>
   <rect x="0" y="0" width="100" height="100" rx="24" fill="url(#bgGlow)"/>
-  <rect x="3.5" y="3.5" width="93" height="93" rx="22" fill="none" stroke="rgba(255,171,59,0.33)" stroke-width="2"/>
-  <rect x="7" y="7" width="86" height="86" rx="19.5" fill="rgba(255,255,255,0.025)"/>
-  <circle cx="50" cy="52" r="40.5" fill="rgba(255,255,255,0.03)" />
-  <path d="M18.8 81 C27.6 67.2 39.9 61.8 50 61.8 C60.1 61.8 72.4 67.2 81.2 81 L81.2 92.8 L18.8 92.8 Z" fill="url(#kitGrad)"/>
-  <path d="M21 80.2 C30 68.6 41.3 63.6 50 63.6 C58.7 63.6 70 68.6 79 80.2" stroke="rgba(0,0,0,0.28)" stroke-width="1.45" fill="none"/>
-  <rect x="24.6" y="57.3" width="50.8" height="24.8" rx="11.2" fill="url(#kitGrad)" opacity="0.95"/>
-  <rect x="24.6" y="57.3" width="50.8" height="24.8" rx="11.2" fill="none" stroke="rgba(0,0,0,0.35)" stroke-width="1.2"/>
+  <rect x="3.5" y="3.5" width="93" height="93" rx="21.6" fill="none" stroke="rgba(255,171,59,0.36)" stroke-width="2"/>
+  <ellipse cx="44" cy="50" rx="34" ry="40" fill="rgba(255,255,255,0.03)"/>
+  <g filter="url(#softShadow)">
+    <path d="M18.8 82 C27.8 67.8 39.7 61.9 50 61.9 C60.3 61.9 72.2 67.8 81.2 82 L81.2 93 L18.8 93 Z" fill="url(#kitGrad)"/>
+    <rect x="24.2" y="57.1" width="51.6" height="25.2" rx="11.6" fill="url(#kitGrad)"/>
+    <rect x="24.2" y="57.1" width="51.6" height="25.2" rx="11.6" fill="none" stroke="rgba(0,0,0,0.33)" stroke-width="1.2"/>
+    <path d="M24.8 68.8 C33.4 66.2 66.6 66.2 75.2 68.8" stroke="rgba(255,255,255,0.12)" stroke-width="1.3" fill="none"/>
+  </g>
   ${kitPattern}
-  <rect x="45.3" y="51.4" width="9.4" height="9.5" rx="3.7" fill="${a.skinColor}" />
-  <circle cx="34.7" cy="66.9" r="4.55" fill="${a.skinColor}" opacity="0.96"/>
-  <circle cx="65.3" cy="66.9" r="4.55" fill="${a.skinColor}" opacity="0.96"/>
+  <rect x="45.1" y="51.2" width="9.8" height="9.8" rx="3.9" fill="${a.skinColor}"/>
+  <circle cx="34.6" cy="67" r="4.7" fill="${a.skinColor}" opacity="0.96"/>
+  <circle cx="65.4" cy="67" r="4.7" fill="${a.skinColor}" opacity="0.96"/>
   ${boots}
-  ${earCaps}
-  ${head}
-  <circle cx="50" cy="40" r="18" fill="none" stroke="rgba(0,0,0,0.16)" stroke-width="1"/>
+  <ellipse cx="34.8" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
+  <ellipse cx="65.2" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
+  ${faceShape}
+  <ellipse cx="46.6" cy="30.3" rx="7.8" ry="5.4" fill="url(#faceGlow)"/>
+  <circle cx="50" cy="40" r="17.9" fill="none" stroke="rgba(0,0,0,0.18)" stroke-width="1"/>
   ${hair}
-  <path d="M41.5 33.8 Q44 31.9 46.5 33.8" stroke="#2D1A12" stroke-width="1.22" fill="none" stroke-linecap="round"/>
-  <path d="M53.5 33.8 Q56 31.9 58.5 33.8" stroke="#2D1A12" stroke-width="1.22" fill="none" stroke-linecap="round"/>
-  <circle cx="44.3" cy="39.1" r="2.42" fill="${a.eyeColor}"/>
-  <circle cx="55.7" cy="39.1" r="2.42" fill="${a.eyeColor}"/>
-  <circle cx="45" cy="38.2" r="0.55" fill="#fff" opacity="0.85"/>
-  <circle cx="56.4" cy="38.2" r="0.55" fill="#fff" opacity="0.85"/>
-  <path d="M50 39.8 L49.2 41.7 L50.4 41.7" stroke="rgba(42,18,8,0.58)" stroke-width="0.92" fill="none" stroke-linecap="round"/>
+  <path d="M41.4 33.8 Q44 31.8 46.6 33.8" stroke="#2D1A12" stroke-width="1.25" fill="none" stroke-linecap="round"/>
+  <path d="M53.4 33.8 Q56 31.8 58.6 33.8" stroke="#2D1A12" stroke-width="1.25" fill="none" stroke-linecap="round"/>
+  <ellipse cx="44.3" cy="39.2" rx="2.45" ry="2.65" fill="${a.eyeColor}"/>
+  <ellipse cx="55.7" cy="39.2" rx="2.45" ry="2.65" fill="${a.eyeColor}"/>
+  <circle cx="45" cy="38.3" r="0.56" fill="#fff" opacity="0.88"/>
+  <circle cx="56.4" cy="38.3" r="0.56" fill="#fff" opacity="0.88"/>
+  <path d="M50 39.9 L49.2 41.9 L50.5 41.9" stroke="rgba(42,18,8,0.56)" stroke-width="0.95" fill="none" stroke-linecap="round"/>
   ${mouth}
+  <g transform="translate(69,64)" filter="url(#ballShadow)">
+    <circle cx="0" cy="0" r="13.6" fill="#f6f6f6"/>
+    <path d="M-4.2 -7 L0 -9.8 L4.2 -7 L3.6 -2.2 L-3.6 -2.2 Z" fill="#2a2a2a"/>
+    <path d="M-12 -1 C-8 -2 -5 -4 -3.2 -7.3" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
+    <path d="M12 -1 C8 -2 5 -4 3.2 -7.3" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
+    <path d="M-10 6 C-6.6 5.2 -4.3 3.1 -3.1 0" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
+    <path d="M10 6 C6.6 5.2 4.3 3.1 3.1 0" stroke="#2a2a2a" stroke-width="1.2" fill="none"/>
+    <circle cx="-4.8" cy="-5.5" r="1.8" fill="rgba(255,255,255,0.6)"/>
+  </g>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
