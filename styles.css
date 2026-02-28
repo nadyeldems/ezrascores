@@ -2012,16 +2012,18 @@ body.league-member-overlay-open::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.12rem;
-  min-width: 2rem;
+  padding: 0.08rem;
+  min-width: 2.12rem;
 }
 
 .account-toggle-avatar {
-  width: 1.45rem;
-  height: 1.45rem;
+  width: 1.72rem;
+  height: 1.72rem;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  object-fit: cover;
+  border: 1px solid var(--line-soft);
+  object-fit: contain;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.15), #0f0703 70%);
+  padding: 0.08rem;
   display: block;
 }
 
@@ -2033,35 +2035,38 @@ body.league-member-overlay-open::before {
 .avatar-editor {
   border: 1px dashed var(--line-soft);
   border-radius: 0.65rem;
-  padding: 0.45rem;
+  padding: 0.58rem;
   display: grid;
-  gap: 0.45rem;
+  gap: 0.52rem;
   background: rgba(255, 255, 255, 0.02);
 }
 
 .avatar-editor-head {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 0.6rem;
 }
 
 .account-avatar-preview {
-  width: 2.45rem;
-  height: 2.45rem;
+  width: 3rem;
+  height: 3rem;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: #100905;
+  border: 1px solid var(--amber-soft);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.16), #0f0703 72%);
+  object-fit: contain;
+  padding: 0.1rem;
 }
 
 .avatar-editor-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.35rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.42rem;
 }
 
 .avatar-editor-field {
   display: grid;
-  gap: 0.2rem;
+  gap: 0.22rem;
   font-size: 0.78rem;
   color: var(--text-muted);
 }
@@ -2073,6 +2078,22 @@ body.league-member-overlay-open::before {
 .avatar-color-input {
   padding: 0.08rem;
   min-height: 1.85rem;
+}
+
+.avatar-builder-signedout {
+  margin-top: 0.2rem;
+}
+
+.avatar-future-note {
+  margin: 0;
+  padding-top: 0.18rem;
+  border-top: 1px dashed var(--line-soft);
+}
+
+#avatar-builder-card .avatar-editor {
+  border-style: solid;
+  border-color: var(--line);
+  background: linear-gradient(180deg, rgba(255, 168, 72, 0.08), rgba(255, 168, 72, 0.02));
 }
 
 .mission-title-with-avatar {
@@ -2099,7 +2120,9 @@ body.league-member-overlay-open::before {
 .member-profile-avatar img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: radial-gradient(circle at 36% 30%, rgba(255, 176, 79, 0.12), #0f0703 70%);
+  padding: 0.06rem;
   display: block;
 }
 
@@ -2958,6 +2981,11 @@ body.league-member-overlay-open::before {
 @media (max-width: 640px) {
   .avatar-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .account-avatar-preview {
+    width: 3.4rem;
+    height: 3.4rem;
   }
 }
 

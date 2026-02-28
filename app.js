@@ -118,9 +118,22 @@ const AVATAR_OPTIONS = {
   bootsStyle: ["classic", "speed", "high"],
 };
 
-function clampAvatarColor(value, fallback) {
+const AVATAR_PALETTES = {
+  skinColor: ["#F8D5B5", "#EEC19A", "#D9A173", "#C58A5D", "#A8724A", "#8A5C3A", "#6E452C", "#54331F"],
+  hairColor: ["#17100B", "#3B2518", "#6A452F", "#9D734F", "#C3A67F", "#D9B8A8"],
+  eyeColor: ["#201712", "#3B2A1C", "#36506C", "#356346", "#4A4A4A"],
+  kitColor1: ["#F39A1D", "#E14D2A", "#2B88D8", "#37A060", "#A35BE6", "#DE5C8E"],
+  kitColor2: ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#E8E1D2"],
+  bootsColor: ["#111111", "#FFFFFF", "#E14D2A", "#2B88D8", "#37A060", "#F39A1D"],
+};
+
+function clampAvatarColor(value, fallback, paletteKey = "") {
   const raw = String(value || "").trim();
-  return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toUpperCase() : fallback;
+  const normalized = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toUpperCase() : "";
+  const palette = Array.isArray(AVATAR_PALETTES[paletteKey]) ? AVATAR_PALETTES[paletteKey] : [];
+  if (!normalized) return fallback;
+  if (!palette.length) return normalized;
+  return palette.includes(normalized) ? normalized : fallback;
 }
 
 function avatarSeedIndex(seed, modulo) {
@@ -131,11 +144,12 @@ function avatarSeedIndex(seed, modulo) {
 }
 
 function defaultAvatarConfig(seed = "") {
-  const primaryPalette = ["#F39A1D", "#E14D2A", "#2B88D8", "#37A060", "#A35BE6", "#DE5C8E"];
-  const secondaryPalette = ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#331018"];
-  const skinPalette = ["#F2C8A0", "#E0AD80", "#C98B63", "#A76A45", "#7F4D2E"];
-  const hairPalette = ["#111111", "#2D1A12", "#5A3A2B", "#A16A43", "#D4C0A0"];
-  const eyePalette = ["#1F1F1F", "#4B2A1E", "#1E3A5F", "#0F5A3E"];
+  const primaryPalette = AVATAR_PALETTES.kitColor1;
+  const secondaryPalette = AVATAR_PALETTES.kitColor2;
+  const skinPalette = AVATAR_PALETTES.skinColor;
+  const hairPalette = AVATAR_PALETTES.hairColor;
+  const eyePalette = AVATAR_PALETTES.eyeColor;
+  const bootsPalette = AVATAR_PALETTES.bootsColor;
   return {
     hairStyle: AVATAR_OPTIONS.hairStyle[avatarSeedIndex(`${seed}:hair`, AVATAR_OPTIONS.hairStyle.length)],
     headShape: AVATAR_OPTIONS.headShape[avatarSeedIndex(`${seed}:head`, AVATAR_OPTIONS.headShape.length)],
@@ -147,7 +161,7 @@ function defaultAvatarConfig(seed = "") {
     kitColor2: secondaryPalette[avatarSeedIndex(`${seed}:kit2`, secondaryPalette.length)],
     kitStyle: AVATAR_OPTIONS.kitStyle[avatarSeedIndex(`${seed}:kitstyle`, AVATAR_OPTIONS.kitStyle.length)],
     bootsStyle: AVATAR_OPTIONS.bootsStyle[avatarSeedIndex(`${seed}:boots`, AVATAR_OPTIONS.bootsStyle.length)],
-    bootsColor: secondaryPalette[avatarSeedIndex(`${seed}:bootsColor`, secondaryPalette.length)],
+    bootsColor: bootsPalette[avatarSeedIndex(`${seed}:bootsColor`, bootsPalette.length)],
   };
 }
 
@@ -158,15 +172,15 @@ function sanitizeAvatarConfig(input, seed = "") {
   return {
     hairStyle: pick(src.hairStyle, AVATAR_OPTIONS.hairStyle, base.hairStyle),
     headShape: pick(src.headShape, AVATAR_OPTIONS.headShape, base.headShape),
-    eyeColor: clampAvatarColor(src.eyeColor, base.eyeColor),
+    eyeColor: clampAvatarColor(src.eyeColor, base.eyeColor, "eyeColor"),
     mouth: pick(src.mouth, AVATAR_OPTIONS.mouth, base.mouth),
-    skinColor: clampAvatarColor(src.skinColor, base.skinColor),
-    hairColor: clampAvatarColor(src.hairColor, base.hairColor),
-    kitColor1: clampAvatarColor(src.kitColor1, base.kitColor1),
-    kitColor2: clampAvatarColor(src.kitColor2, base.kitColor2),
+    skinColor: clampAvatarColor(src.skinColor, base.skinColor, "skinColor"),
+    hairColor: clampAvatarColor(src.hairColor, base.hairColor, "hairColor"),
+    kitColor1: clampAvatarColor(src.kitColor1, base.kitColor1, "kitColor1"),
+    kitColor2: clampAvatarColor(src.kitColor2, base.kitColor2, "kitColor2"),
     kitStyle: pick(src.kitStyle, AVATAR_OPTIONS.kitStyle, base.kitStyle),
     bootsStyle: pick(src.bootsStyle, AVATAR_OPTIONS.bootsStyle, base.bootsStyle),
-    bootsColor: clampAvatarColor(src.bootsColor, base.bootsColor),
+    bootsColor: clampAvatarColor(src.bootsColor, base.bootsColor, "bootsColor"),
   };
 }
 
@@ -217,13 +231,27 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
 
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">
-  <rect x="0" y="0" width="100" height="100" rx="20" fill="#120904"/>
-  <circle cx="50" cy="50" r="48" fill="rgba(255,255,255,0.02)" />
-  <rect x="28" y="58" width="44" height="22" rx="9" fill="${a.kitColor1}"/>
+  <defs>
+    <radialGradient id="bgGlow" cx="30%" cy="28%" r="78%">
+      <stop offset="0%" stop-color="#2A1608" />
+      <stop offset="100%" stop-color="#0D0602" />
+    </radialGradient>
+    <linearGradient id="kitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${a.kitColor1}" />
+      <stop offset="100%" stop-color="${a.kitColor2}" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="100" height="100" rx="24" fill="url(#bgGlow)"/>
+  <rect x="5" y="5" width="90" height="90" rx="20" fill="none" stroke="rgba(255,171,59,0.24)" stroke-width="2"/>
+  <circle cx="50" cy="51" r="40" fill="rgba(255,255,255,0.03)" />
+  <rect x="28" y="58" width="44" height="22" rx="9" fill="url(#kitGrad)"/>
+  <rect x="28" y="58" width="44" height="22" rx="9" fill="none" stroke="rgba(0,0,0,0.28)" stroke-width="1.2"/>
   ${kitPattern}
   ${boots}
   ${head}
+  <circle cx="50" cy="40" r="18.5" fill="none" stroke="rgba(0,0,0,0.12)" stroke-width="1"/>
   ${hair}
+  <rect x="41" y="51" width="18" height="5" rx="2.5" fill="${a.skinColor}" />
   <circle cx="44" cy="40" r="2.3" fill="${a.eyeColor}"/>
   <circle cx="56" cy="40" r="2.3" fill="${a.eyeColor}"/>
   ${mouth}
@@ -538,6 +566,8 @@ const el = {
   accountRecoveryCancelBtn: document.getElementById("account-recovery-cancel-btn"),
   accountEmailManageInput: document.getElementById("account-email-manage-input"),
   accountAvatarPreview: document.getElementById("account-avatar-preview"),
+  avatarBuilderSignedOut: document.getElementById("avatar-builder-signedout"),
+  avatarBuilderSignedIn: document.getElementById("avatar-builder-signedin"),
   accountAvatarSaveBtn: document.getElementById("account-avatar-save-btn"),
   accountAvatarRandomBtn: document.getElementById("account-avatar-random-btn"),
   avatarHairStyleInput: document.getElementById("avatar-hair-style"),
@@ -567,6 +597,7 @@ const el = {
   lifetimePointsPill: document.getElementById("lifetime-points-pill"),
   missionsMeta: document.getElementById("missions-meta"),
   missionsList: document.getElementById("missions-list"),
+  avatarBuilderCard: document.getElementById("avatar-builder-card"),
   clubQuizBody: document.getElementById("club-quiz-body"),
   storyList: document.getElementById("story-list"),
   higherLowerBody: document.getElementById("higher-lower-body"),
@@ -1040,6 +1071,9 @@ function writeAvatarEditorState(avatar) {
   if (el.accountAvatarPreview) {
     el.accountAvatarPreview.src = avatarSvgDataUri(safe, seed, 116);
   }
+  if (accountSignedIn() && el.accountToggleAvatar && !el.accountToggleAvatar.classList.contains("hidden")) {
+    el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
+  }
 }
 
 function renderAccountAvatarButton() {
@@ -1100,6 +1134,8 @@ function renderAccountUI() {
   const signedIn = accountSignedIn();
   el.accountAuthSignedOut.classList.toggle("hidden", signedIn);
   el.accountAuthSignedIn.classList.toggle("hidden", !signedIn);
+  if (el.avatarBuilderSignedOut) el.avatarBuilderSignedOut.classList.toggle("hidden", signedIn);
+  if (el.avatarBuilderSignedIn) el.avatarBuilderSignedIn.classList.toggle("hidden", !signedIn);
   renderAccountAvatarButton();
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
@@ -2726,7 +2762,8 @@ function renderLeagueMemberView() {
   const viewerTitlesWon = Math.max(0, Number(data?.viewerTitlesWon || 0));
   const showPreviousRound = Boolean(state.leagueMemberView.showPreviousRound);
   el.leagueMemberTitle.textContent = `${memberName}${memberTitlesWon > 0 ? ` 🏆 x${memberTitlesWon}` : ""} • Profile`;
-  const memberAvatar = avatarBadgeMarkup(data?.user?.avatar, memberName, "member-profile-avatar");
+  const memberAvatarConfig = isSelf ? state.account.user?.avatar || data?.user?.avatar : data?.user?.avatar;
+  const memberAvatar = avatarBadgeMarkup(memberAvatarConfig, memberName, "member-profile-avatar");
   const viewerAvatar = avatarBadgeMarkup(state.account.user?.avatar, state.account.user?.name || "You", "member-profile-avatar");
   const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
   const myDream = leagueMemberDreamTeamSummary(state.dreamTeam);
@@ -2962,7 +2999,11 @@ function renderFamilyLeaguePanel() {
     row.className = `family-row ${isSignedInMember ? "active" : ""}`;
     row.setAttribute("role", "button");
     row.tabIndex = 0;
-    const avatarHtml = avatarBadgeMarkup(member.avatar, member.name || "User", "league-member-avatar");
+    const avatarSource =
+      String(member.user_id || "") === String(state.account.user?.id || "")
+        ? state.account.user?.avatar || member.avatar
+        : member.avatar;
+    const avatarHtml = avatarBadgeMarkup(avatarSource, member.name || "User", "league-member-avatar");
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title mission-title-with-avatar">${avatarHtml}<span>#${rank} ${escapeHtml(member.name || "User")}${titleBadge}</span></div>
@@ -7712,6 +7753,9 @@ function renderMobileSectionLayout() {
   setPanelVisible(fixtures, home || predict);
   setPanelVisible(tables, tablesTab);
   setPanelVisible(fun, home || play);
+  if (el.avatarBuilderCard) {
+    el.avatarBuilderCard.classList.toggle("hidden", !play);
+  }
   if (squad) {
     setPanelVisible(squad, squadTab);
     if (squadTab) state.squadOpen = true;
