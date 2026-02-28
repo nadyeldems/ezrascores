@@ -192,6 +192,8 @@ const AVATAR_PALETTES = {
   kitColor1: ["#F39A1D", "#E14D2A", "#2B88D8", "#37A060", "#A35BE6", "#DE5C8E"],
   kitColor2: ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#E8E1D2"],
   bootsColor: ["#111111", "#FFFFFF", "#E14D2A", "#2B88D8", "#37A060", "#F39A1D"],
+  shortsColor: ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#E8E1D2", "#F39A1D", "#2B88D8"],
+  socksColor: ["#111111", "#FFFFFF", "#E8E1D2", "#F39A1D", "#2B88D8", "#37A060", "#DE5C8E"],
 };
 
 const DEFAULT_AVATAR_TEMPLATES = [
@@ -208,6 +210,8 @@ const DEFAULT_AVATAR_TEMPLATES = [
     kitStyle: "stripes",
     bootsStyle: "classic",
     bootsColor: "#111111",
+    shortsColor: "#1B2233",
+    socksColor: "#E8E1D2",
   },
   {
     hairStyle: "fade",
@@ -222,6 +226,8 @@ const DEFAULT_AVATAR_TEMPLATES = [
     kitStyle: "sleeves",
     bootsStyle: "speed",
     bootsColor: "#FFFFFF",
+    shortsColor: "#111111",
+    socksColor: "#FFFFFF",
   },
   {
     hairStyle: "curly",
@@ -236,6 +242,8 @@ const DEFAULT_AVATAR_TEMPLATES = [
     kitStyle: "hoops",
     bootsStyle: "high",
     bootsColor: "#F39A1D",
+    shortsColor: "#E8E1D2",
+    socksColor: "#2B88D8",
   },
   {
     hairStyle: "long",
@@ -250,6 +258,8 @@ const DEFAULT_AVATAR_TEMPLATES = [
     kitStyle: "diamond",
     bootsStyle: "classic",
     bootsColor: "#111111",
+    shortsColor: "#1B2233",
+    socksColor: "#37A060",
   },
   {
     hairStyle: "bun",
@@ -264,6 +274,8 @@ const DEFAULT_AVATAR_TEMPLATES = [
     kitStyle: "total90",
     bootsStyle: "speed",
     bootsColor: "#E14D2A",
+    shortsColor: "#E8E1D2",
+    socksColor: "#A35BE6",
   },
 ];
 
@@ -431,6 +443,8 @@ function buildAvatar3DGroup(THREE, avatar) {
   const kit = new THREE.Color(avatar.kitColor1);
   const kitAccent = new THREE.Color(avatar.kitColor2);
   const boots = new THREE.Color(avatar.bootsColor);
+  const shortsColor = new THREE.Color(avatar.shortsColor || avatar.kitColor2);
+  const socksColor = new THREE.Color(avatar.socksColor || avatar.kitColor1);
 
   const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.35, metalness: 0.05 });
   const hairMat = new THREE.MeshPhysicalMaterial({ color: hair, roughness: 0.45, metalness: 0.05, clearcoat: 0.6, clearcoatRoughness: 0.35 });
@@ -439,6 +453,8 @@ function buildAvatar3DGroup(THREE, avatar) {
   const pupilMat = new THREE.MeshStandardMaterial({ color: 0x121212, roughness: 0.2, metalness: 0.05 });
   const kitMat = new THREE.MeshStandardMaterial({ color: kit, roughness: 0.32, metalness: 0.1 });
   const kitAccentMat = new THREE.MeshStandardMaterial({ color: kitAccent, roughness: 0.32, metalness: 0.1, side: THREE.DoubleSide });
+  const shortsMat = new THREE.MeshStandardMaterial({ color: shortsColor, roughness: 0.32, metalness: 0.08 });
+  const socksMat = new THREE.MeshStandardMaterial({ color: socksColor, roughness: 0.35, metalness: 0.05 });
   const bootsMat = new THREE.MeshStandardMaterial({ color: boots, roughness: 0.45, metalness: 0.2 });
   const hairTex = createHairTexture(THREE, avatar.hairColor);
   hairMat.map = hairTex;
@@ -641,17 +657,22 @@ function buildAvatar3DGroup(THREE, avatar) {
   group.add(mouthGroup);
 
   const bodyGroup = new THREE.Group();
-  const torsoGeo = new THREE.CapsuleGeometry(0.33, 0.42, 6, 14);
+  const torsoGeo = new THREE.CapsuleGeometry(0.36, 0.5, 8, 16);
   const torso = new THREE.Mesh(torsoGeo, kitMat);
-  torso.position.set(0, 0.03, 0);
+  torso.position.set(0, 0.08, 0);
   bodyGroup.add(torso);
+  const chestPlate = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.22, 0.46), kitAccentMat);
+  chestPlate.position.set(0, 0.22, 0.12);
+  chestPlate.material.opacity = 0.45;
+  chestPlate.material.transparent = true;
+  bodyGroup.add(chestPlate);
 
-  const sleeveGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.3, 14);
+  const sleeveGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.34, 14);
   const sleeveMat = avatar.kitStyle === "sleeves" ? kitAccentMat : kitMat;
   const sleeveL = new THREE.Mesh(sleeveGeo, sleeveMat);
   const sleeveR = new THREE.Mesh(sleeveGeo, sleeveMat);
-  sleeveL.position.set(-0.46, 0.08, 0);
-  sleeveR.position.set(0.46, 0.08, 0);
+  sleeveL.position.set(-0.52, 0.1, 0.02);
+  sleeveR.position.set(0.52, 0.1, 0.02);
   sleeveL.rotation.z = Math.PI / 3;
   sleeveR.rotation.z = -Math.PI / 3;
   bodyGroup.add(sleeveL, sleeveR);
@@ -666,32 +687,50 @@ function buildAvatar3DGroup(THREE, avatar) {
     bodyGroup.add(bandL, bandR);
   }
 
-  const armGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.32, 10);
+  const armGeo = new THREE.CylinderGeometry(0.075, 0.085, 0.36, 12);
   const armL = new THREE.Mesh(armGeo, skinMat);
   const armR = new THREE.Mesh(armGeo, skinMat);
-  armL.position.set(-0.56, -0.07, 0.02);
-  armR.position.set(0.56, -0.07, 0.02);
+  armL.position.set(-0.64, -0.02, 0.04);
+  armR.position.set(0.64, -0.02, 0.04);
   armL.rotation.z = Math.PI / 6;
   armR.rotation.z = -Math.PI / 6;
   bodyGroup.add(armL, armR);
+  const handGeo = new THREE.SphereGeometry(0.09, 16, 16);
+  const handL = new THREE.Mesh(handGeo, skinMat);
+  const handR = new THREE.Mesh(handGeo, skinMat);
+  handL.position.set(-0.75, -0.2, 0.06);
+  handR.position.set(0.75, -0.2, 0.06);
+  bodyGroup.add(handL, handR);
 
-  const shortsGeo = new THREE.CapsuleGeometry(0.24, 0.18, 4, 10);
-  const shorts = new THREE.Mesh(shortsGeo, kitAccentMat);
-  shorts.position.set(0, -0.32, 0);
+  const shortsGeo = new THREE.CapsuleGeometry(0.28, 0.2, 5, 12);
+  const shorts = new THREE.Mesh(shortsGeo, shortsMat);
+  shorts.position.set(0, -0.3, 0);
   bodyGroup.add(shorts);
 
-  const legGeo = new THREE.CylinderGeometry(0.1, 0.11, 0.36, 12);
-  const legL = new THREE.Mesh(legGeo, skinMat);
-  const legR = new THREE.Mesh(legGeo, skinMat);
-  legL.position.set(-0.16, -0.6, 0.02);
-  legR.position.set(0.16, -0.6, 0.02);
-  bodyGroup.add(legL, legR);
+  const thighGeo = new THREE.CylinderGeometry(0.12, 0.13, 0.38, 14);
+  const calfGeo = new THREE.CylinderGeometry(0.1, 0.11, 0.34, 14);
+  const thighL = new THREE.Mesh(thighGeo, skinMat);
+  const thighR = new THREE.Mesh(thighGeo, skinMat);
+  thighL.position.set(-0.18, -0.55, 0.02);
+  thighR.position.set(0.18, -0.55, 0.02);
+  const calfL = new THREE.Mesh(calfGeo, skinMat);
+  const calfR = new THREE.Mesh(calfGeo, skinMat);
+  calfL.position.set(-0.18, -0.82, 0.02);
+  calfR.position.set(0.18, -0.82, 0.02);
+  bodyGroup.add(thighL, thighR, calfL, calfR);
 
-  const bootGeo = new THREE.BoxGeometry(0.2, 0.1, 0.34);
+  const sockGeo = new THREE.CylinderGeometry(0.11, 0.12, 0.22, 16);
+  const sockL = new THREE.Mesh(sockGeo, socksMat);
+  const sockR = new THREE.Mesh(sockGeo, socksMat);
+  sockL.position.set(-0.18, -0.95, 0.03);
+  sockR.position.set(0.18, -0.95, 0.03);
+  bodyGroup.add(sockL, sockR);
+
+  const bootGeo = new THREE.BoxGeometry(0.22, 0.12, 0.36);
   const bootL = new THREE.Mesh(bootGeo, bootsMat);
   const bootR = new THREE.Mesh(bootGeo, bootsMat);
-  bootL.position.set(-0.16, -0.76, 0.12);
-  bootR.position.set(0.16, -0.76, 0.12);
+  bootL.position.set(-0.18, -1.08, 0.12);
+  bootR.position.set(0.18, -1.08, 0.12);
   bodyGroup.add(bootL, bootR);
 
   // kit styles are now texture-driven (see createFabricTexture)
@@ -706,8 +745,8 @@ function buildAvatar3DGroup(THREE, avatar) {
   ball.add(patch);
   bodyGroup.add(ball);
 
-  bodyGroup.position.set(0, -0.05, 0);
-  bodyGroup.scale.set(0.92, 0.92, 0.92);
+  bodyGroup.position.set(0, -0.08, 0);
+  bodyGroup.scale.set(0.98, 0.98, 0.98);
   group.add(bodyGroup);
 
   return group;
@@ -726,9 +765,9 @@ async function renderAvatar3DDataUri(avatar, seed, size) {
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 10);
-  camera.position.set(0, 0.35, 3.0);
-  camera.lookAt(0, 0.35, 0);
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 12);
+  camera.position.set(0, 0.1, 3.6);
+  camera.lookAt(0, -0.1, 0);
 
   const hemi = new THREE.HemisphereLight(0xfff2dc, 0x1f140c, 1.0);
   const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -1001,6 +1040,8 @@ function defaultAvatarConfig(seed = "") {
   const hairPalette = AVATAR_PALETTES.hairColor;
   const eyePalette = AVATAR_PALETTES.eyeColor;
   const bootsPalette = AVATAR_PALETTES.bootsColor;
+  const shortsPalette = AVATAR_PALETTES.shortsColor;
+  const socksPalette = AVATAR_PALETTES.socksColor;
   const base = {
     hairStyle: AVATAR_OPTIONS.hairStyle[avatarSeedIndex(`${seed}:hair`, AVATAR_OPTIONS.hairStyle.length)],
     headShape: AVATAR_OPTIONS.headShape[avatarSeedIndex(`${seed}:head`, AVATAR_OPTIONS.headShape.length)],
@@ -1014,6 +1055,8 @@ function defaultAvatarConfig(seed = "") {
     kitStyle: AVATAR_OPTIONS.kitStyle[avatarSeedIndex(`${seed}:kitstyle`, AVATAR_OPTIONS.kitStyle.length)],
     bootsStyle: AVATAR_OPTIONS.bootsStyle[avatarSeedIndex(`${seed}:boots`, AVATAR_OPTIONS.bootsStyle.length)],
     bootsColor: bootsPalette[avatarSeedIndex(`${seed}:bootsColor`, bootsPalette.length)],
+    shortsColor: shortsPalette[avatarSeedIndex(`${seed}:shorts`, shortsPalette.length)],
+    socksColor: socksPalette[avatarSeedIndex(`${seed}:socks`, socksPalette.length)],
   };
   const template = DEFAULT_AVATAR_TEMPLATES[avatarSeedIndex(`${seed}:template`, DEFAULT_AVATAR_TEMPLATES.length)];
   return template ? { ...base, ...template } : base;
@@ -1036,6 +1079,8 @@ function sanitizeAvatarConfig(input, seed = "") {
     kitStyle: pick(src.kitStyle, AVATAR_OPTIONS.kitStyle, base.kitStyle),
     bootsStyle: pick(src.bootsStyle, AVATAR_OPTIONS.bootsStyle, base.bootsStyle),
     bootsColor: clampAvatarColor(src.bootsColor, base.bootsColor, "bootsColor"),
+    shortsColor: clampAvatarColor(src.shortsColor, base.shortsColor, "shortsColor"),
+    socksColor: clampAvatarColor(src.socksColor, base.socksColor, "socksColor"),
   };
 }
 
@@ -1092,6 +1137,9 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
         ? `<rect x="32.1" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="52.6" y="80.9" width="15.3" height="9.3" rx="2.6" fill="${a.bootsColor}"/><rect x="33.2" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/><rect x="53.7" y="82.3" width="13.3" height="1.2" rx="0.6" fill="rgba(255,255,255,0.24)"/>`
         : `<ellipse cx="39.8" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/><ellipse cx="60.2" cy="87.1" rx="7.8" ry="3.4" fill="${a.bootsColor}"/>`;
 
+  const shorts = `<path d="M36 72.2 C40.8 69.2 59.2 69.2 64 72.2 L64 82 C59.4 83.4 40.6 83.4 36 82 Z" fill="${a.shortsColor}"/><rect x="36.4" y="74.6" width="27.2" height="7.2" rx="3.2" fill="rgba(255,255,255,0.08)"/>`;
+  const socks = `<rect x="34.2" y="82.6" width="10.6" height="6.8" rx="2.2" fill="${a.socksColor}"/><rect x="55.2" y="82.6" width="10.6" height="6.8" rx="2.2" fill="${a.socksColor}"/><rect x="34.2" y="84.6" width="10.6" height="1.4" rx="0.7" fill="rgba(255,255,255,0.26)"/><rect x="55.2" y="84.6" width="10.6" height="1.4" rx="0.7" fill="rgba(255,255,255,0.26)"/>`;
+
   const browLeft = `<g transform="translate(42 36) rotate(${(-browTilt * 90).toFixed(1)})"><rect x="-6" y="-1" width="12" height="2.2" rx="1.1" fill="rgba(31,16,8,0.7)"/></g>`;
   const browRight = `<g transform="translate(58 36) rotate(${(browTilt * 90).toFixed(1)})"><rect x="-6" y="-1" width="12" height="2.2" rx="1.1" fill="rgba(31,16,8,0.7)"/></g>`;
 
@@ -1137,9 +1185,11 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
     <path d="M24.8 68.8 C33.4 66.2 66.6 66.2 75.2 68.8" stroke="rgba(255,255,255,0.12)" stroke-width="1.3" fill="none"/>
   </g>
   ${kitPattern}
+  ${shorts}
   <rect x="45.1" y="51.2" width="9.8" height="9.8" rx="3.9" fill="${a.skinColor}"/>
   <circle cx="34.6" cy="67" r="4.7" fill="${a.skinColor}" opacity="0.96"/>
   <circle cx="65.4" cy="67" r="4.7" fill="${a.skinColor}" opacity="0.96"/>
+  ${socks}
   ${boots}
   <ellipse cx="34.8" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
   <ellipse cx="65.2" cy="36.2" rx="2.2" ry="3.7" fill="${a.skinColor}" opacity="0.84"/>
@@ -1510,7 +1560,9 @@ const el = {
   avatarEyeColorInput: document.getElementById("avatar-eye-color"),
   avatarKitColor1Input: document.getElementById("avatar-kit-color-1"),
   avatarKitColor2Input: document.getElementById("avatar-kit-color-2"),
+  avatarShortsColorInput: document.getElementById("avatar-shorts-color"),
   avatarBootsColorInput: document.getElementById("avatar-boots-color"),
+  avatarSocksColorInput: document.getElementById("avatar-socks-color"),
   avatarUnlockRail: document.getElementById("avatar-unlock-rail"),
   accountHelper: document.getElementById("account-helper"),
   accountEmailSaveBtn: document.getElementById("account-email-save-btn"),
@@ -1937,7 +1989,9 @@ function updateAccountControlsState() {
     el.avatarEyeColorInput,
     el.avatarKitColor1Input,
     el.avatarKitColor2Input,
+    el.avatarShortsColorInput,
     el.avatarBootsColorInput,
+    el.avatarSocksColorInput,
   ];
   avatarInputs.forEach((input) => {
     if (!input) return;
@@ -1989,6 +2043,8 @@ function readAvatarEditorState() {
       kitStyle: el.avatarKitStyleInput?.value,
       bootsStyle: el.avatarBootsStyleInput?.value,
       bootsColor: el.avatarBootsColorInput?.value,
+      shortsColor: el.avatarShortsColorInput?.value,
+      socksColor: el.avatarSocksColorInput?.value,
     },
     seed
   );
@@ -2007,7 +2063,9 @@ function writeAvatarEditorState(avatar) {
   if (el.avatarEyeColorInput) el.avatarEyeColorInput.value = safe.eyeColor;
   if (el.avatarKitColor1Input) el.avatarKitColor1Input.value = safe.kitColor1;
   if (el.avatarKitColor2Input) el.avatarKitColor2Input.value = safe.kitColor2;
+  if (el.avatarShortsColorInput) el.avatarShortsColorInput.value = safe.shortsColor;
   if (el.avatarBootsColorInput) el.avatarBootsColorInput.value = safe.bootsColor;
+  if (el.avatarSocksColorInput) el.avatarSocksColorInput.value = safe.socksColor;
   state.avatarPersonalityBrow = safe.brow;
   setAvatarPersonalityActive(safe.brow);
   if (el.accountAvatarPreview) {
@@ -2017,10 +2075,10 @@ function writeAvatarEditorState(avatar) {
     el.accountAvatarPreview.dataset.avatarSize = "116";
   }
   if (el.avatarHeroImg) {
-    el.avatarHeroImg.src = avatarSvgDataUri(safe, seed, 220);
+    el.avatarHeroImg.src = avatarSvgDataUri(safe, seed, 320);
     el.avatarHeroImg.dataset.avatarConfig = encodeAvatarData(safe);
     el.avatarHeroImg.dataset.avatarSeed = seed;
-    el.avatarHeroImg.dataset.avatarSize = "220";
+    el.avatarHeroImg.dataset.avatarSize = "320";
   }
   if (accountSignedIn() && el.accountToggleAvatar && !el.accountToggleAvatar.classList.contains("hidden")) {
     el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
@@ -2121,7 +2179,9 @@ function renderAccountUI() {
       el.avatarEyeColorInput,
       el.avatarKitColor1Input,
       el.avatarKitColor2Input,
+      el.avatarShortsColorInput,
       el.avatarBootsColorInput,
+      el.avatarSocksColorInput,
     ];
     avatarInputs.forEach((input) => {
       if (!input) return;
@@ -10131,7 +10191,9 @@ function attachEvents() {
     el.avatarEyeColorInput,
     el.avatarKitColor1Input,
     el.avatarKitColor2Input,
+    el.avatarShortsColorInput,
     el.avatarBootsColorInput,
+    el.avatarSocksColorInput,
   ];
   avatarInputs.forEach((input) => {
     if (!input) return;

@@ -2051,8 +2051,7 @@ body.league-member-overlay-open::before {
 
 .account-toggle-avatar,
 .league-member-avatar img,
-.member-profile-avatar img,
-.account-avatar-preview {
+.member-profile-avatar img {
   border-radius: 999px;
 }
 
@@ -2075,29 +2074,29 @@ body.league-member-overlay-open::before {
 .avatar-hero-preview {
   position: relative;
   border-radius: 1rem;
-  padding: 0.45rem;
+  padding: 0.7rem;
   border: 1px solid var(--line-soft);
   background: radial-gradient(circle at 50% 20%, rgba(255, 196, 102, 0.14), rgba(14, 8, 4, 0.88));
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 8rem;
+  min-height: 12rem;
 }
 
 .avatar-hero-img {
-  width: min(9.5rem, 60vw);
-  height: min(9.5rem, 60vw);
-  border-radius: 50%;
-  object-fit: cover;
-  border: 2px solid rgba(255, 178, 86, 0.65);
+  width: min(12rem, 70vw);
+  height: min(16rem, 80vw);
+  border-radius: 0.75rem;
+  object-fit: contain;
+  border: 2px solid rgba(255, 178, 86, 0.45);
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.2), #0f0703 70%);
   box-shadow: 0 0.4rem 1.2rem rgba(0, 0, 0, 0.45);
 }
 
 .avatar-hero-glow {
   position: absolute;
-  inset: 10%;
-  border-radius: 999px;
+  inset: 6%;
+  border-radius: 1rem;
   border: 1px dashed rgba(255, 179, 90, 0.25);
   pointer-events: none;
 }
@@ -2115,13 +2114,13 @@ body.league-member-overlay-open::before {
 }
 
 .account-avatar-preview {
-  width: 4.2rem;
-  height: 4.2rem;
-  border-radius: 999px;
+  width: 5.2rem;
+  height: 7.2rem;
+  border-radius: 0.7rem;
   border: 1px solid var(--amber-soft);
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.22), #0f0703 72%);
-  object-fit: cover;
-  padding: 0.04rem;
+  object-fit: contain;
+  padding: 0.08rem;
   animation: avatar-bob 4.6s ease-in-out infinite;
   box-shadow: 0 0.2rem 0.8rem rgba(0, 0, 0, 0.35);
 }
@@ -3163,12 +3162,12 @@ body[data-motion="minimal"] .account-avatar-preview {
   }
 
   .avatar-hero-preview {
-    min-height: 7rem;
+    min-height: 10rem;
   }
 
   .account-avatar-preview {
-    width: 3.8rem;
-    height: 3.8rem;
+    width: 4.8rem;
+    height: 6.4rem;
   }
 
   .avatar-template-strip {
