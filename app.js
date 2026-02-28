@@ -370,7 +370,9 @@ function buildAvatar3DGroup(THREE, avatar) {
 
   const skinMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.35, metalness: 0.05 });
   const hairMat = new THREE.MeshPhysicalMaterial({ color: hair, roughness: 0.45, metalness: 0.05, clearcoat: 0.6, clearcoatRoughness: 0.35 });
-  const eyeMat = new THREE.MeshStandardMaterial({ color: eye, roughness: 0.2, metalness: 0.1 });
+  const scleraMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.18, metalness: 0.05 });
+  const irisMat = new THREE.MeshStandardMaterial({ color: eye, roughness: 0.18, metalness: 0.08 });
+  const pupilMat = new THREE.MeshStandardMaterial({ color: 0x121212, roughness: 0.2, metalness: 0.05 });
   const kitMat = new THREE.MeshStandardMaterial({ color: kit, roughness: 0.32, metalness: 0.1 });
   const kitAccentMat = new THREE.MeshStandardMaterial({ color: kitAccent, roughness: 0.32, metalness: 0.1, side: THREE.DoubleSide });
   const bootsMat = new THREE.MeshStandardMaterial({ color: boots, roughness: 0.45, metalness: 0.2 });
@@ -385,197 +387,264 @@ function buildAvatar3DGroup(THREE, avatar) {
   kitAccentMat.needsUpdate = true;
 
   const headGeometry = avatar.headShape === "square"
-    ? new THREE.BoxGeometry(0.9, 0.96, 0.84, 3, 3, 3)
-    : new THREE.SphereGeometry(0.54, 32, 32);
+    ? new THREE.BoxGeometry(0.98, 1.02, 0.9, 4, 4, 4)
+    : new THREE.SphereGeometry(0.58, 40, 40);
   const head = new THREE.Mesh(headGeometry, skinMat);
-  if (avatar.headShape === "oval") head.scale.set(1.05, 1.18, 0.95);
-  if (avatar.headShape === "square") head.scale.set(1, 1, 0.88);
-  head.position.set(0, 0.9, 0);
+  if (avatar.headShape === "oval") head.scale.set(1.08, 1.22, 0.95);
+  if (avatar.headShape === "square") head.scale.set(1, 1, 0.9);
+  head.position.set(0, 1.02, 0.02);
   group.add(head);
+  const glowMat = new THREE.MeshPhysicalMaterial({
+    color: skin,
+    roughness: 0.2,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.18,
+    transmission: 0.25,
+  });
+  const headGlow = new THREE.Mesh(headGeometry, glowMat);
+  headGlow.scale.set(1.04, 1.04, 1.04);
+  headGlow.position.copy(head.position);
+  group.add(headGlow);
 
   const earGeo = new THREE.SphereGeometry(0.09, 16, 16);
   const earL = new THREE.Mesh(earGeo, skinMat);
   const earR = new THREE.Mesh(earGeo, skinMat);
-  earL.position.set(-0.56, 0.86, 0.02);
-  earR.position.set(0.56, 0.86, 0.02);
+  earL.position.set(-0.6, 0.95, 0.02);
+  earR.position.set(0.6, 0.95, 0.02);
   group.add(earL, earR);
+
+  const neckGeo = new THREE.CylinderGeometry(0.14, 0.16, 0.18, 16);
+  const neck = new THREE.Mesh(neckGeo, skinMat);
+  neck.position.set(0, 0.62, 0.04);
+  group.add(neck);
 
   if (avatar.hairStyle !== "bald") {
     if (avatar.hairStyle === "spike") {
-      const spike = new THREE.ConeGeometry(0.44, 0.42, 6);
+      const spike = new THREE.ConeGeometry(0.46, 0.45, 7);
       const hairMesh = new THREE.Mesh(spike, hairMat);
-      hairMesh.position.set(0, 1.25, 0.06);
+      hairMesh.position.set(0, 1.38, 0.06);
+      hairMesh.scale.set(1.05, 1.05, 1);
       group.add(hairMesh);
       const fringe = new THREE.SphereGeometry(0.2, 16, 16);
       const fringeMesh = new THREE.Mesh(fringe, hairMat);
-      fringeMesh.scale.set(1.2, 0.4, 0.9);
-      fringeMesh.position.set(0, 1.05, 0.28);
+      fringeMesh.scale.set(1.3, 0.45, 0.9);
+      fringeMesh.position.set(0, 1.12, 0.32);
       group.add(fringeMesh);
     } else if (avatar.hairStyle === "curly") {
-      const curlGeo = new THREE.SphereGeometry(0.18, 18, 18);
-      for (let i = 0; i < 5; i += 1) {
+      const curlGeo = new THREE.SphereGeometry(0.19, 18, 18);
+      for (let i = 0; i < 6; i += 1) {
         const curl = new THREE.Mesh(curlGeo, hairMat);
-        curl.position.set(-0.3 + i * 0.15, 1.18 + (i % 2 === 0 ? 0.06 : -0.02), 0.1);
+        curl.position.set(-0.34 + i * 0.14, 1.28 + (i % 2 === 0 ? 0.06 : -0.02), 0.1);
         group.add(curl);
       }
       const cap = new THREE.SphereGeometry(0.46, 24, 24);
       const capMesh = new THREE.Mesh(cap, hairMat);
-      capMesh.scale.set(1.12, 0.58, 1);
-      capMesh.position.set(0, 1.08, 0.05);
+      capMesh.scale.set(1.18, 0.64, 1);
+      capMesh.position.set(0, 1.18, 0.05);
       group.add(capMesh);
     } else if (avatar.hairStyle === "fade") {
       const cap = new THREE.SphereGeometry(0.48, 24, 24);
       const capMesh = new THREE.Mesh(cap, hairMat);
-      capMesh.scale.set(1.06, 0.52, 1);
-      capMesh.position.set(0, 1.1, 0.05);
+      capMesh.scale.set(1.08, 0.5, 1);
+      capMesh.position.set(0, 1.2, 0.05);
       group.add(capMesh);
       const fadeBand = new THREE.SphereGeometry(0.5, 24, 24);
       const bandMesh = new THREE.Mesh(fadeBand, hairMat);
-      bandMesh.scale.set(1.05, 0.34, 1);
-      bandMesh.position.set(0, 0.98, 0.02);
+      bandMesh.scale.set(1.08, 0.3, 1);
+      bandMesh.position.set(0, 1.04, 0.02);
       bandMesh.material = hairMat.clone();
-      bandMesh.material.opacity = 0.75;
+      bandMesh.material.opacity = 0.7;
       bandMesh.material.transparent = true;
       group.add(bandMesh);
     } else if (avatar.hairStyle === "long") {
       const cap = new THREE.SphereGeometry(0.5, 24, 24);
       const capMesh = new THREE.Mesh(cap, hairMat);
-      capMesh.scale.set(1.08, 0.62, 1);
-      capMesh.position.set(0, 1.12, 0.05);
+      capMesh.scale.set(1.14, 0.7, 1);
+      capMesh.position.set(0, 1.24, 0.05);
       group.add(capMesh);
-      const backGeo = new THREE.SphereGeometry(0.46, 24, 24);
+      const backGeo = new THREE.SphereGeometry(0.5, 24, 24);
       const backMesh = new THREE.Mesh(backGeo, hairMat);
-      backMesh.scale.set(1.2, 1.05, 0.9);
-      backMesh.position.set(0, 0.7, -0.2);
+      backMesh.scale.set(1.3, 1.25, 0.95);
+      backMesh.position.set(0, 0.6, -0.2);
       group.add(backMesh);
-      const sideGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.5, 18);
+      const sideGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.62, 18);
       const sideL = new THREE.Mesh(sideGeo, hairMat);
       const sideR = new THREE.Mesh(sideGeo, hairMat);
-      sideL.position.set(-0.46, 0.66, 0.05);
-      sideR.position.set(0.46, 0.66, 0.05);
+      sideL.position.set(-0.48, 0.58, 0.08);
+      sideR.position.set(0.48, 0.58, 0.08);
       sideL.rotation.z = Math.PI / 10;
       sideR.rotation.z = -Math.PI / 10;
       group.add(sideL, sideR);
+      const fringeGeo = new THREE.SphereGeometry(0.18, 16, 16);
+      const fringeL = new THREE.Mesh(fringeGeo, hairMat);
+      const fringeR = new THREE.Mesh(fringeGeo, hairMat);
+      fringeL.scale.set(1, 0.6, 0.7);
+      fringeR.scale.set(1, 0.6, 0.7);
+      fringeL.position.set(-0.28, 1.02, 0.35);
+      fringeR.position.set(0.28, 1.02, 0.35);
+      group.add(fringeL, fringeR);
     } else if (avatar.hairStyle === "bun") {
       const cap = new THREE.SphereGeometry(0.48, 24, 24);
       const capMesh = new THREE.Mesh(cap, hairMat);
-      capMesh.scale.set(1.06, 0.55, 1);
-      capMesh.position.set(0, 1.08, 0.05);
-      group.add(capMesh);
-      const bun = new THREE.SphereGeometry(0.2, 18, 18);
-      const bunMesh = new THREE.Mesh(bun, hairMat);
-      bunMesh.position.set(0, 1.36, -0.05);
-      group.add(bunMesh);
-    } else {
-      const cap = new THREE.SphereGeometry(0.5, 24, 24);
-      const capMesh = new THREE.Mesh(cap, hairMat);
       capMesh.scale.set(1.08, 0.6, 1);
-      capMesh.position.set(0, 1.1, 0.05);
+      capMesh.position.set(0, 1.18, 0.05);
       group.add(capMesh);
+      const bun = new THREE.SphereGeometry(0.22, 18, 18);
+      const bunMesh = new THREE.Mesh(bun, hairMat);
+      bunMesh.position.set(0, 1.48, -0.06);
+      group.add(bunMesh);
+      const wisps = new THREE.CylinderGeometry(0.12, 0.12, 0.36, 14);
+      const wispL = new THREE.Mesh(wisps, hairMat);
+      const wispR = new THREE.Mesh(wisps, hairMat);
+      wispL.position.set(-0.36, 0.78, 0.12);
+      wispR.position.set(0.36, 0.78, 0.12);
+      wispL.rotation.z = Math.PI / 8;
+      wispR.rotation.z = -Math.PI / 8;
+      group.add(wispL, wispR);
+    } else {
+      const cap = new THREE.SphereGeometry(0.52, 24, 24);
+      const capMesh = new THREE.Mesh(cap, hairMat);
+      capMesh.scale.set(1.1, 0.64, 1);
+      capMesh.position.set(0, 1.2, 0.05);
+      group.add(capMesh);
+      const fringeGeo = new THREE.SphereGeometry(0.22, 18, 18);
+      const fringeMesh = new THREE.Mesh(fringeGeo, hairMat);
+      fringeMesh.scale.set(1.35, 0.5, 0.85);
+      fringeMesh.position.set(0, 1.06, 0.35);
+      group.add(fringeMesh);
     }
   }
 
-  const eyeGeo = new THREE.SphereGeometry(0.065, 16, 16);
-  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(-0.19, 0.9, 0.52);
-  eyeR.position.set(0.19, 0.9, 0.52);
-  const browGeo = new THREE.BoxGeometry(0.16, 0.04, 0.04);
+  const eyeWhiteGeo = new THREE.SphereGeometry(0.09, 18, 18);
+  const irisGeo = new THREE.SphereGeometry(0.045, 16, 16);
+  const pupilGeo = new THREE.SphereGeometry(0.025, 14, 14);
+  const eyeL = new THREE.Mesh(eyeWhiteGeo, scleraMat);
+  const eyeR = new THREE.Mesh(eyeWhiteGeo, scleraMat);
+  eyeL.position.set(-0.21, 0.98, 0.56);
+  eyeR.position.set(0.21, 0.98, 0.56);
+  const irisL = new THREE.Mesh(irisGeo, irisMat);
+  const irisR = new THREE.Mesh(irisGeo, irisMat);
+  irisL.position.set(-0.21, 0.98, 0.63);
+  irisR.position.set(0.21, 0.98, 0.63);
+  const pupilL = new THREE.Mesh(pupilGeo, pupilMat);
+  const pupilR = new THREE.Mesh(pupilGeo, pupilMat);
+  pupilL.position.set(-0.21, 0.98, 0.66);
+  pupilR.position.set(0.21, 0.98, 0.66);
+  const browGeo = new THREE.BoxGeometry(0.18, 0.04, 0.04);
   const browMat = hairMat.clone();
   const browL = new THREE.Mesh(browGeo, browMat);
   const browR = new THREE.Mesh(browGeo, browMat);
-  browL.position.set(-0.19, 0.99, 0.47);
-  browR.position.set(0.19, 0.99, 0.47);
+  browL.position.set(-0.2, 1.08, 0.5);
+  browR.position.set(0.2, 1.08, 0.5);
   browL.rotation.z = -0.08;
   browR.rotation.z = 0.08;
   const highlightGeo = new THREE.SphereGeometry(0.02, 10, 10);
-  const highlightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1, metalness: 0.1 });
+  const highlightMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.08, metalness: 0.1 });
   const hiL = new THREE.Mesh(highlightGeo, highlightMat);
   const hiR = new THREE.Mesh(highlightGeo, highlightMat);
-  hiL.position.set(-0.16, 0.94, 0.56);
-  hiR.position.set(0.22, 0.94, 0.56);
+  hiL.position.set(-0.17, 1.02, 0.64);
+  hiR.position.set(0.24, 1.02, 0.64);
   const cheekGeo = new THREE.SphereGeometry(0.06, 10, 10);
   const cheekMat = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.4, metalness: 0.05 });
   const cheekL = new THREE.Mesh(cheekGeo, cheekMat);
   const cheekR = new THREE.Mesh(cheekGeo, cheekMat);
-  cheekL.position.set(-0.26, 0.77, 0.5);
-  cheekR.position.set(0.26, 0.77, 0.5);
+  cheekL.position.set(-0.28, 0.82, 0.54);
+  cheekR.position.set(0.28, 0.82, 0.54);
+  const noseGeo = new THREE.SphereGeometry(0.055, 16, 16);
+  const nose = new THREE.Mesh(noseGeo, skinMat);
+  nose.position.set(0, 0.9, 0.64);
   group.add(hiL, hiR, browL, browR, cheekL, cheekR);
-  group.add(eyeL, eyeR);
+  group.add(eyeL, eyeR, irisL, irisR, pupilL, pupilR, nose);
 
-  const mouthGeo = avatar.mouth === "flat"
-    ? new THREE.BoxGeometry(0.22, 0.035, 0.02)
-    : new THREE.TorusGeometry(0.12, 0.025, 8, 18, avatar.mouth === "open" ? Math.PI : Math.PI * 0.7);
   const mouthMat = new THREE.MeshStandardMaterial({ color: 0x2a1208, roughness: 0.4 });
-  const mouth = new THREE.Mesh(mouthGeo, mouthMat);
-  mouth.position.set(0, 0.67, 0.55);
-  if (avatar.mouth !== "flat") mouth.rotation.set(Math.PI, 0, 0);
-  group.add(mouth);
+  const mouthGroup = new THREE.Group();
+  if (avatar.mouth === "flat") {
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.04, 0.02), mouthMat);
+    mouthGroup.add(mouth);
+  } else {
+    const sweep = avatar.mouth === "open" ? Math.PI : Math.PI * 0.75;
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.028, 8, 20, sweep), mouthMat);
+    arc.rotation.set(Math.PI, 0, 0);
+    mouthGroup.add(arc);
+    if (avatar.mouth === "open") {
+      const inner = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), new THREE.MeshStandardMaterial({ color: 0xd64a43, roughness: 0.3 }));
+      inner.position.set(0, -0.035, 0.03);
+      mouthGroup.add(inner);
+    }
+  }
+  mouthGroup.position.set(0, 0.74, 0.62);
+  group.add(mouthGroup);
 
-  const torsoGeo = new THREE.CapsuleGeometry(0.32, 0.48, 6, 14);
+  const bodyGroup = new THREE.Group();
+  const torsoGeo = new THREE.CapsuleGeometry(0.33, 0.42, 6, 14);
   const torso = new THREE.Mesh(torsoGeo, kitMat);
-  torso.position.set(0, 0.05, 0);
-  group.add(torso);
+  torso.position.set(0, 0.03, 0);
+  bodyGroup.add(torso);
 
   const sleeveGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.3, 14);
   const sleeveMat = avatar.kitStyle === "sleeves" ? kitAccentMat : kitMat;
   const sleeveL = new THREE.Mesh(sleeveGeo, sleeveMat);
   const sleeveR = new THREE.Mesh(sleeveGeo, sleeveMat);
-  sleeveL.position.set(-0.47, 0.1, 0);
-  sleeveR.position.set(0.47, 0.1, 0);
+  sleeveL.position.set(-0.46, 0.08, 0);
+  sleeveR.position.set(0.46, 0.08, 0);
   sleeveL.rotation.z = Math.PI / 3;
   sleeveR.rotation.z = -Math.PI / 3;
-  group.add(sleeveL, sleeveR);
+  bodyGroup.add(sleeveL, sleeveR);
   if (avatar.kitStyle === "sleeves") {
     const bandGeo = new THREE.TorusGeometry(0.08, 0.015, 10, 20);
     const bandL = new THREE.Mesh(bandGeo, kitAccentMat);
     const bandR = new THREE.Mesh(bandGeo, kitAccentMat);
-    bandL.position.set(-0.59, 0.03, 0.05);
-    bandR.position.set(0.59, 0.03, 0.05);
+    bandL.position.set(-0.58, 0.01, 0.05);
+    bandR.position.set(0.58, 0.01, 0.05);
     bandL.rotation.set(Math.PI / 2, 0, 0);
     bandR.rotation.set(Math.PI / 2, 0, 0);
-    group.add(bandL, bandR);
+    bodyGroup.add(bandL, bandR);
   }
 
   const armGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.32, 10);
   const armL = new THREE.Mesh(armGeo, skinMat);
   const armR = new THREE.Mesh(armGeo, skinMat);
-  armL.position.set(-0.58, -0.06, 0);
-  armR.position.set(0.58, -0.06, 0);
-  armL.rotation.z = Math.PI / 3;
-  armR.rotation.z = -Math.PI / 3;
-  group.add(armL, armR);
+  armL.position.set(-0.56, -0.07, 0.02);
+  armR.position.set(0.56, -0.07, 0.02);
+  armL.rotation.z = Math.PI / 6;
+  armR.rotation.z = -Math.PI / 6;
+  bodyGroup.add(armL, armR);
 
   const shortsGeo = new THREE.CapsuleGeometry(0.24, 0.18, 4, 10);
   const shorts = new THREE.Mesh(shortsGeo, kitAccentMat);
-  shorts.position.set(0, -0.28, 0);
-  group.add(shorts);
+  shorts.position.set(0, -0.32, 0);
+  bodyGroup.add(shorts);
 
   const legGeo = new THREE.CylinderGeometry(0.1, 0.11, 0.36, 12);
   const legL = new THREE.Mesh(legGeo, skinMat);
   const legR = new THREE.Mesh(legGeo, skinMat);
-  legL.position.set(-0.16, -0.62, 0);
-  legR.position.set(0.16, -0.62, 0);
-  group.add(legL, legR);
+  legL.position.set(-0.16, -0.6, 0.02);
+  legR.position.set(0.16, -0.6, 0.02);
+  bodyGroup.add(legL, legR);
 
   const bootGeo = new THREE.BoxGeometry(0.2, 0.1, 0.34);
   const bootL = new THREE.Mesh(bootGeo, bootsMat);
   const bootR = new THREE.Mesh(bootGeo, bootsMat);
-  bootL.position.set(-0.16, -0.82, 0.12);
-  bootR.position.set(0.16, -0.82, 0.12);
-  group.add(bootL, bootR);
+  bootL.position.set(-0.16, -0.76, 0.12);
+  bootR.position.set(0.16, -0.76, 0.12);
+  bodyGroup.add(bootL, bootR);
 
   // kit styles are now texture-driven (see createFabricTexture)
 
   const ballGeo = new THREE.SphereGeometry(0.26, 24, 24);
   const ball = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color: 0xf6f6f6, roughness: 0.3, metalness: 0.05 }));
-  ball.position.set(0.72, -0.05, 0.45);
+  ball.position.set(0.68, -0.08, 0.42);
   const patchGeo = new THREE.SphereGeometry(0.1, 10, 10);
   const patchMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.35 });
   const patch = new THREE.Mesh(patchGeo, patchMat);
   patch.position.set(0.08, 0.06, 0.2);
   ball.add(patch);
-  group.add(ball);
+  bodyGroup.add(ball);
+
+  bodyGroup.position.set(0, -0.05, 0);
+  bodyGroup.scale.set(0.92, 0.92, 0.92);
+  group.add(bodyGroup);
 
   return group;
 }
@@ -660,6 +729,80 @@ function upgradeAvatarImages3D() {
       });
     AVATAR_3D.pending.set(key, task);
   });
+}
+
+function setAvatarTab(tab) {
+  const next = String(tab || "face");
+  state.avatarTab = next;
+  el.avatarTabButtons.forEach((btn) => {
+    const active = btn.dataset.avatarTab === next;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  });
+  const fields = [...document.querySelectorAll(".avatar-editor-field")];
+  fields.forEach((field) => {
+    const mode = field.dataset.avatarFieldGroup || "face";
+    field.classList.toggle("hidden", mode !== next);
+  });
+}
+
+function renderAvatarTemplates() {
+  if (!el.avatarTemplateButtons.length || !el.avatarTemplatePreviews.length) return;
+  el.avatarTemplateButtons.forEach((btn, idx) => {
+    const template = DEFAULT_AVATAR_TEMPLATES[idx];
+    const preview = el.avatarTemplatePreviews[idx];
+    if (!template || !preview) return;
+    const seed = `template:${idx}`;
+    const safe = sanitizeAvatarConfig(template, seed);
+    preview.src = avatarSvgDataUri(safe, seed, 96);
+    preview.dataset.avatarConfig = encodeAvatarData(safe);
+    preview.dataset.avatarSeed = seed;
+    preview.dataset.avatarSize = "96";
+  });
+  scheduleAvatar3DUpgrade();
+}
+
+function showAvatarSaveToast() {
+  if (!el.avatarSaveToast) return;
+  el.avatarSaveToast.classList.remove("hidden");
+  clearTimeout(state.avatarSaveToastTimer);
+  state.avatarSaveToastTimer = setTimeout(() => {
+    el.avatarSaveToast?.classList.add("hidden");
+  }, 2000);
+}
+
+function avatarConfigSignature(avatar) {
+  try {
+    return JSON.stringify(avatar || {});
+  } catch {
+    return "";
+  }
+}
+
+function setAvatarTemplateActive(index) {
+  el.avatarTemplateButtons.forEach((btn) => {
+    const isActive = Number(btn.dataset.avatarTemplate) === Number(index);
+    btn.classList.toggle("active", isActive);
+  });
+}
+
+function scheduleAvatarAutoSave(reason = "") {
+  if (!accountSignedIn()) return;
+  const avatar = readAvatarEditorState();
+  const signature = avatarConfigSignature(avatar);
+  if (!signature || signature === state.avatarLastSavedHash) return;
+  state.avatarDraftHash = signature;
+  clearTimeout(state.avatarAutoSaveTimer);
+  state.avatarAutoSaveTimer = setTimeout(async () => {
+    if (!accountSignedIn()) return;
+    if (state.account.pending?.save_avatar) return;
+    if (state.avatarDraftHash !== signature) return;
+    await runAccountAction("save_avatar", "Auto-saving avatar...", "Auto-save failed", saveAccountAvatar).catch(() => null);
+    showAvatarSaveToast();
+  }, 650);
+  if (reason) {
+    setAccountStatus(`Updated ${reason}. Auto-saving...`);
+  }
 }
 
 function clampAvatarColor(value, fallback, paletteKey = "") {
@@ -976,6 +1119,11 @@ const state = {
   motionLevel: "standard",
   playerPopEnabled: localStorage.getItem("ezra_player_pop_enabled") === "1",
   playerPopScope: STORED_PLAYER_SCOPE ? (STORED_PLAYER_SCOPE === "favorite" ? "favorite" : "any") : STORED_FAVORITE_TEAM ? "favorite" : "any",
+  avatarTab: "face",
+  avatarSaveToastTimer: null,
+  avatarAutoSaveTimer: null,
+  avatarDraftHash: "",
+  avatarLastSavedHash: "",
   teamPlayersCache: {},
   playerQuiz: {
     poolKey: "",
@@ -1190,6 +1338,10 @@ const el = {
   avatarBuilderSignedIn: document.getElementById("avatar-builder-signedin"),
   accountAvatarSaveBtn: document.getElementById("account-avatar-save-btn"),
   accountAvatarRandomBtn: document.getElementById("account-avatar-random-btn"),
+  avatarSaveToast: document.getElementById("avatar-save-toast"),
+  avatarTemplateButtons: [...document.querySelectorAll(".avatar-template-btn")],
+  avatarTemplatePreviews: [...document.querySelectorAll(".avatar-template-preview")],
+  avatarTabButtons: [...document.querySelectorAll(".avatar-tab-btn")],
   avatarHairStyleInput: document.getElementById("avatar-hair-style"),
   avatarHeadShapeInput: document.getElementById("avatar-head-shape"),
   avatarMouthStyleInput: document.getElementById("avatar-mouth-style"),
@@ -1595,7 +1747,7 @@ function updateAccountUiState() {
 
 function updateAccountControlsState() {
   const busy = accountAnyPending() || Boolean(state.account.bootstrapInFlight);
-  const avatarBusy = !accountSignedIn() || Boolean(state.account.pending?.save_avatar);
+  const avatarBusy = Boolean(state.account.pending?.save_avatar);
   const signedIn = accountSignedIn();
   if (el.accountRegisterBtn) el.accountRegisterBtn.disabled = busy || signedIn;
   if (el.accountLoginBtn) el.accountLoginBtn.disabled = busy || signedIn;
@@ -1612,8 +1764,8 @@ function updateAccountControlsState() {
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.disabled = busy || signedIn;
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.disabled = busy || signedIn;
   if (el.accountEmailManageInput) el.accountEmailManageInput.disabled = busy || !signedIn;
-  if (el.accountAvatarSaveBtn) el.accountAvatarSaveBtn.disabled = avatarBusy;
-  if (el.accountAvatarRandomBtn) el.accountAvatarRandomBtn.disabled = avatarBusy;
+  if (el.accountAvatarSaveBtn) el.accountAvatarSaveBtn.disabled = avatarBusy || !signedIn;
+  if (el.accountAvatarRandomBtn) el.accountAvatarRandomBtn.disabled = avatarBusy || !signedIn;
   const avatarInputs = [
     el.avatarHairStyleInput,
     el.avatarHeadShapeInput,
@@ -1787,6 +1939,7 @@ function renderAccountUI() {
       el.accountEmailManageInput.placeholder = state.account.user?.email ? "Recovery email" : "Add recovery email";
     }
     writeAvatarEditorState(currentAccountAvatar());
+    state.avatarLastSavedHash = avatarConfigSignature(currentAccountAvatar());
     applyAvatarStyleLocks();
     const avatarInputs = [
       el.avatarHairStyleInput,
@@ -1817,6 +1970,7 @@ function renderAccountUI() {
   renderAccountHelper();
   updateFamilyControlsState();
   updateAccountControlsState();
+  setAvatarTab(state.avatarTab);
   scheduleAvatar3DUpgrade();
 }
 
@@ -6983,17 +7137,20 @@ async function saveAccountAvatar() {
   const data = await apiRequest("PUT", `${API_PROXY_BASE}/v1/ezra/account/avatar`, { avatar }, state.account.token);
   if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
   state.account.user.avatar = sanitizeAvatarConfig(data?.avatar, state.account.user?.name || state.account.user?.id || "ezra");
+  state.avatarLastSavedHash = avatarConfigSignature(state.account.user.avatar);
   renderAccountUI();
   renderFamilyLeaguePanel();
   if (state.leagueMemberView.open) renderLeagueMemberView();
   setAccountStatus("Avatar saved.");
+  showAvatarSaveToast();
 }
 
 function randomizeAccountAvatar() {
   if (!accountSignedIn()) return;
   const seed = `${state.account.user?.name || "ezra"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
   writeAvatarEditorState(defaultAvatarConfig(seed));
-  setAccountStatus("Avatar randomized. Save to keep it.");
+  setAccountStatus("Avatar randomized.");
+  scheduleAvatarAutoSave("random look");
 }
 
 async function logoutAccount() {
@@ -9724,11 +9881,35 @@ function attachEvents() {
     if (!input) return;
     input.addEventListener("change", () => {
       writeAvatarEditorState(readAvatarEditorState());
+      scheduleAvatarAutoSave(input.name || "avatar");
     });
     input.addEventListener("input", () => {
       writeAvatarEditorState(readAvatarEditorState());
+      scheduleAvatarAutoSave(input.name || "avatar");
     });
   });
+
+  if (el.avatarTemplateButtons.length) {
+    el.avatarTemplateButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.dataset.avatarTemplate || 0);
+        const template = DEFAULT_AVATAR_TEMPLATES[idx];
+        if (!template) return;
+        const current = readAvatarEditorState();
+        writeAvatarEditorState({ ...current, ...template });
+        setAvatarTemplateActive(idx);
+        scheduleAvatarAutoSave("starter look");
+      });
+    });
+  }
+
+  if (el.avatarTabButtons.length) {
+    el.avatarTabButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setAvatarTab(btn.dataset.avatarTab || "face");
+      });
+    });
+  }
 
   if (el.accountAvatarRandomBtn) {
     el.accountAvatarRandomBtn.addEventListener("click", () => {
@@ -10284,6 +10465,8 @@ setPlayerPopScope(state.playerPopScope);
 setPlayerPopButtonState();
 hydrateCachedBootstrapData();
 renderAccountUI();
+renderAvatarTemplates();
+setAvatarTab(state.avatarTab);
 ensureNotificationsState();
 renderNotificationsPanel();
 refreshPlayerPopScoreBadge();

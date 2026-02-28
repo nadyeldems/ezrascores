@@ -2018,14 +2018,15 @@ body.league-member-overlay-open::before {
 }
 
 .account-toggle-avatar {
-  width: 2.2rem;
-  height: 2.2rem;
+  width: 2.6rem;
+  height: 2.6rem;
   border-radius: 999px;
   border: 1px solid var(--line-soft);
   object-fit: cover;
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.15), #0f0703 70%);
   padding: 0.03rem;
   display: block;
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.45);
 }
 
 .account-toggle-avatar-fallback {
@@ -2056,14 +2057,42 @@ body.league-member-overlay-open::before {
   gap: 0.6rem;
 }
 
+.avatar-editor-head-meta {
+  display: grid;
+  gap: 0.1rem;
+  justify-items: end;
+  text-align: right;
+}
+
+.avatar-head-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
 .account-avatar-preview {
-  width: 3.4rem;
-  height: 3.4rem;
+  width: 4.2rem;
+  height: 4.2rem;
   border-radius: 999px;
   border: 1px solid var(--amber-soft);
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.22), #0f0703 72%);
   object-fit: cover;
   padding: 0.04rem;
+  animation: avatar-bob 4.6s ease-in-out infinite;
+  box-shadow: 0 0.2rem 0.8rem rgba(0, 0, 0, 0.35);
+}
+
+@keyframes avatar-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+body[data-motion="minimal"] .account-avatar-preview {
+  animation: none;
 }
 
 .avatar-editor-grid {
@@ -2077,6 +2106,10 @@ body.league-member-overlay-open::before {
   gap: 0.22rem;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+.avatar-editor-field.hidden {
+  display: none;
 }
 
 .avatar-editor-field .account-input {
@@ -2110,6 +2143,68 @@ body.league-member-overlay-open::before {
   background: linear-gradient(180deg, rgba(255, 168, 72, 0.08), rgba(255, 168, 72, 0.02));
 }
 
+.avatar-template-strip {
+  display: grid;
+  grid-template-columns: auto repeat(5, minmax(0, 1fr));
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--line-soft);
+  background: rgba(7, 4, 2, 0.55);
+}
+
+.avatar-template-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.avatar-template-btn {
+  border-radius: 0.6rem;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.18rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.avatar-template-btn.active,
+.avatar-template-btn:hover {
+  border-color: var(--amber);
+  transform: translateY(-1px);
+}
+
+.avatar-template-preview {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.avatar-editor-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.avatar-tab-btn {
+  min-height: 2rem;
+  font-size: 0.85rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--line-soft);
+  background: rgba(10, 6, 3, 0.6);
+}
+
+.avatar-tab-btn.active {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 1px rgba(255, 184, 84, 0.35);
+  background: rgba(255, 168, 72, 0.1);
+}
+
 .mission-title-with-avatar {
   display: inline-flex;
   align-items: center;
@@ -2129,13 +2224,13 @@ body.league-member-overlay-open::before {
 }
 
 .league-member-avatar {
-  width: 2.05rem;
-  height: 2.05rem;
+  width: 2.35rem;
+  height: 2.35rem;
 }
 
 .member-profile-avatar {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 3rem;
+  height: 3rem;
 }
 
 .league-member-avatar img,
@@ -3006,8 +3101,20 @@ body.league-member-overlay-open::before {
   }
 
   .account-avatar-preview {
-    width: 3.4rem;
-    height: 3.4rem;
+    width: 3.8rem;
+    height: 3.8rem;
+  }
+
+  .avatar-template-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .avatar-template-label {
+    text-align: left;
+  }
+
+  .avatar-editor-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
