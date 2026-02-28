@@ -1098,9 +1098,13 @@ function loadDreamTeamState() {
   }
 }
 
+const SAFE_MAIN_TABS = ["home", "play", "predict", "squad", "tables"];
+const SAFE_STORED_MAIN_TAB = SAFE_MAIN_TABS.includes(STORED_MAIN_TAB) ? STORED_MAIN_TAB : "home";
+const INITIAL_MAIN_TAB = SAFE_STORED_MAIN_TAB === "squad" ? "home" : SAFE_STORED_MAIN_TAB;
+
 const state = {
   selectedLeague: "ALL",
-  mainTab: ["home", "play", "predict", "squad", "tables"].includes(STORED_MAIN_TAB) ? STORED_MAIN_TAB : "home",
+  mainTab: INITIAL_MAIN_TAB,
   serverTimeOffsetMs: 0,
   selectedDate: "",
   selectedDateFixtures: { EPL: [], CHAMP: [] },
@@ -3152,23 +3156,23 @@ async function refreshLeagueDirectory() {
     let nextCode = prevCode;
     let nextIdx = prevIdx;
 
-    if (accountSignedIn()) {
-      const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
-      const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
-      const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
-      nextItems = leagues;
-      if (codes.length) {
-        nextCodes = codes;
-        const current = nextCode;
-        if (!current || !codes.includes(current)) {
-          nextCode = codes[0];
-        }
-        nextIdx = Math.max(0, codes.indexOf(nextCode));
-      } else {
-        nextCodes = [];
-        nextCode = "";
-        nextIdx = 0;
+  if (accountSignedIn()) {
+    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
+    const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
+    const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+    nextItems = leagues;
+    if (codes.length) {
+      nextCodes = codes;
+      const current = nextCode;
+      if (!current || !codes.includes(current)) {
+        nextCode = codes[0];
       }
+      nextIdx = Math.max(0, codes.indexOf(nextCode));
+    } else {
+      nextCodes = [];
+      nextCode = "";
+      nextIdx = 0;
+    }
     } else {
       const codes = Array.from(
         new Set(
@@ -3227,7 +3231,10 @@ async function refreshLeagueDirectory() {
 
 function cycleLeague(delta) {
   ensureFamilyLeagueState();
-  const codes = state.familyLeague.joinedLeagueCodes || [];
+  const directoryCodes = Array.isArray(state.leagueDirectory.items)
+    ? state.leagueDirectory.items.map((league) => String(league?.code || "").toUpperCase()).filter(Boolean)
+    : [];
+  const codes = directoryCodes.length ? directoryCodes : state.familyLeague.joinedLeagueCodes || [];
   if (!codes.length) return;
   const currentIdx = Number.isInteger(state.familyLeague.currentLeagueIndex) ? state.familyLeague.currentLeagueIndex : 0;
   const nextIdx = (currentIdx + delta + codes.length) % codes.length;
@@ -3725,7 +3732,12 @@ function renderFamilyLeaguePanel() {
     ensureSignedInUserInFamilyLeague();
   }
   const code = String(state.familyLeague.leagueCode || "").toUpperCase();
-  const joinedCount = Array.isArray(state.familyLeague.joinedLeagueCodes) ? state.familyLeague.joinedLeagueCodes.length : 0;
+  const joinedCodes = Array.isArray(state.leagueDirectory.items) && state.leagueDirectory.items.length
+    ? state.leagueDirectory.items.map((league) => String(league?.code || "").toUpperCase()).filter(Boolean)
+    : Array.isArray(state.familyLeague.joinedLeagueCodes)
+      ? state.familyLeague.joinedLeagueCodes
+      : [];
+  const joinedCount = joinedCodes.length;
   const currentPos = joinedCount ? state.familyLeague.currentLeagueIndex + 1 : 0;
   const currentLeague = currentSelectedLeagueRecord();
   const leagueName = String(currentLeague?.name || "").trim() || `League ${code || "--"}`;
