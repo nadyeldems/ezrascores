@@ -671,6 +671,22 @@ function buildAvatar3DGroup(THREE, avatar) {
   const boots = new THREE.Color(avatar.bootsColor);
   const shortsColorHex = avatar.shortsColor || avatar.kitColor2;
   const socksColorHex = avatar.socksColor || avatar.kitColor1;
+  const facePresetByBrow = {
+    soft: { eyeScale: 1.0, eyeYOffset: 0.01, browYOffset: 0.0, mouthYOffset: 0.0, mouthScale: 1.0, noseScale: 1.0 },
+    focused: { eyeScale: 0.95, eyeYOffset: 0.0, browYOffset: 0.015, mouthYOffset: 0.01, mouthScale: 0.9, noseScale: 1.02 },
+    cheeky: { eyeScale: 1.03, eyeYOffset: 0.005, browYOffset: -0.008, mouthYOffset: -0.008, mouthScale: 1.07, noseScale: 0.96 },
+  };
+  const hairStylePreset = {
+    bald: { capScale: [1, 1, 1], capY: 1.38 },
+    short: { capScale: [1.03, 0.95, 0.94], capY: 1.36 },
+    fade: { capScale: [1.01, 0.9, 0.93], capY: 1.34 },
+    spike: { capScale: [1.02, 0.95, 0.94], capY: 1.36 },
+    curly: { capScale: [1.08, 1.02, 1.0], capY: 1.4 },
+    long: { capScale: [1.08, 1.02, 0.98], capY: 1.39 },
+    bun: { capScale: [1.03, 0.94, 0.94], capY: 1.35 },
+  };
+  const facePreset = facePresetByBrow[avatar.brow] || facePresetByBrow.soft;
+  const hairPreset = hairStylePreset[avatar.hairStyle] || hairStylePreset.short;
 
   const skinTex = createSkinTexture(THREE, avatar.skinColor);
   const skinMat = new THREE.MeshStandardMaterial({ color: skin, map: skinTex, roughness: 0.42, metalness: 0.03 });
@@ -717,8 +733,8 @@ function buildAvatar3DGroup(THREE, avatar) {
   // Hair shells + style shapes anchored to scalp.
   if (avatar.hairStyle !== "bald") {
     const cap = new THREE.Mesh(new THREE.SphereGeometry(0.355, 30, 22, 0, Math.PI * 2, 0, Math.PI * 0.62), hairMat);
-    cap.position.set(0, 1.38, 0.01);
-    cap.scale.set(1.04, 1, 0.94);
+    cap.position.set(0, hairPreset.capY, 0.01);
+    cap.scale.set(hairPreset.capScale[0], hairPreset.capScale[1], hairPreset.capScale[2]);
     rig.add(cap);
 
     if (avatar.hairStyle === "spike") {
@@ -737,13 +753,13 @@ function buildAvatar3DGroup(THREE, avatar) {
     } else if (avatar.hairStyle === "curly") {
       const curlGeo = new THREE.SphereGeometry(0.075, 14, 12);
       for (let r = 0; r < 3; r += 1) {
-        const radius = 0.11 + r * 0.06;
+        const radius = 0.12 + r * 0.065;
         const count = 8 + r * 2;
         for (let i = 0; i < count; i += 1) {
           const a = (i / count) * Math.PI * 2;
           const c = new THREE.Mesh(curlGeo, hairMat);
-          c.position.set(Math.cos(a) * radius, 1.48 + r * 0.03 + Math.sin(a * 2) * 0.01, 0.06 + Math.sin(a) * 0.08);
-          c.scale.set(1, 1 + (r === 0 ? 0.14 : 0), 1);
+          c.position.set(Math.cos(a) * radius, 1.49 + r * 0.034 + Math.sin(a * 2) * 0.012, 0.06 + Math.sin(a) * 0.1);
+          c.scale.set(1, 1 + (r <= 1 ? 0.16 : 0.08), 1);
           rig.add(c);
         }
       }
@@ -776,11 +792,13 @@ function buildAvatar3DGroup(THREE, avatar) {
   const eyeWhiteGeo = new THREE.SphereGeometry(0.042, 14, 14);
   const irisGeo = new THREE.SphereGeometry(0.021, 12, 12);
   const pupilGeo = new THREE.SphereGeometry(0.011, 10, 10);
-  const eyeY = 1.28;
+  const eyeY = 1.28 + facePreset.eyeYOffset;
   const eyeZ = 0.31;
   const eyeX = 0.11;
   const eyeL = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
   const eyeR = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
+  eyeL.scale.setScalar(facePreset.eyeScale);
+  eyeR.scale.setScalar(facePreset.eyeScale);
   eyeL.position.set(-eyeX, eyeY, eyeZ);
   eyeR.position.set(eyeX, eyeY, eyeZ);
   const irisL = new THREE.Mesh(irisGeo, irisMat);
@@ -796,8 +814,8 @@ function buildAvatar3DGroup(THREE, avatar) {
   const browGeo = new THREE.BoxGeometry(0.11, 0.016, 0.015);
   const browL = new THREE.Mesh(browGeo, hairMat);
   const browR = new THREE.Mesh(browGeo, hairMat);
-  browL.position.set(-eyeX, 1.36, 0.3);
-  browR.position.set(eyeX, 1.36, 0.3);
+  browL.position.set(-eyeX, 1.36 + facePreset.browYOffset, 0.3);
+  browR.position.set(eyeX, 1.36 + facePreset.browYOffset, 0.3);
   browL.rotation.z = -0.06 + browTilt;
   browR.rotation.z = 0.06 - browTilt;
   rig.add(browL, browR);
@@ -807,6 +825,7 @@ function buildAvatar3DGroup(THREE, avatar) {
   else if (avatar.noseStyle === "round") noseGeo = new THREE.SphereGeometry(0.03, 12, 12);
   else noseGeo = new THREE.SphereGeometry(0.024, 12, 12);
   const nose = new THREE.Mesh(noseGeo, skinMat);
+  nose.scale.setScalar(facePreset.noseScale);
   nose.position.set(0, 1.2, 0.32);
   if (avatar.noseStyle === "straight") nose.rotation.x = Math.PI / 2.8;
   rig.add(nose);
@@ -814,9 +833,11 @@ function buildAvatar3DGroup(THREE, avatar) {
   const mouthGroup = new THREE.Group();
   if (avatar.mouth === "flat") {
     const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.014, 0.01), mouthMat);
+    mouth.scale.set(facePreset.mouthScale, 1, 1);
     mouthGroup.add(mouth);
   } else {
     const arc = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.01, 8, 16, avatar.mouth === "open" ? Math.PI : Math.PI * 0.78), mouthMat);
+    arc.scale.set(facePreset.mouthScale, facePreset.mouthScale, 1);
     arc.rotation.set(Math.PI, 0, 0);
     mouthGroup.add(arc);
     if (avatar.mouth === "open") {
@@ -825,7 +846,7 @@ function buildAvatar3DGroup(THREE, avatar) {
       mouthGroup.add(tongue);
     }
   }
-  mouthGroup.position.set(0, 1.1, 0.32);
+  mouthGroup.position.set(0, 1.1 + facePreset.mouthYOffset, 0.32);
   rig.add(mouthGroup);
 
   // Torso + pelvis
