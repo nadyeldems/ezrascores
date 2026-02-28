@@ -304,7 +304,7 @@ function avatarSvgDataUri(input, seed = "", size = 96) {
     </filter>
     <filter id="ballShadow" x="-30%" y="-30%" width="170%" height="170%">
       <feDropShadow dx="0.8" dy="1.8" stdDeviation="1.2" flood-color="#000" flood-opacity="0.4"/>
-    </linearGradient>
+    </filter>
   </defs>
   <rect x="0" y="0" width="100" height="100" rx="24" fill="url(#bgGlow)"/>
   <rect x="3.5" y="3.5" width="93" height="93" rx="21.6" fill="none" stroke="rgba(255,171,59,0.36)" stroke-width="2"/>
