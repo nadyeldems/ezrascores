@@ -118,6 +118,21 @@ const AVATAR_OPTIONS = {
   bootsStyle: ["classic", "speed", "high"],
 };
 
+const AVATAR_STYLE_LOCKS = {
+  hairStyle: { spike: 80, curly: 140 },
+  kitStyle: { diamond: 120, stripes: 180, hoops: 240, total90: 320 },
+  bootsStyle: { speed: 100, high: 220 },
+};
+
+const AVATAR_UNLOCK_TRACK = [
+  { key: "starter", label: "Starter Pack", points: 0, icon: "⭐" },
+  { key: "speed", label: "Speed Boots", points: 100, icon: "⚡" },
+  { key: "flair", label: "Flair Hair", points: 140, icon: "✨" },
+  { key: "patterns", label: "Pattern Kits", points: 180, icon: "🎽" },
+  { key: "legacy", label: "Legacy Total90", points: 320, icon: "🏆" },
+  { key: "ball", label: "Future Ball FX", points: 450, icon: "⚽" },
+];
+
 const AVATAR_PALETTES = {
   skinColor: ["#F8D5B5", "#EEC19A", "#D9A173", "#C58A5D", "#A8724A", "#8A5C3A", "#6E452C", "#54331F"],
   hairColor: ["#17100B", "#3B2518", "#6A452F", "#9D734F", "#C3A67F", "#D9B8A8"],
@@ -141,6 +156,62 @@ function avatarSeedIndex(seed, modulo) {
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
   return modulo > 0 ? hash % modulo : 0;
+}
+
+function accountLifetimePoints() {
+  const raw = Number(state.challengeDashboard?.lifetimePoints);
+  return Number.isFinite(raw) ? Math.max(0, raw) : 0;
+}
+
+function avatarOptionMinPoints(field, value) {
+  return Number(AVATAR_STYLE_LOCKS?.[field]?.[value] || 0);
+}
+
+function isAvatarOptionUnlocked(field, value, points) {
+  return points >= avatarOptionMinPoints(field, value);
+}
+
+function applyAvatarStyleLocks() {
+  if (!accountSignedIn()) return;
+  const points = accountLifetimePoints();
+  const lockable = [
+    { el: el.avatarHairStyleInput, field: "hairStyle", options: AVATAR_OPTIONS.hairStyle },
+    { el: el.avatarKitStyleInput, field: "kitStyle", options: AVATAR_OPTIONS.kitStyle },
+    { el: el.avatarBootsStyleInput, field: "bootsStyle", options: AVATAR_OPTIONS.bootsStyle },
+  ];
+  lockable.forEach((item) => {
+    const select = item.el;
+    if (!select) return;
+    const unlockedValues = item.options.filter((v) => isAvatarOptionUnlocked(item.field, v, points));
+    const fallback = unlockedValues[0] || item.options[0];
+    if (!isAvatarOptionUnlocked(item.field, select.value, points)) {
+      select.value = fallback;
+    }
+    [...select.options].forEach((opt) => {
+      const requirement = avatarOptionMinPoints(item.field, opt.value);
+      const unlocked = points >= requirement;
+      if (!opt.dataset.baseLabel) opt.dataset.baseLabel = opt.textContent || opt.value;
+      opt.disabled = !unlocked;
+      opt.textContent = unlocked || requirement <= 0 ? opt.dataset.baseLabel : `${opt.dataset.baseLabel} 🔒 ${requirement} pts`;
+    });
+  });
+}
+
+function renderAvatarUnlockRail() {
+  if (!el.avatarUnlockRail) return;
+  const points = accountLifetimePoints();
+  const next = AVATAR_UNLOCK_TRACK.find((item) => points < item.points) || null;
+  const chips = AVATAR_UNLOCK_TRACK.map((item) => {
+    const unlocked = points >= item.points;
+    return `<span class="avatar-unlock-chip ${unlocked ? "unlocked" : "locked"}">${item.icon} ${escapeHtml(item.label)}${item.points > 0 ? ` · ${item.points} pts` : ""}</span>`;
+  }).join("");
+  el.avatarUnlockRail.innerHTML = `
+    <div class="avatar-unlock-head">
+      <span>Unlock Track</span>
+      <span class="muted">${next ? `${Math.max(0, next.points - points)} pts to ${next.label}` : "All listed tiers unlocked"}</span>
+    </div>
+    <div class="avatar-unlock-chips">${chips}</div>
+  `;
 }
 
 function defaultAvatarConfig(seed = "") {
@@ -581,6 +652,7 @@ const el = {
   avatarKitColor1Input: document.getElementById("avatar-kit-color-1"),
   avatarKitColor2Input: document.getElementById("avatar-kit-color-2"),
   avatarBootsColorInput: document.getElementById("avatar-boots-color"),
+  avatarUnlockRail: document.getElementById("avatar-unlock-rail"),
   accountHelper: document.getElementById("account-helper"),
   accountEmailSaveBtn: document.getElementById("account-email-save-btn"),
   accountSyncBtn: document.getElementById("account-sync-btn"),
@@ -1074,6 +1146,7 @@ function writeAvatarEditorState(avatar) {
   if (accountSignedIn() && el.accountToggleAvatar && !el.accountToggleAvatar.classList.contains("hidden")) {
     el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
   }
+  applyAvatarStyleLocks();
 }
 
 function renderAccountAvatarButton() {
@@ -1147,11 +1220,13 @@ function renderAccountUI() {
       el.accountEmailManageInput.placeholder = state.account.user?.email ? "Recovery email" : "Add recovery email";
     }
     writeAvatarEditorState(currentAccountAvatar());
+    applyAvatarStyleLocks();
     setAccountRecoveryOpen(false);
   } else {
     writeAvatarEditorState(defaultAvatarConfig("ezra"));
     setAccountRecoveryOpen(Boolean(state.account.recoveryOpen));
   }
+  renderAvatarUnlockRail();
   renderLifetimePointsPill();
   renderAccountHelper();
   updateFamilyControlsState();
@@ -3066,6 +3141,7 @@ function renderChallengeDashboardPanels() {
   const myTitlesWon = Number(
     seasonRows.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.titles_won || 0
   );
+  renderAvatarUnlockRail();
 
   if (!accountSignedIn()) {
     el.challengeStreak.innerHTML = `<p class="muted">Sign in to track your streak and weekly points.</p>`;
