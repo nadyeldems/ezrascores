@@ -1483,6 +1483,11 @@ function avatarMilestoneSlotCount(points) {
   return Math.min(AVATAR_PRESET_FILES.length, AVATAR_STARTER_VARIANTS.length + unlockedByMilestone);
 }
 
+function avatarEarnedCredits(points) {
+  const safePoints = Number.isFinite(Number(points)) ? Math.max(0, Number(points)) : 0;
+  return AVATAR_FREE_UNLOCK_CREDITS + Math.floor(safePoints / AVATAR_UNLOCK_EVERY_POINTS);
+}
+
 function normalizeAvatarVariantList(list) {
   const seen = new Set();
   const next = [];
@@ -1499,24 +1504,29 @@ function normalizeAvatarVariantList(list) {
 function avatarUnlockStateFor(avatarInput = null) {
   const points = accountLifetimePoints();
   const slotCountByPoints = avatarMilestoneSlotCount(points);
+  const earnedCredits = avatarEarnedCredits(points);
   const source = avatarInput && typeof avatarInput === "object" ? avatarInput : state.account.user?.avatar;
   const requested = normalizeAvatarVariantList([...(source?.unlockedVariants || []), ...getStoredAvatarUnlocks()]);
-  const slotCount = Math.min(
-    AVATAR_PRESET_FILES.length,
-    Math.max(slotCountByPoints, AVATAR_STARTER_VARIANTS.length, requested.length)
-  );
   const unlocked = [...AVATAR_STARTER_VARIANTS];
   requested.forEach((variant) => {
-    if (unlocked.length >= slotCount) return;
     if (unlocked.includes(variant)) return;
     unlocked.push(variant);
   });
+  const spentCredits = Math.max(0, unlocked.filter((v) => !AVATAR_STARTER_VARIANTS.includes(v)).length);
+  const availableCredits = Math.max(0, earnedCredits - spentCredits);
+  const slotCount = Math.min(
+    AVATAR_PRESET_FILES.length,
+    Math.max(slotCountByPoints, unlocked.length + availableCredits, AVATAR_STARTER_VARIANTS.length)
+  );
   return {
     points,
     slotCount,
+    earnedCredits,
+    spentCredits,
+    availableCredits,
     unlockedVariants: unlocked,
-    canUnlockMore: unlocked.length < slotCount,
-    remainingUnlocks: Math.max(0, slotCount - unlocked.length),
+    canUnlockMore: availableCredits > 0 && unlocked.length < AVATAR_PRESET_FILES.length,
+    remainingUnlocks: Math.min(availableCredits, Math.max(0, AVATAR_PRESET_FILES.length - unlocked.length)),
     nextMilestoneAt:
       slotCountByPoints >= AVATAR_PRESET_FILES.length
         ? null
@@ -1544,6 +1554,7 @@ function unlockAvatarVariant(variant, opts = {}) {
   const unlockedVariants = [...unlockState.unlockedVariants, key];
   state.account.user.avatar = { ...safeCurrent, unlockedVariants };
   persistStoredAvatarUnlocks(unlockedVariants);
+  persistStoredAvatarConfig(state.account.user.avatar);
   if (!opts.silentStatus) setAccountStatus(`Unlocked ${avatarVariantLabel(key)}.`);
   return true;
 }
@@ -1576,24 +1587,26 @@ function renderAvatarUnlockMeta() {
   const unlockState = avatarUnlockStateFor();
   const unlockedCount = unlockState.unlockedVariants.length;
   const totalCount = AVATAR_PRESET_FILES.length;
+  const creditText = `Credits ${unlockState.availableCredits}/${unlockState.earnedCredits}`;
   if (unlockState.slotCount >= AVATAR_PRESET_FILES.length) {
-    el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. All avatar slots unlocked.`;
+    el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${creditText}.`;
     return;
   }
   if (unlockState.canUnlockMore) {
-    el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. You can unlock ${unlockState.remainingUnlocks} more now.`;
+    el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${creditText}. Spend ${unlockState.remainingUnlocks} unlock${unlockState.remainingUnlocks === 1 ? "" : "s"} now.`;
     return;
   }
   const nextAt = Number(unlockState.nextMilestoneAt || 0);
   const remaining = Math.max(0, nextAt - unlockState.points);
-  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${remaining} pts to next unlock (+1 slot per ${AVATAR_UNLOCK_EVERY_POINTS} pts, includes 1 free credit).`;
+  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${creditText}. ${remaining} pts to next credit (+1 per ${AVATAR_UNLOCK_EVERY_POINTS} pts).`;
 }
 
 function renderAvatarPresetGrid() {
   if (!el.avatarPresetsGrid) return;
   const unlockState = avatarUnlockStateFor();
   const selectedVariant = ensureAvatarVariantUnlocked(el.avatarVariantInput?.value || currentAccountAvatar().variant);
-  const cards = AVATAR_PRESET_FILES.map((variant) => {
+  const ordered = [...unlockState.unlockedVariants, ...AVATAR_PRESET_FILES.filter((v) => !unlockState.unlockedVariants.includes(v))];
+  const cards = ordered.map((variant) => {
     const unlocked = unlockState.unlockedVariants.includes(variant);
     const selected = selectedVariant === variant;
     const label = avatarVariantLabel(variant);
@@ -10889,22 +10902,30 @@ function attachEvents() {
   }
 
   if (el.avatarPresetsGrid) {
-    el.avatarPresetsGrid.addEventListener("click", (event) => {
+    el.avatarPresetsGrid.addEventListener("click", async (event) => {
       const btn = event.target?.closest?.("[data-avatar-variant-card]");
       if (!btn) return;
       const variant = String(btn.dataset.avatarVariantCard || "").trim();
       if (!variant) return;
       const unlockState = avatarUnlockStateFor();
       if (!unlockState.unlockedVariants.includes(variant)) {
+        if (!unlockState.availableCredits) {
+          setAccountStatus(`Locked. Earn ${AVATAR_UNLOCK_EVERY_POINTS} pts per extra credit.`);
+          return;
+        }
+        const shouldUnlock = window.confirm(
+          `Unlock ${avatarVariantLabel(variant)}?\n\nThis will use 1 credit permanently.\nCredits available now: ${unlockState.availableCredits}`
+        );
+        if (!shouldUnlock) return;
         const unlocked = unlockAvatarVariant(variant);
         if (!unlocked) {
-          setAccountStatus(`Locked. Earn ${AVATAR_UNLOCK_EVERY_POINTS} pts per extra avatar slot.`);
+          setAccountStatus("Unable to unlock this avatar right now.", true);
           return;
         }
       }
       const current = readAvatarEditorState();
       writeAvatarEditorState({ ...current, variant });
-      scheduleAvatarAutoSave("avatar");
+      await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar).catch(() => null);
     });
   }
 
