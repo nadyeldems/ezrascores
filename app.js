@@ -26,6 +26,7 @@ const STORED_ACCOUNT_TOKEN = STORED_ACCOUNT_TOKEN_SESSION || STORED_ACCOUNT_TOKE
 const EFFECTIVE_KEEP_LOGGED_IN = STORED_ACCOUNT_TOKEN_SESSION ? false : STORED_KEEP_LOGGED_IN;
 const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
 const STORED_AVATAR_UNLOCKS = parseStoredJson("ezra_avatar_unlocks", {});
+const STORED_AVATAR_CACHE = parseStoredJson("ezra_avatar_cache", {});
 let STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
 STORED_MAIN_TAB = String(STORED_MAIN_TAB || "").trim().toLowerCase();
 if (STORED_MAIN_TAB === "squad") {
@@ -217,6 +218,7 @@ const AVATAR_PRESET_LABELS = {
 
 const AVATAR_STARTER_VARIANTS = AVATAR_PRESET_FILES.slice(0, 3);
 const AVATAR_UNLOCK_EVERY_POINTS = 67;
+const AVATAR_FREE_UNLOCK_CREDITS = 1;
 
 const AVATAR_OPTIONS = {
   variant: AVATAR_PRESET_FILES,
@@ -1441,6 +1443,15 @@ function getStoredAvatarUnlocks(user = state.account.user) {
   return normalizeAvatarVariantList(root[key]);
 }
 
+function getStoredAvatarConfig(user = state.account.user) {
+  const key = avatarUnlockStoreKey(user);
+  if (!key) return null;
+  const root = STORED_AVATAR_CACHE && typeof STORED_AVATAR_CACHE === "object" ? STORED_AVATAR_CACHE : {};
+  const item = root[key];
+  if (!item || typeof item !== "object") return null;
+  return item;
+}
+
 function persistStoredAvatarUnlocks(unlockedVariants, user = state.account.user) {
   const key = avatarUnlockStoreKey(user);
   if (!key) return;
@@ -1451,6 +1462,16 @@ function persistStoredAvatarUnlocks(unlockedVariants, user = state.account.user)
   } catch {}
 }
 
+function persistStoredAvatarConfig(avatar, user = state.account.user) {
+  const key = avatarUnlockStoreKey(user);
+  if (!key) return;
+  const root = STORED_AVATAR_CACHE && typeof STORED_AVATAR_CACHE === "object" ? STORED_AVATAR_CACHE : {};
+  root[key] = sanitizeAvatarConfig(avatar, user?.name || user?.id || "ezra");
+  try {
+    localStorage.setItem("ezra_avatar_cache", JSON.stringify(root));
+  } catch {}
+}
+
 function avatarVariantLabel(variant) {
   const key = String(variant || "").trim();
   return AVATAR_PRESET_LABELS[key] || key.replace(/\.svg$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
@@ -1458,7 +1479,7 @@ function avatarVariantLabel(variant) {
 
 function avatarMilestoneSlotCount(points) {
   const safePoints = Number.isFinite(Number(points)) ? Math.max(0, Number(points)) : 0;
-  const unlockedByMilestone = Math.floor(safePoints / AVATAR_UNLOCK_EVERY_POINTS);
+  const unlockedByMilestone = Math.floor(safePoints / AVATAR_UNLOCK_EVERY_POINTS) + AVATAR_FREE_UNLOCK_CREDITS;
   return Math.min(AVATAR_PRESET_FILES.length, AVATAR_STARTER_VARIANTS.length + unlockedByMilestone);
 }
 
@@ -1565,7 +1586,7 @@ function renderAvatarUnlockMeta() {
   }
   const nextAt = Number(unlockState.nextMilestoneAt || 0);
   const remaining = Math.max(0, nextAt - unlockState.points);
-  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${remaining} pts to next unlock (+1 slot per ${AVATAR_UNLOCK_EVERY_POINTS} pts).`;
+  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${remaining} pts to next unlock (+1 slot per ${AVATAR_UNLOCK_EVERY_POINTS} pts, includes 1 free credit).`;
 }
 
 function renderAvatarPresetGrid() {
@@ -2357,8 +2378,14 @@ function renderLifetimePointsPill() {
     el.lifetimePointsPill.textContent = "Total points: --";
     return;
   }
-  const lifetime = Number(state.challengeDashboard?.lifetimePoints || 0);
-  el.lifetimePointsPill.textContent = `Total points: ${lifetime}`;
+  const dashPoints = Number(state.challengeDashboard?.lifetimePoints);
+  if (Number.isFinite(dashPoints)) {
+    localStorage.setItem("ezra_last_lifetime_points", String(Math.max(0, dashPoints)));
+    el.lifetimePointsPill.textContent = `Total points: ${Math.max(0, dashPoints)}`;
+    return;
+  }
+  const fallback = Number(localStorage.getItem("ezra_last_lifetime_points") || "");
+  el.lifetimePointsPill.textContent = Number.isFinite(fallback) ? `Total points: ${Math.max(0, fallback)}` : "Total points: --";
 }
 
 function maybeNotifyDailyQuestReset() {
@@ -2574,7 +2601,12 @@ function setAvatarSaveState(mode, message = "") {
 function currentAccountAvatar() {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   const base = state.account.user?.avatar && typeof state.account.user.avatar === "object" ? state.account.user.avatar : {};
-  const merged = { ...base, unlockedVariants: normalizeAvatarVariantList([...(base.unlockedVariants || []), ...getStoredAvatarUnlocks()]) };
+  const cached = getStoredAvatarConfig() || {};
+  const merged = {
+    ...base,
+    ...cached,
+    unlockedVariants: normalizeAvatarVariantList([...(base.unlockedVariants || []), ...(cached.unlockedVariants || []), ...getStoredAvatarUnlocks()]),
+  };
   return sanitizeAvatarConfig(merged, seed);
 }
 
@@ -2582,9 +2614,11 @@ function hydrateUserAvatarState(user) {
   if (!user || typeof user !== "object") return user;
   const seed = user?.name || user?.id || "ezra";
   const base = user.avatar && typeof user.avatar === "object" ? user.avatar : {};
-  const mergedUnlocks = normalizeAvatarVariantList([...(base.unlockedVariants || []), ...getStoredAvatarUnlocks(user)]);
-  user.avatar = sanitizeAvatarConfig({ ...base, unlockedVariants: mergedUnlocks }, seed);
+  const cached = getStoredAvatarConfig(user) || {};
+  const mergedUnlocks = normalizeAvatarVariantList([...(base.unlockedVariants || []), ...(cached.unlockedVariants || []), ...getStoredAvatarUnlocks(user)]);
+  user.avatar = sanitizeAvatarConfig({ ...base, ...cached, unlockedVariants: mergedUnlocks }, seed);
   persistStoredAvatarUnlocks(user.avatar.unlockedVariants || [], user);
+  persistStoredAvatarConfig(user.avatar, user);
   return user;
 }
 
@@ -2638,6 +2672,7 @@ function writeAvatarEditorState(avatar) {
     if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
     state.account.user.avatar = { ...(state.account.user.avatar || {}), ...safe };
     persistStoredAvatarUnlocks(state.account.user.avatar.unlockedVariants || []);
+    persistStoredAvatarConfig(state.account.user.avatar);
   }
   state.avatarPersonalityBrow = safe.brow;
   setAvatarPersonalityActive(safe.brow);
@@ -8026,10 +8061,11 @@ async function saveAccountAvatar() {
   if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
   const keepUnlocks = normalizeAvatarVariantList([...(avatar?.unlockedVariants || []), ...getStoredAvatarUnlocks()]);
   state.account.user.avatar = sanitizeAvatarConfig(
-    { ...(data?.avatar || {}), unlockedVariants: keepUnlocks },
+    { ...avatar, ...(data?.avatar || {}), unlockedVariants: keepUnlocks },
     state.account.user?.name || state.account.user?.id || "ezra"
   );
   persistStoredAvatarUnlocks(state.account.user.avatar.unlockedVariants || []);
+  persistStoredAvatarConfig(state.account.user.avatar);
   state.avatarLastSavedHash = avatarConfigSignature(state.account.user.avatar);
   state.avatarDraftHash = state.avatarLastSavedHash;
   renderAccountUI();
