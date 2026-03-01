@@ -2027,21 +2027,21 @@ body.league-member-overlay-open::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.08rem;
-  min-width: 2.7rem;
-  min-height: 3rem;
-  border-radius: 999px;
+  padding: 0.06rem;
+  width: 2.9rem;
+  height: 2.9rem;
+  border-radius: 0.42rem;
 }
 
 .account-toggle-avatar {
-  width: 2.45rem;
-  height: 2.45rem;
-  border-radius: 999px;
+  width: 2.72rem;
+  height: 2.72rem;
+  border-radius: 0.34rem;
   border: 1px solid rgba(255, 181, 84, 0.88);
-  object-fit: contain;
-  object-position: center center;
+  object-fit: cover;
+  object-position: center;
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.3), #0f0703 72%);
-  padding: 0.08rem;
+  padding: 0;
   display: block;
   box-shadow: 0 0 0 2px rgba(255, 168, 72, 0.2), 0 0.35rem 0.85rem rgba(0, 0, 0, 0.42);
 }

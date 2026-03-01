@@ -25,7 +25,9 @@ const STORED_KEEP_LOGGED_IN = localStorage.getItem("ezra_keep_logged_in") === "1
 const STORED_ACCOUNT_TOKEN = STORED_ACCOUNT_TOKEN_SESSION || STORED_ACCOUNT_TOKEN_LOCAL || "";
 const EFFECTIVE_KEEP_LOGGED_IN = STORED_ACCOUNT_TOKEN_SESSION ? false : STORED_KEEP_LOGGED_IN;
 const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
+const STORED_AVATAR_UNLOCKS = parseStoredJson("ezra_avatar_unlocks", {});
 let STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
+STORED_MAIN_TAB = String(STORED_MAIN_TAB || "").trim().toLowerCase();
 if (STORED_MAIN_TAB === "squad") {
   localStorage.setItem("ezra_main_tab", "home");
   STORED_MAIN_TAB = "home";
@@ -1424,6 +1426,31 @@ function accountLifetimePoints() {
   return Number.isFinite(raw) ? Math.max(0, raw) : 0;
 }
 
+function avatarUnlockStoreKey(user = state.account.user) {
+  if (!user || typeof user !== "object") return "";
+  const byId = String(user.id || "").trim();
+  if (byId) return `id:${byId}`;
+  const byName = String(user.name || "").trim().toLowerCase();
+  return byName ? `name:${byName}` : "";
+}
+
+function getStoredAvatarUnlocks(user = state.account.user) {
+  const key = avatarUnlockStoreKey(user);
+  if (!key) return [];
+  const root = STORED_AVATAR_UNLOCKS && typeof STORED_AVATAR_UNLOCKS === "object" ? STORED_AVATAR_UNLOCKS : {};
+  return normalizeAvatarVariantList(root[key]);
+}
+
+function persistStoredAvatarUnlocks(unlockedVariants, user = state.account.user) {
+  const key = avatarUnlockStoreKey(user);
+  if (!key) return;
+  const root = STORED_AVATAR_UNLOCKS && typeof STORED_AVATAR_UNLOCKS === "object" ? STORED_AVATAR_UNLOCKS : {};
+  root[key] = normalizeAvatarVariantList(unlockedVariants);
+  try {
+    localStorage.setItem("ezra_avatar_unlocks", JSON.stringify(root));
+  } catch {}
+}
+
 function avatarVariantLabel(variant) {
   const key = String(variant || "").trim();
   return AVATAR_PRESET_LABELS[key] || key.replace(/\.svg$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
@@ -1450,9 +1477,13 @@ function normalizeAvatarVariantList(list) {
 
 function avatarUnlockStateFor(avatarInput = null) {
   const points = accountLifetimePoints();
-  const slotCount = avatarMilestoneSlotCount(points);
+  const slotCountByPoints = avatarMilestoneSlotCount(points);
   const source = avatarInput && typeof avatarInput === "object" ? avatarInput : state.account.user?.avatar;
-  const requested = normalizeAvatarVariantList(source?.unlockedVariants);
+  const requested = normalizeAvatarVariantList([...(source?.unlockedVariants || []), ...getStoredAvatarUnlocks()]);
+  const slotCount = Math.min(
+    AVATAR_PRESET_FILES.length,
+    Math.max(slotCountByPoints, AVATAR_STARTER_VARIANTS.length, requested.length)
+  );
   const unlocked = [...AVATAR_STARTER_VARIANTS];
   requested.forEach((variant) => {
     if (unlocked.length >= slotCount) return;
@@ -1466,7 +1497,7 @@ function avatarUnlockStateFor(avatarInput = null) {
     canUnlockMore: unlocked.length < slotCount,
     remainingUnlocks: Math.max(0, slotCount - unlocked.length),
     nextMilestoneAt:
-      slotCount >= AVATAR_PRESET_FILES.length
+      slotCountByPoints >= AVATAR_PRESET_FILES.length
         ? null
         : AVATAR_UNLOCK_EVERY_POINTS * (Math.floor(points / AVATAR_UNLOCK_EVERY_POINTS) + 1),
   };
@@ -1491,6 +1522,7 @@ function unlockAvatarVariant(variant, opts = {}) {
   const safeCurrent = sanitizeAvatarConfig(state.account.user.avatar, state.account.user?.name || state.account.user?.id || "ezra");
   const unlockedVariants = [...unlockState.unlockedVariants, key];
   state.account.user.avatar = { ...safeCurrent, unlockedVariants };
+  persistStoredAvatarUnlocks(unlockedVariants);
   if (!opts.silentStatus) setAccountStatus(`Unlocked ${avatarVariantLabel(key)}.`);
   return true;
 }
@@ -1521,17 +1553,19 @@ function renderAvatarVariantSelect(selectedVariant = "") {
 function renderAvatarUnlockMeta() {
   if (!el.avatarUnlockMeta) return;
   const unlockState = avatarUnlockStateFor();
+  const unlockedCount = unlockState.unlockedVariants.length;
+  const totalCount = AVATAR_PRESET_FILES.length;
   if (unlockState.slotCount >= AVATAR_PRESET_FILES.length) {
-    el.avatarUnlockMeta.textContent = "All avatar slots unlocked.";
+    el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. All avatar slots unlocked.`;
     return;
   }
   if (unlockState.canUnlockMore) {
-    el.avatarUnlockMeta.textContent = `You can unlock ${unlockState.remainingUnlocks} avatar slot${unlockState.remainingUnlocks === 1 ? "" : "s"} now.`;
+    el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. You can unlock ${unlockState.remainingUnlocks} more now.`;
     return;
   }
   const nextAt = Number(unlockState.nextMilestoneAt || 0);
   const remaining = Math.max(0, nextAt - unlockState.points);
-  el.avatarUnlockMeta.textContent = `${remaining} pts to next avatar unlock. (+1 slot every ${AVATAR_UNLOCK_EVERY_POINTS} pts)`;
+  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${remaining} pts to next unlock (+1 slot per ${AVATAR_UNLOCK_EVERY_POINTS} pts).`;
 }
 
 function renderAvatarPresetGrid() {
@@ -1553,7 +1587,7 @@ function renderAvatarPresetGrid() {
       >
         <img src="/assets/avatar/presets/${escapeHtml(variant)}" alt="${escapeHtml(label)}" data-pin-nopin="true" />
         <span class="avatar-preset-card-label">${escapeHtml(label)}</span>
-        <span class="avatar-preset-card-badge">${unlocked ? "Owned" : unlockState.canUnlockMore ? "Unlock" : "Locked"}</span>
+        <span class="avatar-preset-card-badge">${selected ? "Selected" : unlocked ? "Unlocked" : unlockState.canUnlockMore ? "Tap to unlock" : "Locked"}</span>
       </button>
     `;
   }).join("");
@@ -2539,7 +2573,19 @@ function setAvatarSaveState(mode, message = "") {
 
 function currentAccountAvatar() {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
-  return sanitizeAvatarConfig(state.account.user?.avatar, seed);
+  const base = state.account.user?.avatar && typeof state.account.user.avatar === "object" ? state.account.user.avatar : {};
+  const merged = { ...base, unlockedVariants: normalizeAvatarVariantList([...(base.unlockedVariants || []), ...getStoredAvatarUnlocks()]) };
+  return sanitizeAvatarConfig(merged, seed);
+}
+
+function hydrateUserAvatarState(user) {
+  if (!user || typeof user !== "object") return user;
+  const seed = user?.name || user?.id || "ezra";
+  const base = user.avatar && typeof user.avatar === "object" ? user.avatar : {};
+  const mergedUnlocks = normalizeAvatarVariantList([...(base.unlockedVariants || []), ...getStoredAvatarUnlocks(user)]);
+  user.avatar = sanitizeAvatarConfig({ ...base, unlockedVariants: mergedUnlocks }, seed);
+  persistStoredAvatarUnlocks(user.avatar.unlockedVariants || [], user);
+  return user;
 }
 
 function readAvatarEditorState() {
@@ -2591,6 +2637,7 @@ function writeAvatarEditorState(avatar) {
   if (accountSignedIn()) {
     if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
     state.account.user.avatar = { ...(state.account.user.avatar || {}), ...safe };
+    persistStoredAvatarUnlocks(state.account.user.avatar.unlockedVariants || []);
   }
   state.avatarPersonalityBrow = safe.brow;
   setAvatarPersonalityActive(safe.brow);
@@ -3767,7 +3814,7 @@ async function signInFromInviteModal() {
   try {
     const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/login`, { name, pin });
     state.account.token = data.token || "";
-    state.account.user = data.user || null;
+    state.account.user = hydrateUserAvatarState(data.user || null);
     state.account.recoveryOpen = false;
     setAccountPhase("AUTHENTICATED");
     storeAccountToken(state.account.token, state.account.keepLoggedIn);
@@ -3799,7 +3846,7 @@ async function registerFromInviteModal() {
   try {
     const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin, email });
     state.account.token = data.token || "";
-    state.account.user = data.user || null;
+    state.account.user = hydrateUserAvatarState(data.user || null);
     state.account.recoveryOpen = false;
     setAccountPhase("AUTHENTICATED");
     storeAccountToken(state.account.token, state.account.keepLoggedIn);
@@ -6019,9 +6066,7 @@ function renderSquadPanel() {
       if (opening) {
         onSquadPlayerExplored(player);
         renderMissionsPanel();
-  renderFamilyLeaguePanel();
-  scheduleAvatar3DUpgrade();
-}
+      }
       if (!opening || !player.idPlayer) return;
       const cached = state.playerProfileCache[player.idPlayer];
       if (cached?.loading || cached?.loaded) return;
@@ -7812,7 +7857,7 @@ async function initAccountSession() {
   renderAccountUI();
   try {
     const me = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/me`, null, state.account.token);
-    state.account.user = me.user || null;
+    state.account.user = hydrateUserAvatarState(me.user || null);
     if (!state.account.user) throw new Error("Session expired");
     setAccountPhase("AUTHENTICATED");
     await runPostAuthBootstrap("Session restored");
@@ -7839,7 +7884,7 @@ async function registerAccount() {
   const pin = el.accountPinInput?.value || "";
   const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin, email });
   state.account.token = data.token || "";
-  state.account.user = data.user || null;
+  state.account.user = hydrateUserAvatarState(data.user || null);
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
   state.account.keepLoggedIn = getKeepLoggedInSelection();
@@ -7900,7 +7945,7 @@ async function loginAccount() {
   const pin = el.accountPinInput?.value || "";
   const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/login`, { name, pin });
   state.account.token = data.token || "";
-  state.account.user = data.user || null;
+  state.account.user = hydrateUserAvatarState(data.user || null);
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
   state.account.keepLoggedIn = getKeepLoggedInSelection();
@@ -7943,7 +7988,7 @@ async function completePinRecovery() {
   }
   const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/recovery/complete`, { name, email, code, newPin });
   state.account.token = data.token || "";
-  state.account.user = data.user || null;
+  state.account.user = hydrateUserAvatarState(data.user || null);
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
   state.account.keepLoggedIn = getKeepLoggedInSelection();
@@ -7964,7 +8009,7 @@ async function updateAccountEmail() {
     throw new Error("Enter an email address.");
   }
   const data = await apiRequest("PATCH", `${API_PROXY_BASE}/v1/ezra/account/me`, { email }, state.account.token);
-  state.account.user = data?.user || state.account.user;
+  state.account.user = hydrateUserAvatarState(data?.user || state.account.user);
   renderAccountUI();
   setAccountStatus(`Recovery email saved for ${state.account.user?.name || "user"}.`);
 }
@@ -7979,7 +8024,12 @@ async function saveAccountAvatar() {
   const avatar = readAvatarEditorState();
   const data = await apiRequest("PUT", `${API_PROXY_BASE}/v1/ezra/account/avatar`, { avatar }, state.account.token);
   if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
-  state.account.user.avatar = sanitizeAvatarConfig(data?.avatar, state.account.user?.name || state.account.user?.id || "ezra");
+  const keepUnlocks = normalizeAvatarVariantList([...(avatar?.unlockedVariants || []), ...getStoredAvatarUnlocks()]);
+  state.account.user.avatar = sanitizeAvatarConfig(
+    { ...(data?.avatar || {}), unlockedVariants: keepUnlocks },
+    state.account.user?.name || state.account.user?.id || "ezra"
+  );
+  persistStoredAvatarUnlocks(state.account.user.avatar.unlockedVariants || []);
   state.avatarLastSavedHash = avatarConfigSignature(state.account.user.avatar);
   state.avatarDraftHash = state.avatarLastSavedHash;
   renderAccountUI();
@@ -9366,7 +9416,7 @@ function setMobileTab(tab) {
 function setMainTab(tab) {
   const safe = ["home", "play", "predict", "squad", "tables"].includes(tab) ? tab : "home";
   state.mainTab = safe;
-  localStorage.setItem("ezra_main_tab", safe);
+  localStorage.setItem("ezra_main_tab", safe === "squad" ? "home" : safe);
   closeFavoritePickerMenu();
   setSettingsMenuOpen(false);
   setAccountMenuOpen(false);
