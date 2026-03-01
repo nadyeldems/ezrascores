@@ -333,6 +333,127 @@ const AVATAR_MODEL_VARIANTS = [
   { id: "celebrate-boy", path: "/assets/avatar/models/celebrate-boy.glb", type: "boy", pose: "celebrate" },
 ];
 
+const AVATAR_SPRITE_ATLAS = {
+  src: "/assets/avatar/sprites/source.png",
+  image: null,
+  loading: null,
+  bodies: {
+    "steady-boy": { x: 36, y: 176, w: 112, h: 196 },
+    "cute-girl": { x: 114, y: 545, w: 48, h: 100 },
+    "dribbling-girl": { x: 151, y: 401, w: 42, h: 84 },
+    "shooting-girl": { x: 116, y: 401, w: 42, h: 82 },
+    "heading-girl": { x: 74, y: 401, w: 39, h: 80 },
+    "celebrate-girl": { x: 233, y: 556, w: 42, h: 96 },
+    "tackle-boy": { x: 168, y: 497, w: 54, h: 102 },
+    "heading-boy": { x: 82, y: 545, w: 44, h: 96 },
+    "catching-boy": { x: 208, y: 498, w: 56, h: 104 },
+    "winning-boy": { x: 42, y: 536, w: 52, h: 126 },
+    "slide-winning-boy": { x: 32, y: 393, w: 38, h: 82 },
+    "celebrate-boy": { x: 208, y: 498, w: 56, h: 104 },
+  },
+};
+
+function loadAvatarSpriteAtlas() {
+  if (AVATAR_SPRITE_ATLAS.image) return Promise.resolve(AVATAR_SPRITE_ATLAS.image);
+  if (AVATAR_SPRITE_ATLAS.loading) return AVATAR_SPRITE_ATLAS.loading;
+  AVATAR_SPRITE_ATLAS.loading = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      AVATAR_SPRITE_ATLAS.image = img;
+      resolve(img);
+    };
+    img.onerror = () => reject(new Error("Failed to load avatar sprite atlas"));
+    img.src = AVATAR_SPRITE_ATLAS.src;
+  }).finally(() => {
+    AVATAR_SPRITE_ATLAS.loading = null;
+  });
+  return AVATAR_SPRITE_ATLAS.loading;
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const raw = String(hex || "").replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(raw)) return `rgba(255,255,255,${alpha})`;
+  const r = parseInt(raw.slice(0, 2), 16);
+  const g = parseInt(raw.slice(2, 4), 16);
+  const b = parseInt(raw.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function applySpriteChromaKey(ctx, w, h) {
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    if (r > 242 && g > 242 && b > 242) {
+      data[i + 3] = 0;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+function renderAvatarSpriteCanvas(ctx, avatar, seed, size, atlasImage) {
+  const variantId = chooseAvatarModelVariant(avatar, seed);
+  const rect = AVATAR_SPRITE_ATLAS.bodies[variantId] || AVATAR_SPRITE_ATLAS.bodies["steady-boy"];
+  if (!rect) return false;
+
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = rect.w;
+  sourceCanvas.height = rect.h;
+  const sctx = sourceCanvas.getContext("2d");
+  sctx.imageSmoothingEnabled = false;
+  sctx.drawImage(atlasImage, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+  applySpriteChromaKey(sctx, rect.w, rect.h);
+
+  const fit = Math.min((size * 0.82) / rect.w, (size * 0.88) / rect.h);
+  const dw = Math.max(1, Math.round(rect.w * fit));
+  const dh = Math.max(1, Math.round(rect.h * fit));
+  const dx = Math.round((size - dw) * 0.5);
+  const dy = Math.round((size - dh) * 0.56);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(sourceCanvas, dx, dy, dw, dh);
+
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.fillStyle = hexToRgba(avatar.kitColor1, 0.22);
+  ctx.fillRect(dx, dy, dw, dh);
+  ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.12);
+  ctx.fillRect(dx, dy + Math.round(dh * 0.36), dw, Math.round(dh * 0.34));
+  ctx.fillStyle = hexToRgba(avatar.hairColor, 0.12);
+  ctx.fillRect(dx, dy, dw, Math.round(dh * 0.24));
+  ctx.fillStyle = hexToRgba(avatar.bootsColor, 0.2);
+  ctx.fillRect(dx, dy + Math.round(dh * 0.84), dw, Math.round(dh * 0.16));
+
+  if (avatar.kitStyle === "stripes") {
+    ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.24);
+    const stripeW = Math.max(2, Math.floor(dw / 10));
+    for (let x = dx; x < dx + dw; x += stripeW * 2) {
+      ctx.fillRect(x, dy + Math.round(dh * 0.28), stripeW, Math.round(dh * 0.34));
+    }
+  } else if (avatar.kitStyle === "hoops") {
+    ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.24);
+    const h = Math.max(2, Math.floor(dh / 18));
+    for (let y = dy + Math.round(dh * 0.3); y < dy + Math.round(dh * 0.62); y += h * 2) {
+      ctx.fillRect(dx, y, dw, h);
+    }
+  } else if (avatar.kitStyle === "diamond") {
+    ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.24);
+    const cx = dx + Math.round(dw * 0.5);
+    const cy = dy + Math.round(dh * 0.42);
+    const r = Math.max(4, Math.round(Math.min(dw, dh) * 0.1));
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r);
+    ctx.lineTo(cx + r, cy);
+    ctx.lineTo(cx, cy + r);
+    ctx.lineTo(cx - r, cy);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+  return true;
+}
+
 function encodeAvatarData(value) {
   try {
     return btoa(JSON.stringify(value));
@@ -1095,52 +1216,22 @@ function buildAvatar3DGroup(THREE, avatar) {
 }
 
 async function renderAvatar3DDataUri(avatar, seed, size) {
-  const THREE = await ensureThree();
-  if (!THREE) return null;
-  const variantId = chooseAvatarModelVariant(avatar, seed);
-  const baseModel = await ensureAvatarBaseModel(variantId);
-  if (!baseModel) return avatarStaticFallbackUrl(avatar, seed, size);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(size * dpr));
-  canvas.height = Math.max(1, Math.round(size * dpr));
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
-  renderer.setSize(size, size, false);
-  renderer.setPixelRatio(dpr);
-  renderer.setClearColor(0x000000, 0);
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(25, 1, 0.1, 12);
-  camera.position.set(0, 0.15, 4.35);
-  camera.lookAt(0, 0.24, 0);
-
-  const hemi = new THREE.HemisphereLight(0xfff2dc, 0x1f140c, 1.0);
-  const key = new THREE.DirectionalLight(0xffffff, 0.9);
-  key.position.set(1.2, 1.4, 1.4);
-  const fill = new THREE.DirectionalLight(0xffc98e, 0.45);
-  fill.position.set(-1.2, 0.4, 0.8);
-  const rim = new THREE.DirectionalLight(0xffffff, 0.2);
-  rim.position.set(-0.8, 1.2, -1.4);
-  scene.add(hemi, key, fill, rim);
-
-  const group = buildAvatarBaseModelInstance(avatar, variantId);
-  if (!group) {
-    renderer.dispose();
+  try {
+    const atlasImage = await loadAvatarSpriteAtlas();
+    if (!atlasImage) return avatarStaticFallbackUrl(avatar, seed, size);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(size * dpr));
+    canvas.height = Math.max(1, Math.round(size * dpr));
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    const ok = renderAvatarSpriteCanvas(ctx, avatar, seed, size, atlasImage);
+    if (!ok) return avatarStaticFallbackUrl(avatar, seed, size);
+    return canvas.toDataURL("image/png");
+  } catch {
     return avatarStaticFallbackUrl(avatar, seed, size);
   }
-  group.position.set(0, -0.06, 0);
-  group.rotation.y = -0.06;
-  scene.add(group);
-
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
-  renderer.render(scene, camera);
-  const data = canvas.toDataURL("image/png");
-
-  dispose3DObject(group);
-  renderer.dispose();
-  return data;
 }
 
 let avatarUpgradeQueued = false;
