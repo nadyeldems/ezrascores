@@ -168,27 +168,53 @@ function defaultHigherLowerState() {
 }
 
 const AVATAR_PRESET_FILES = [
-  "001-football.svg",
-  "002-football.svg",
-  "003-football.svg",
-  "004-football.svg",
-  "005-football.svg",
-  "006-football.svg",
-  "007-football.svg",
-  "008-football.svg",
-  "009-football.svg",
-  "010-football.svg",
-  "011-football.svg",
-  "012-football.svg",
-  "013-football.svg",
-  "014-football.svg",
-  "015-football.svg",
-  "016-football.svg",
-  "017-football.svg",
-  "018-football.svg",
-  "019-football.svg",
-  "020-football.svg",
+  "001-street-striker.svg",
+  "002-goal-guardian.svg",
+  "003-midfield-maestro.svg",
+  "004-captain-comet.svg",
+  "005-egg-superstar.svg",
+  "006-sideline-sprinter.svg",
+  "007-champion-kick.svg",
+  "008-sunburst-striker.svg",
+  "009-pitch-pro.svg",
+  "010-dribble-dynamo.svg",
+  "011-corner-ace.svg",
+  "012-skyline-shooter.svg",
+  "013-playmaker-prime.svg",
+  "014-power-forward.svg",
+  "015-rainbow-rocket.svg",
+  "016-keeper-calm.svg",
+  "017-victory-vibe.svg",
+  "018-flash-footwork.svg",
+  "019-lucky-lefty.svg",
+  "020-final-whistle.svg",
 ];
+
+const AVATAR_PRESET_LABELS = {
+  "001-street-striker.svg": "Street Striker",
+  "002-goal-guardian.svg": "Goal Guardian",
+  "003-midfield-maestro.svg": "Midfield Maestro",
+  "004-captain-comet.svg": "Captain Comet",
+  "005-egg-superstar.svg": "Egg Superstar",
+  "006-sideline-sprinter.svg": "Sideline Sprinter",
+  "007-champion-kick.svg": "Champion Kick",
+  "008-sunburst-striker.svg": "Sunburst Striker",
+  "009-pitch-pro.svg": "Pitch Pro",
+  "010-dribble-dynamo.svg": "Dribble Dynamo",
+  "011-corner-ace.svg": "Corner Ace",
+  "012-skyline-shooter.svg": "Skyline Shooter",
+  "013-playmaker-prime.svg": "Playmaker Prime",
+  "014-power-forward.svg": "Power Forward",
+  "015-rainbow-rocket.svg": "Rainbow Rocket",
+  "016-keeper-calm.svg": "Keeper Calm",
+  "017-victory-vibe.svg": "Victory Vibe",
+  "018-flash-footwork.svg": "Flash Footwork",
+  "019-lucky-lefty.svg": "Lucky Lefty",
+  "020-final-whistle.svg": "Final Whistle",
+};
+
+const AVATAR_STARTER_VARIANTS = AVATAR_PRESET_FILES.slice(0, 3);
+const AVATAR_UNLOCK_EVERY_POINTS = 67;
 
 const AVATAR_OPTIONS = {
   variant: AVATAR_PRESET_FILES,
@@ -223,7 +249,7 @@ const AVATAR_PALETTES = {
 
 const DEFAULT_AVATAR_TEMPLATES = [
   {
-    variant: "001-football.svg",
+    variant: "001-street-striker.svg",
     hairStyle: "short",
     headShape: "oval",
     noseStyle: "button",
@@ -241,7 +267,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#2B88D8",
   },
   {
-    variant: "002-football.svg",
+    variant: "002-goal-guardian.svg",
     hairStyle: "fade",
     headShape: "square",
     noseStyle: "straight",
@@ -259,7 +285,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#37A060",
   },
   {
-    variant: "003-football.svg",
+    variant: "003-midfield-maestro.svg",
     hairStyle: "curly",
     headShape: "round",
     noseStyle: "round",
@@ -277,7 +303,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#2B88D8",
   },
   {
-    variant: "004-football.svg",
+    variant: "004-captain-comet.svg",
     hairStyle: "long",
     headShape: "oval",
     noseStyle: "button",
@@ -295,7 +321,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#DE5C8E",
   },
   {
-    variant: "005-football.svg",
+    variant: "005-egg-superstar.svg",
     hairStyle: "bun",
     headShape: "round",
     noseStyle: "straight",
@@ -1398,6 +1424,143 @@ function accountLifetimePoints() {
   return Number.isFinite(raw) ? Math.max(0, raw) : 0;
 }
 
+function avatarVariantLabel(variant) {
+  const key = String(variant || "").trim();
+  return AVATAR_PRESET_LABELS[key] || key.replace(/\.svg$/i, "").replace(/[-_]+/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function avatarMilestoneSlotCount(points) {
+  const safePoints = Number.isFinite(Number(points)) ? Math.max(0, Number(points)) : 0;
+  const unlockedByMilestone = Math.floor(safePoints / AVATAR_UNLOCK_EVERY_POINTS);
+  return Math.min(AVATAR_PRESET_FILES.length, AVATAR_STARTER_VARIANTS.length + unlockedByMilestone);
+}
+
+function normalizeAvatarVariantList(list) {
+  const seen = new Set();
+  const next = [];
+  (Array.isArray(list) ? list : []).forEach((item) => {
+    const key = String(item || "").trim();
+    if (!AVATAR_PRESET_FILES.includes(key)) return;
+    if (seen.has(key)) return;
+    seen.add(key);
+    next.push(key);
+  });
+  return next;
+}
+
+function avatarUnlockStateFor(avatarInput = null) {
+  const points = accountLifetimePoints();
+  const slotCount = avatarMilestoneSlotCount(points);
+  const source = avatarInput && typeof avatarInput === "object" ? avatarInput : state.account.user?.avatar;
+  const requested = normalizeAvatarVariantList(source?.unlockedVariants);
+  const unlocked = [...AVATAR_STARTER_VARIANTS];
+  requested.forEach((variant) => {
+    if (unlocked.length >= slotCount) return;
+    if (unlocked.includes(variant)) return;
+    unlocked.push(variant);
+  });
+  return {
+    points,
+    slotCount,
+    unlockedVariants: unlocked,
+    canUnlockMore: unlocked.length < slotCount,
+    remainingUnlocks: Math.max(0, slotCount - unlocked.length),
+    nextMilestoneAt:
+      slotCount >= AVATAR_PRESET_FILES.length
+        ? null
+        : AVATAR_UNLOCK_EVERY_POINTS * (Math.floor(points / AVATAR_UNLOCK_EVERY_POINTS) + 1),
+  };
+}
+
+function chooseNextUnlockVariant() {
+  const stateForUnlocks = avatarUnlockStateFor();
+  for (const variant of AVATAR_PRESET_FILES) {
+    if (!stateForUnlocks.unlockedVariants.includes(variant)) return variant;
+  }
+  return "";
+}
+
+function unlockAvatarVariant(variant, opts = {}) {
+  if (!accountSignedIn()) return false;
+  const key = String(variant || "").trim();
+  if (!AVATAR_PRESET_FILES.includes(key)) return false;
+  const unlockState = avatarUnlockStateFor();
+  if (unlockState.unlockedVariants.includes(key)) return true;
+  if (!unlockState.canUnlockMore) return false;
+  if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
+  const safeCurrent = sanitizeAvatarConfig(state.account.user.avatar, state.account.user?.name || state.account.user?.id || "ezra");
+  const unlockedVariants = [...unlockState.unlockedVariants, key];
+  state.account.user.avatar = { ...safeCurrent, unlockedVariants };
+  if (!opts.silentStatus) setAccountStatus(`Unlocked ${avatarVariantLabel(key)}.`);
+  return true;
+}
+
+function ensureAvatarVariantUnlocked(variant) {
+  const key = String(variant || "").trim();
+  if (!key) return "";
+  const unlockState = avatarUnlockStateFor();
+  if (unlockState.unlockedVariants.includes(key)) return key;
+  return unlockState.unlockedVariants[0] || AVATAR_STARTER_VARIANTS[0] || AVATAR_PRESET_FILES[0];
+}
+
+function renderAvatarVariantSelect(selectedVariant = "") {
+  if (!el.avatarVariantInput) return;
+  const unlockState = avatarUnlockStateFor();
+  const target = ensureAvatarVariantUnlocked(selectedVariant);
+  const previous = String(el.avatarVariantInput.value || "").trim();
+  el.avatarVariantInput.innerHTML = "";
+  unlockState.unlockedVariants.forEach((variant) => {
+    const option = document.createElement("option");
+    option.value = variant;
+    option.textContent = avatarVariantLabel(variant);
+    el.avatarVariantInput.append(option);
+  });
+  el.avatarVariantInput.value = unlockState.unlockedVariants.includes(target) ? target : unlockState.unlockedVariants[0] || previous;
+}
+
+function renderAvatarUnlockMeta() {
+  if (!el.avatarUnlockMeta) return;
+  const unlockState = avatarUnlockStateFor();
+  if (unlockState.slotCount >= AVATAR_PRESET_FILES.length) {
+    el.avatarUnlockMeta.textContent = "All avatar slots unlocked.";
+    return;
+  }
+  if (unlockState.canUnlockMore) {
+    el.avatarUnlockMeta.textContent = `You can unlock ${unlockState.remainingUnlocks} avatar slot${unlockState.remainingUnlocks === 1 ? "" : "s"} now.`;
+    return;
+  }
+  const nextAt = Number(unlockState.nextMilestoneAt || 0);
+  const remaining = Math.max(0, nextAt - unlockState.points);
+  el.avatarUnlockMeta.textContent = `${remaining} pts to next avatar unlock. (+1 slot every ${AVATAR_UNLOCK_EVERY_POINTS} pts)`;
+}
+
+function renderAvatarPresetGrid() {
+  if (!el.avatarPresetsGrid) return;
+  const unlockState = avatarUnlockStateFor();
+  const selectedVariant = ensureAvatarVariantUnlocked(el.avatarVariantInput?.value || currentAccountAvatar().variant);
+  const cards = AVATAR_PRESET_FILES.map((variant) => {
+    const unlocked = unlockState.unlockedVariants.includes(variant);
+    const selected = selectedVariant === variant;
+    const label = avatarVariantLabel(variant);
+    return `
+      <button
+        type="button"
+        class="avatar-preset-card ${unlocked ? "unlocked" : "locked"} ${selected ? "selected" : ""}"
+        data-avatar-variant-card="${escapeHtml(variant)}"
+        ${!unlocked && !unlockState.canUnlockMore ? "disabled" : ""}
+        aria-pressed="${selected ? "true" : "false"}"
+        title="${escapeHtml(unlocked ? `Select ${label}` : unlockState.canUnlockMore ? `Unlock ${label}` : `${label} (locked)`)}"
+      >
+        <img src="/assets/avatar/presets/${escapeHtml(variant)}" alt="${escapeHtml(label)}" data-pin-nopin="true" />
+        <span class="avatar-preset-card-label">${escapeHtml(label)}</span>
+        <span class="avatar-preset-card-badge">${unlocked ? "Owned" : unlockState.canUnlockMore ? "Unlock" : "Locked"}</span>
+      </button>
+    `;
+  }).join("");
+  el.avatarPresetsGrid.innerHTML = cards;
+  renderAvatarUnlockMeta();
+}
+
 function applyAvatarStyleLocks() {
   const applySelectLocks = (select) => {
     if (!select) return;
@@ -1412,7 +1575,6 @@ function applyAvatarStyleLocks() {
   applySelectLocks(el.avatarHairStyleInput);
   applySelectLocks(el.avatarKitStyleInput);
   applySelectLocks(el.avatarBootsStyleInput);
-  applySelectLocks(el.avatarVariantInput);
 }
 
 function avatarLockRules(points) {
@@ -1421,13 +1583,15 @@ function avatarLockRules(points) {
 }
 
 function applyAvatarLocksToConfig(avatar) {
-  const points = accountLifetimePoints();
+  const unlockState = avatarUnlockStateFor(avatar);
+  const points = unlockState.points;
   const locks = avatarLockRules(points);
-  const safe = { ...avatar };
+  const safe = { ...avatar, unlockedVariants: [...unlockState.unlockedVariants] };
   if (locks.hair.has(safe.hairStyle)) safe.hairStyle = "short";
   if (locks.kit.has(safe.kitStyle)) safe.kitStyle = "plain";
   if (locks.boots.has(safe.bootsStyle)) safe.bootsStyle = "classic";
-  if (locks.variants.has(safe.variant)) safe.variant = AVATAR_PRESET_FILES[0];
+  if (locks.variants.has(safe.variant)) safe.variant = unlockState.unlockedVariants[0] || AVATAR_STARTER_VARIANTS[0];
+  safe.variant = ensureAvatarVariantUnlocked(safe.variant);
   return safe;
 }
 
@@ -1488,6 +1652,7 @@ function sanitizeAvatarConfig(input, seed = "") {
   const base = defaultAvatarConfig(seed);
   const src = input && typeof input === "object" ? input : {};
   const pick = (v, allow, fallback) => (allow.includes(String(v || "")) ? String(v) : fallback);
+  const unlockedVariants = normalizeAvatarVariantList(src.unlockedVariants);
   return {
     variant: pick(src.variant, AVATAR_OPTIONS.variant, base.variant),
     hairStyle: pick(src.hairStyle, AVATAR_OPTIONS.hairStyle, base.hairStyle),
@@ -1505,6 +1670,7 @@ function sanitizeAvatarConfig(input, seed = "") {
     bootsColor: clampAvatarColor(src.bootsColor, base.bootsColor, "bootsColor"),
     shortsColor: clampAvatarColor(src.shortsColor, base.shortsColor, "shortsColor"),
     socksColor: clampAvatarColor(src.socksColor, base.socksColor, "socksColor"),
+    unlockedVariants: unlockedVariants.length ? unlockedVariants : [...AVATAR_STARTER_VARIANTS],
   };
 }
 
@@ -1889,6 +2055,8 @@ const el = {
   avatarShortsColorInput: document.getElementById("avatar-shorts-color"),
   avatarBootsColorInput: document.getElementById("avatar-boots-color"),
   avatarSocksColorInput: document.getElementById("avatar-socks-color"),
+  avatarUnlockMeta: document.getElementById("avatar-unlock-meta"),
+  avatarPresetsGrid: document.getElementById("avatar-presets-grid"),
   avatarUnlockToggleBtn: document.getElementById("avatar-unlock-toggle-btn"),
   avatarUnlockRail: document.getElementById("avatar-unlock-rail"),
   accountHelper: document.getElementById("account-helper"),
@@ -2376,6 +2544,7 @@ function currentAccountAvatar() {
 
 function readAvatarEditorState() {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
+  const current = currentAccountAvatar();
   return sanitizeAvatarConfig(
     {
       variant: el.avatarVariantInput?.value,
@@ -2394,6 +2563,7 @@ function readAvatarEditorState() {
       bootsColor: el.avatarBootsColorInput?.value,
       shortsColor: el.avatarShortsColorInput?.value,
       socksColor: el.avatarSocksColorInput?.value,
+      unlockedVariants: current.unlockedVariants,
     },
     seed
   );
@@ -2402,7 +2572,8 @@ function readAvatarEditorState() {
 function writeAvatarEditorState(avatar) {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   const safe = applyAvatarLocksToConfig(sanitizeAvatarConfig(avatar, seed));
-  if (el.avatarVariantInput) el.avatarVariantInput.value = safe.variant;
+  renderAvatarVariantSelect(safe.variant);
+  if (el.avatarVariantInput) el.avatarVariantInput.value = ensureAvatarVariantUnlocked(safe.variant);
   if (el.avatarHairStyleInput) el.avatarHairStyleInput.value = safe.hairStyle;
   if (el.avatarHeadShapeInput) el.avatarHeadShapeInput.value = safe.headShape;
   if (el.avatarNoseStyleInput) el.avatarNoseStyleInput.value = safe.noseStyle;
@@ -2417,6 +2588,10 @@ function writeAvatarEditorState(avatar) {
   if (el.avatarShortsColorInput) el.avatarShortsColorInput.value = safe.shortsColor;
   if (el.avatarBootsColorInput) el.avatarBootsColorInput.value = safe.bootsColor;
   if (el.avatarSocksColorInput) el.avatarSocksColorInput.value = safe.socksColor;
+  if (accountSignedIn()) {
+    if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
+    state.account.user.avatar = { ...(state.account.user.avatar || {}), ...safe };
+  }
   state.avatarPersonalityBrow = safe.brow;
   setAvatarPersonalityActive(safe.brow);
   if (el.accountAvatarPreview) {
@@ -2441,6 +2616,7 @@ function writeAvatarEditorState(avatar) {
     el.accountToggleAvatar.setAttribute("data-pin-nopin", "true");
   }
   applyAvatarStyleLocks();
+  renderAvatarPresetGrid();
   scheduleAvatar3DUpgrade();
 }
 
@@ -7817,8 +7993,10 @@ async function saveAccountAvatar() {
 function randomizeAccountAvatar() {
   if (!accountSignedIn()) return;
   const current = readAvatarEditorState();
-  const idx = Math.floor(Math.random() * AVATAR_PRESET_FILES.length);
-  writeAvatarEditorState({ ...current, variant: AVATAR_PRESET_FILES[idx] });
+  const unlockState = avatarUnlockStateFor();
+  const pool = unlockState.unlockedVariants.length ? unlockState.unlockedVariants : [...AVATAR_STARTER_VARIANTS];
+  const idx = Math.floor(Math.random() * pool.length);
+  writeAvatarEditorState({ ...current, variant: pool[idx], unlockedVariants: unlockState.unlockedVariants });
   setAccountStatus("Avatar randomized.");
   scheduleAvatarAutoSave("avatar");
 }
@@ -10610,6 +10788,26 @@ function attachEvents() {
   if (el.accountAvatarRandomBtn) {
     el.accountAvatarRandomBtn.addEventListener("click", () => {
       randomizeAccountAvatar();
+    });
+  }
+
+  if (el.avatarPresetsGrid) {
+    el.avatarPresetsGrid.addEventListener("click", (event) => {
+      const btn = event.target?.closest?.("[data-avatar-variant-card]");
+      if (!btn) return;
+      const variant = String(btn.dataset.avatarVariantCard || "").trim();
+      if (!variant) return;
+      const unlockState = avatarUnlockStateFor();
+      if (!unlockState.unlockedVariants.includes(variant)) {
+        const unlocked = unlockAvatarVariant(variant);
+        if (!unlocked) {
+          setAccountStatus(`Locked. Earn ${AVATAR_UNLOCK_EVERY_POINTS} pts per extra avatar slot.`);
+          return;
+        }
+      }
+      const current = readAvatarEditorState();
+      writeAvatarEditorState({ ...current, variant });
+      scheduleAvatarAutoSave("avatar");
     });
   }
 
