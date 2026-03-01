@@ -1559,6 +1559,36 @@ function unlockAvatarVariant(variant, opts = {}) {
   return true;
 }
 
+function setAvatarUnlockInlineStatus(text = "", isError = false) {
+  if (!el.avatarUnlockStatus) return;
+  el.avatarUnlockStatus.textContent = String(text || "");
+  el.avatarUnlockStatus.classList.toggle("error", Boolean(isError));
+}
+
+function closeAvatarUnlockModal() {
+  state.avatarUnlockModalOpen = false;
+  state.avatarUnlockPendingVariant = "";
+  setAvatarUnlockInlineStatus("", false);
+  if (el.avatarUnlockModal) {
+    el.avatarUnlockModal.classList.add("hidden");
+  }
+}
+
+function openAvatarUnlockModal(variant, unlockState = avatarUnlockStateFor()) {
+  const key = String(variant || "").trim();
+  if (!key || !el.avatarUnlockModal) return;
+  state.avatarUnlockPendingVariant = key;
+  state.avatarUnlockModalOpen = true;
+  if (el.avatarUnlockText) {
+    el.avatarUnlockText.textContent = `Unlock ${avatarVariantLabel(key)} permanently using 1 credit?`;
+  }
+  if (el.avatarUnlockCredits) {
+    el.avatarUnlockCredits.textContent = `Credits available: ${Math.max(0, Number(unlockState?.availableCredits || 0))}`;
+  }
+  setAvatarUnlockInlineStatus("");
+  el.avatarUnlockModal.classList.remove("hidden");
+}
+
 function ensureAvatarVariantUnlocked(variant) {
   const key = String(variant || "").trim();
   if (!key) return "";
@@ -1916,6 +1946,8 @@ const state = {
         }
       : null,
   leagueInviteModalOpen: false,
+  avatarUnlockModalOpen: false,
+  avatarUnlockPendingVariant: "",
   pendingInviteJoinIntent: false,
   leagueInviteStep: "confirm",
   missionFx: { questId: "", until: 0, timer: null },
@@ -2205,6 +2237,12 @@ const el = {
   fixturesPanel: document.getElementById("fixtures-panel"),
   tablePanel: document.getElementById("table-panel"),
   rewardToast: document.getElementById("reward-toast"),
+  avatarUnlockModal: document.getElementById("avatar-unlock-modal"),
+  avatarUnlockText: document.getElementById("avatar-unlock-text"),
+  avatarUnlockCredits: document.getElementById("avatar-unlock-credits"),
+  avatarUnlockStatus: document.getElementById("avatar-unlock-status"),
+  avatarUnlockConfirmBtn: document.getElementById("avatar-unlock-confirm-btn"),
+  avatarUnlockCancelBtn: document.getElementById("avatar-unlock-cancel-btn"),
   leagueInviteModal: document.getElementById("league-invite-modal"),
   leagueInviteText: document.getElementById("league-invite-text"),
   leagueInviteStatus: document.getElementById("league-invite-status"),
@@ -2545,7 +2583,11 @@ function updateAccountControlsState() {
   if (el.accountRecoveryResetBtn) el.accountRecoveryResetBtn.disabled = busy || signedIn;
   if (el.accountRecoveryCancelBtn) el.accountRecoveryCancelBtn.disabled = busy;
   if (el.accountSyncBtn) el.accountSyncBtn.disabled = busy || !signedIn;
-  if (el.accountLogoutBtn) el.accountLogoutBtn.disabled = busy || !signedIn;
+  if (el.accountLogoutBtn) {
+    const logoutBusy = Boolean(state.account.pending?.logout);
+    // Allow sign out even while background sync/bootstrap is busy.
+    el.accountLogoutBtn.disabled = !signedIn || logoutBusy;
+  }
   if (el.accountEmailSaveBtn) el.accountEmailSaveBtn.disabled = busy || !signedIn;
   if (el.accountNameInput) el.accountNameInput.disabled = busy || signedIn;
   if (el.accountPinInput) el.accountPinInput.disabled = busy || signedIn;
@@ -7962,13 +8004,17 @@ async function registerAccount() {
 
 async function runAccountAction(action, startText, errorPrefix, task) {
   const authActions = new Set(["register", "login", "recovery_send", "recovery_reset", "logout"]);
+  const isLogout = action === "logout";
   if (state.account.bootstrapInFlight && action !== "logout") {
     setAccountStatus("Finishing account sync. Please wait a moment.");
     return null;
   }
-  if (authActions.has(action) && state.account.activeAction && state.account.activeAction !== action) {
+  if (!isLogout && authActions.has(action) && state.account.activeAction && state.account.activeAction !== action) {
     setAccountStatus("Please wait for the current account action to finish.");
     return null;
+  }
+  if (isLogout) {
+    state.account.activeAction = "";
   }
   if (authActions.has(action)) {
     state.account.activeAction = action;
@@ -10901,6 +10947,43 @@ function attachEvents() {
     });
   }
 
+  if (el.avatarUnlockConfirmBtn) {
+    el.avatarUnlockConfirmBtn.addEventListener("click", async () => {
+      const variant = String(state.avatarUnlockPendingVariant || "").trim();
+      if (!variant) {
+        closeAvatarUnlockModal();
+        return;
+      }
+      const unlockState = avatarUnlockStateFor();
+      if (!unlockState.availableCredits) {
+        setAvatarUnlockInlineStatus(`No credits available. Earn ${AVATAR_UNLOCK_EVERY_POINTS} pts per extra credit.`, true);
+        return;
+      }
+      const unlocked = unlockAvatarVariant(variant, { silentStatus: true });
+      if (!unlocked) {
+        setAvatarUnlockInlineStatus("Unable to unlock this avatar right now.", true);
+        return;
+      }
+      const current = readAvatarEditorState();
+      writeAvatarEditorState({ ...current, variant });
+      closeAvatarUnlockModal();
+      await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar).catch(() => null);
+    });
+  }
+
+  if (el.avatarUnlockCancelBtn) {
+    el.avatarUnlockCancelBtn.addEventListener("click", () => {
+      closeAvatarUnlockModal();
+    });
+  }
+
+  if (el.avatarUnlockModal) {
+    el.avatarUnlockModal.addEventListener("click", (event) => {
+      if (event.target !== el.avatarUnlockModal) return;
+      closeAvatarUnlockModal();
+    });
+  }
+
   if (el.avatarPresetsGrid) {
     el.avatarPresetsGrid.addEventListener("click", async (event) => {
       const btn = event.target?.closest?.("[data-avatar-variant-card]");
@@ -10913,15 +10996,8 @@ function attachEvents() {
           setAccountStatus(`Locked. Earn ${AVATAR_UNLOCK_EVERY_POINTS} pts per extra credit.`);
           return;
         }
-        const shouldUnlock = window.confirm(
-          `Unlock ${avatarVariantLabel(variant)}?\n\nThis will use 1 credit permanently.\nCredits available now: ${unlockState.availableCredits}`
-        );
-        if (!shouldUnlock) return;
-        const unlocked = unlockAvatarVariant(variant);
-        if (!unlocked) {
-          setAccountStatus("Unable to unlock this avatar right now.", true);
-          return;
-        }
+        openAvatarUnlockModal(variant, unlockState);
+        return;
       }
       const current = readAvatarEditorState();
       writeAvatarEditorState({ ...current, variant });
