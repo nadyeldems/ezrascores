@@ -2388,6 +2388,16 @@ function renderLifetimePointsPill() {
   el.lifetimePointsPill.textContent = Number.isFinite(fallback) ? `Total points: ${Math.max(0, fallback)}` : "Total points: --";
 }
 
+function maybeShowFreeAvatarUnlockToast() {
+  if (!accountSignedIn()) return;
+  const accountKey = avatarUnlockStoreKey();
+  if (!accountKey) return;
+  const seenKey = `ezra_avatar_free_unlock_seen_${accountKey}`;
+  if (localStorage.getItem(seenKey) === "1") return;
+  localStorage.setItem(seenKey, "1");
+  showRewardToast("Free avatar unlock ready • Open Play → Avatar Builder", "neutral");
+}
+
 function maybeNotifyDailyQuestReset() {
   const todayKey = missionDateKey();
   if (state.lastQuestNotificationDate === todayKey) return;
@@ -2807,6 +2817,7 @@ function renderAccountUI() {
       input.style.pointerEvents = "auto";
     });
     setAccountRecoveryOpen(false);
+    maybeShowFreeAvatarUnlockToast();
   } else {
     writeAvatarEditorState(defaultAvatarConfig("ezra"));
     setAvatarSaveState("saved", "Sign in to save");
@@ -6048,9 +6059,8 @@ function renderSquadPanel() {
   if (state.selectedSquadPlayerKey && !squad.some((p) => p.key === state.selectedSquadPlayerKey)) {
     state.selectedSquadPlayerKey = "";
   }
-  el.squadPanel.classList.remove("hidden");
-  state.squadOpen = true;
-  el.squadBody.classList.remove("hidden");
+  state.squadOpen = state.mainTab === "squad";
+  el.squadBody.classList.toggle("hidden", !state.squadOpen);
   el.squadTitle.textContent = `${favorite.strTeam} Squad`;
   el.squadList.innerHTML = "";
 
@@ -9515,7 +9525,8 @@ function renderMobileSectionLayout() {
   }
   if (squad) {
     setPanelVisible(squad, squadTab);
-    if (squadTab) state.squadOpen = true;
+    state.squadOpen = squadTab;
+    if (el.squadBody) el.squadBody.classList.toggle("hidden", !squadTab);
   }
   fun.classList.toggle("home-focus", home);
 }
