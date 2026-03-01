@@ -167,21 +167,31 @@ function defaultHigherLowerState() {
   };
 }
 
+const AVATAR_PRESET_FILES = [
+  "001-football.svg",
+  "002-football.svg",
+  "003-football.svg",
+  "004-football.svg",
+  "005-football.svg",
+  "006-football.svg",
+  "007-football.svg",
+  "008-football.svg",
+  "009-football.svg",
+  "010-football.svg",
+  "011-football.svg",
+  "012-football.svg",
+  "013-football.svg",
+  "014-football.svg",
+  "015-football.svg",
+  "016-football.svg",
+  "017-football.svg",
+  "018-football.svg",
+  "019-football.svg",
+  "020-football.svg",
+];
+
 const AVATAR_OPTIONS = {
-  variant: [
-    "steady-boy",
-    "cute-girl",
-    "dribbling-girl",
-    "shooting-girl",
-    "heading-girl",
-    "celebrate-girl",
-    "tackle-boy",
-    "heading-boy",
-    "catching-boy",
-    "winning-boy",
-    "slide-winning-boy",
-    "celebrate-boy",
-  ],
+  variant: AVATAR_PRESET_FILES,
   hairStyle: ["short", "fade", "spike", "curly", "long", "bun", "bald"],
   headShape: ["round", "oval", "square"],
   noseStyle: ["button", "straight", "round"],
@@ -213,7 +223,7 @@ const AVATAR_PALETTES = {
 
 const DEFAULT_AVATAR_TEMPLATES = [
   {
-    variant: "steady-boy",
+    variant: "001-football.svg",
     hairStyle: "short",
     headShape: "oval",
     noseStyle: "button",
@@ -231,7 +241,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#2B88D8",
   },
   {
-    variant: "tackle-boy",
+    variant: "002-football.svg",
     hairStyle: "fade",
     headShape: "square",
     noseStyle: "straight",
@@ -249,7 +259,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#37A060",
   },
   {
-    variant: "celebrate-boy",
+    variant: "003-football.svg",
     hairStyle: "curly",
     headShape: "round",
     noseStyle: "round",
@@ -267,7 +277,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#2B88D8",
   },
   {
-    variant: "cute-girl",
+    variant: "004-football.svg",
     hairStyle: "long",
     headShape: "oval",
     noseStyle: "button",
@@ -285,7 +295,7 @@ const DEFAULT_AVATAR_TEMPLATES = [
     socksColor: "#DE5C8E",
   },
   {
-    variant: "celebrate-girl",
+    variant: "005-football.svg",
     hairStyle: "bun",
     headShape: "round",
     noseStyle: "straight",
@@ -523,13 +533,8 @@ function normalizeAvatarBaseModel(THREE, root) {
 
 function chooseAvatarModelVariant(avatar, seed = "") {
   const safe = sanitizeAvatarConfig(avatar, seed);
-  if (AVATAR_OPTIONS.variant.includes(String(safe.variant || ""))) {
-    return safe.variant;
-  }
-  const prefersGirl = safe.hairStyle === "long" || safe.hairStyle === "bun";
-  if (safe.brow === "focused") return prefersGirl ? "shooting-girl" : "tackle-boy";
-  if (safe.brow === "cheeky") return prefersGirl ? "celebrate-girl" : "winning-boy";
-  return prefersGirl ? "cute-girl" : "steady-boy";
+  if (AVATAR_OPTIONS.variant.includes(String(safe.variant || ""))) return safe.variant;
+  return AVATAR_PRESET_FILES[0];
 }
 
 function recolorAvatarBaseModel(model, avatar) {
@@ -1216,22 +1221,8 @@ function buildAvatar3DGroup(THREE, avatar) {
 }
 
 async function renderAvatar3DDataUri(avatar, seed, size) {
-  try {
-    const atlasImage = await loadAvatarSpriteAtlas();
-    if (!atlasImage) return avatarStaticFallbackUrl(avatar, seed, size);
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(size * dpr));
-    canvas.height = Math.max(1, Math.round(size * dpr));
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, size, size);
-    const ok = renderAvatarSpriteCanvas(ctx, avatar, seed, size, atlasImage);
-    if (!ok) return avatarStaticFallbackUrl(avatar, seed, size);
-    return canvas.toDataURL("image/png");
-  } catch {
-    return avatarStaticFallbackUrl(avatar, seed, size);
-  }
+  void size;
+  return avatarStaticFallbackUrl(avatar, seed);
 }
 
 let avatarUpgradeQueued = false;
@@ -1282,7 +1273,7 @@ function upgradeAvatarImages3D() {
 }
 
 function setAvatarTab(tab) {
-  const next = String(tab || "face");
+  const next = el.avatarTabButtons.length ? String(tab || "face") : "face";
   state.avatarTab = next;
   el.avatarTabButtons.forEach((btn) => {
     const active = btn.dataset.avatarTab === next;
@@ -1292,7 +1283,7 @@ function setAvatarTab(tab) {
   const fields = [...document.querySelectorAll(".avatar-editor-field")];
   fields.forEach((field) => {
     const mode = field.dataset.avatarFieldGroup || "face";
-    field.classList.toggle("hidden", mode !== next);
+    field.classList.toggle("hidden", el.avatarTabButtons.length ? mode !== next : false);
   });
 }
 
@@ -1408,24 +1399,6 @@ function accountLifetimePoints() {
 }
 
 function applyAvatarStyleLocks() {
-  const points = accountLifetimePoints();
-  const locks = avatarLockRules(points);
-
-  const variantUnlockAt = {
-    "steady-boy": 0,
-    "cute-girl": 0,
-    "dribbling-girl": 120,
-    "shooting-girl": 120,
-    "heading-boy": 120,
-    "heading-girl": 120,
-    "tackle-boy": 180,
-    "catching-boy": 180,
-    "celebrate-girl": 240,
-    "celebrate-boy": 240,
-    "winning-boy": 320,
-    "slide-winning-boy": 320,
-  };
-
   const applySelectLocks = (select) => {
     if (!select) return;
     [...select.options].forEach((opt) => {
@@ -1436,61 +1409,15 @@ function applyAvatarStyleLocks() {
     });
   };
 
-  // Keep all core editing controls available.
   applySelectLocks(el.avatarHairStyleInput);
   applySelectLocks(el.avatarKitStyleInput);
   applySelectLocks(el.avatarBootsStyleInput);
   applySelectLocks(el.avatarVariantInput);
-
-  const lockOption = (select, value, unlockAt) => {
-    if (!select) return;
-    const opt = [...select.options].find((row) => row.value === value);
-    if (!opt) return;
-    opt.disabled = true;
-    opt.textContent = `${opt.dataset.baseLabel} (unlock at ${unlockAt} pts)`;
-    opt.title = opt.textContent;
-  };
-
-  [...locks.hair].forEach((value) => lockOption(el.avatarHairStyleInput, value, 140));
-  [...locks.kit].forEach((value) => lockOption(el.avatarKitStyleInput, value, value === "total90" ? 320 : 180));
-  [...locks.boots].forEach((value) => lockOption(el.avatarBootsStyleInput, value, 100));
-
-  [...locks.variants].forEach((value) => {
-    const unlockAt = Number(variantUnlockAt[value] || 0);
-    lockOption(el.avatarVariantInput, value, unlockAt);
-  });
 }
 
 function avatarLockRules(points) {
-  const hairLocked = new Set();
-  const kitLocked = new Set();
-  const bootsLocked = new Set();
-  const variantLocked = new Set();
-  if (points < 100) {
-    bootsLocked.add("speed");
-    bootsLocked.add("high");
-  }
-  if (points < 140) {
-    ["spike", "curly", "long", "bun"].forEach((style) => hairLocked.add(style));
-  }
-  if (points < 180) {
-    ["stripes", "hoops", "diamond", "total90"].forEach((style) => kitLocked.add(style));
-  } else if (points < 320) {
-    ["total90"].forEach((style) => kitLocked.add(style));
-  }
-  if (points < 120) {
-    ["dribbling-girl", "shooting-girl", "heading-boy", "heading-girl"].forEach((id) => variantLocked.add(id));
-  }
-  if (points < 180) {
-    ["tackle-boy", "catching-boy"].forEach((id) => variantLocked.add(id));
-  }
-  if (points < 240) {
-    ["celebrate-girl", "celebrate-boy"].forEach((id) => variantLocked.add(id));
-  }
-  if (points < 320) {
-    ["winning-boy", "slide-winning-boy"].forEach((id) => variantLocked.add(id));
-  }
-  return { hair: hairLocked, kit: kitLocked, boots: bootsLocked, variants: variantLocked };
+  void points;
+  return { hair: new Set(), kit: new Set(), boots: new Set(), variants: new Set() };
 }
 
 function applyAvatarLocksToConfig(avatar) {
@@ -1500,10 +1427,7 @@ function applyAvatarLocksToConfig(avatar) {
   if (locks.hair.has(safe.hairStyle)) safe.hairStyle = "short";
   if (locks.kit.has(safe.kitStyle)) safe.kitStyle = "plain";
   if (locks.boots.has(safe.bootsStyle)) safe.bootsStyle = "classic";
-  if (locks.variants.has(safe.variant)) {
-    const fallback = AVATAR_OPTIONS.variant.find((id) => !locks.variants.has(id)) || "steady-boy";
-    safe.variant = fallback;
-  }
+  if (locks.variants.has(safe.variant)) safe.variant = AVATAR_PRESET_FILES[0];
   return safe;
 }
 
@@ -1585,7 +1509,8 @@ function sanitizeAvatarConfig(input, seed = "") {
 }
 
 function avatarSvgDataUri(input, seed = "", size = 96) {
-  return avatarStaticFallbackUrl(input, seed, size);
+  void size;
+  return avatarStaticFallbackUrl(input, seed);
 }
 
 function avatarStaticTemplateIndex(input, seed = "") {
@@ -1611,9 +1536,10 @@ function avatarStaticTemplateIndex(input, seed = "") {
 }
 
 function avatarStaticFallbackUrl(input, seed = "", size = 96) {
-  const idx = avatarStaticTemplateIndex(input, seed);
-  const clamped = Math.max(48, Math.min(512, Number(size) || 96));
-  return `/assets/avatar/fallback-${idx}.svg?w=${clamped}`;
+  void size;
+  const safe = sanitizeAvatarConfig(input, seed);
+  const preset = AVATAR_PRESET_FILES.includes(String(safe.variant || "")) ? safe.variant : AVATAR_PRESET_FILES[0];
+  return `/assets/avatar/presets/${preset}`;
 }
 
 function defaultFamilyLeagueState() {
@@ -7890,10 +7816,11 @@ async function saveAccountAvatar() {
 
 function randomizeAccountAvatar() {
   if (!accountSignedIn()) return;
-  const seed = `${state.account.user?.name || "ezra"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-  writeAvatarEditorState(defaultAvatarConfig(seed));
+  const current = readAvatarEditorState();
+  const idx = Math.floor(Math.random() * AVATAR_PRESET_FILES.length);
+  writeAvatarEditorState({ ...current, variant: AVATAR_PRESET_FILES[idx] });
   setAccountStatus("Avatar randomized.");
-  scheduleAvatarAutoSave("random look");
+  scheduleAvatarAutoSave("avatar");
 }
 
 async function logoutAccount() {

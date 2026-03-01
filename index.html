@@ -328,195 +328,38 @@
                   <img id="avatar-hero-img" class="avatar-hero-img" alt="Avatar hero preview" data-pin-nopin="true" />
                   <div class="avatar-hero-glow" aria-hidden="true"></div>
                 </div>
-                <div class="avatar-template-strip" aria-label="Starter looks">
-                  <span class="avatar-template-label">Pick a starter look</span>
-                  <button class="avatar-template-btn" type="button" data-avatar-template="0">
-                    <img class="avatar-template-preview" alt="Starter look 1" />
-                  </button>
-                  <button class="avatar-template-btn" type="button" data-avatar-template="1">
-                    <img class="avatar-template-preview" alt="Starter look 2" />
-                  </button>
-                  <button class="avatar-template-btn" type="button" data-avatar-template="2">
-                    <img class="avatar-template-preview" alt="Starter look 3" />
-                  </button>
-                  <button class="avatar-template-btn" type="button" data-avatar-template="3">
-                    <img class="avatar-template-preview" alt="Starter look 4" />
-                  </button>
-                  <button class="avatar-template-btn" type="button" data-avatar-template="4">
-                    <img class="avatar-template-preview" alt="Starter look 5" />
-                  </button>
-                </div>
-                <div class="avatar-personality-row" aria-label="Personality presets">
-                  <span class="avatar-template-label">Personality</span>
-                  <button class="btn avatar-personality-btn" type="button" data-avatar-personality="soft">Friendly</button>
-                  <button class="btn avatar-personality-btn" type="button" data-avatar-personality="focused">Focused</button>
-                  <button class="btn avatar-personality-btn" type="button" data-avatar-personality="cheeky">Cheeky</button>
-                </div>
-                <div class="avatar-editor-tabs" role="tablist" aria-label="Avatar categories">
-                  <button class="btn avatar-tab-btn active" type="button" role="tab" aria-selected="true" data-avatar-tab="face">Face</button>
-                  <button class="btn avatar-tab-btn" type="button" role="tab" aria-selected="false" data-avatar-tab="hair">Hair</button>
-                  <button class="btn avatar-tab-btn" type="button" role="tab" aria-selected="false" data-avatar-tab="kit">Kit</button>
-                  <button class="btn avatar-tab-btn" type="button" role="tab" aria-selected="false" data-avatar-tab="boots">Boots</button>
-                </div>
                 <div class="avatar-editor-grid">
-                  <label class="avatar-editor-field" data-avatar-field-group="face">Base Model
+                  <label class="avatar-editor-field" data-avatar-field-group="face">Choose Avatar
                     <select id="avatar-variant" class="account-input">
-                      <option value="steady-boy">Steady Boy</option>
-                      <option value="cute-girl">Cute Girl</option>
-                      <option value="dribbling-girl">Dribbling Girl</option>
-                      <option value="shooting-girl">Shooting Girl</option>
-                      <option value="heading-girl">Heading Girl</option>
-                      <option value="celebrate-girl">Celebrate Girl</option>
-                      <option value="tackle-boy">Tackle Boy</option>
-                      <option value="heading-boy">Heading Boy</option>
-                      <option value="catching-boy">Catching Boy</option>
-                      <option value="winning-boy">Winning Boy</option>
-                      <option value="slide-winning-boy">Slide Winning Boy</option>
-                      <option value="celebrate-boy">Celebrate Boy</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="hair">Hair
-                    <select id="avatar-hair-style" class="account-input">
-                      <option value="short">Short</option>
-                      <option value="fade">Fade</option>
-                      <option value="spike">Spike</option>
-                      <option value="curly">Curly</option>
-                      <option value="long">Long</option>
-                      <option value="bun">Bun</option>
-                      <option value="bald">Bald</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="face">Head
-                    <select id="avatar-head-shape" class="account-input">
-                      <option value="round">Round</option>
-                      <option value="oval">Oval</option>
-                      <option value="square">Square</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="face">Nose
-                    <select id="avatar-nose-style" class="account-input">
-                      <option value="button">Button</option>
-                      <option value="straight">Straight</option>
-                      <option value="round">Round</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="face">Mouth
-                    <select id="avatar-mouth-style" class="account-input">
-                      <option value="smile">Smile</option>
-                      <option value="flat">Flat</option>
-                      <option value="open">Open</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="kit">Kit Style
-                    <select id="avatar-kit-style" class="account-input">
-                      <option value="plain">Plain</option>
-                      <option value="sleeves">Sleeves</option>
-                      <option value="diamond">Diamond</option>
-                      <option value="stripes">Stripes</option>
-                      <option value="hoops">Hoops</option>
-                      <option value="total90">Total 90</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="boots">Boots
-                    <select id="avatar-boots-style" class="account-input">
-                      <option value="classic">Classic</option>
-                      <option value="speed">Speed</option>
-                      <option value="high">High</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="face">Skin Tone
-                    <select id="avatar-skin-color" class="account-input">
-                      <option value="#F8D5B5">Light 1</option>
-                      <option value="#EEC19A">Light 2</option>
-                      <option value="#D9A173">Tan 1</option>
-                      <option value="#C58A5D">Tan 2</option>
-                      <option value="#A8724A">Brown 1</option>
-                      <option value="#8A5C3A">Brown 2</option>
-                      <option value="#6E452C">Deep 1</option>
-                      <option value="#54331F">Deep 2</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="hair">Hair Colour
-                    <select id="avatar-hair-color" class="account-input">
-                      <option value="#17100B">Black</option>
-                      <option value="#3B2518">Dark Brown</option>
-                      <option value="#6A452F">Brown</option>
-                      <option value="#9D734F">Light Brown</option>
-                      <option value="#C3A67F">Blonde</option>
-                      <option value="#D9B8A8">Pastel</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="face">Eye Colour
-                    <select id="avatar-eye-color" class="account-input">
-                      <option value="#201712">Dark Brown</option>
-                      <option value="#3B2A1C">Brown</option>
-                      <option value="#36506C">Blue</option>
-                      <option value="#356346">Green</option>
-                      <option value="#4A4A4A">Grey</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="kit">Kit Colour 1
-                    <select id="avatar-kit-color-1" class="account-input">
-                      <option value="#F39A1D">Amber</option>
-                      <option value="#E14D2A">Red</option>
-                      <option value="#2B88D8">Blue</option>
-                      <option value="#37A060">Green</option>
-                      <option value="#A35BE6">Purple</option>
-                      <option value="#DE5C8E">Pink</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="kit">Kit Colour 2
-                    <select id="avatar-kit-color-2" class="account-input">
-                      <option value="#111111">Black</option>
-                      <option value="#1B2233">Navy</option>
-                      <option value="#2A1408">Maroon</option>
-                      <option value="#102A1A">Forest</option>
-                      <option value="#1A1032">Indigo</option>
-                      <option value="#E8E1D2">Cream</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="kit">Shorts Colour
-                    <select id="avatar-shorts-color" class="account-input">
-                      <option value="#111111">Black</option>
-                      <option value="#1B2233">Navy</option>
-                      <option value="#2A1408">Maroon</option>
-                      <option value="#102A1A">Forest</option>
-                      <option value="#1A1032">Indigo</option>
-                      <option value="#E8E1D2">Cream</option>
-                      <option value="#F39A1D">Amber</option>
-                      <option value="#2B88D8">Blue</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="boots">Boots Colour
-                    <select id="avatar-boots-color" class="account-input">
-                      <option value="#111111">Black</option>
-                      <option value="#FFFFFF">White</option>
-                      <option value="#E14D2A">Red</option>
-                      <option value="#2B88D8">Blue</option>
-                      <option value="#37A060">Green</option>
-                      <option value="#F39A1D">Amber</option>
-                    </select>
-                  </label>
-                  <label class="avatar-editor-field" data-avatar-field-group="boots">Socks Colour
-                    <select id="avatar-socks-color" class="account-input">
-                      <option value="#111111">Black</option>
-                      <option value="#FFFFFF">White</option>
-                      <option value="#E8E1D2">Cream</option>
-                      <option value="#F39A1D">Amber</option>
-                      <option value="#2B88D8">Blue</option>
-                      <option value="#37A060">Green</option>
-                      <option value="#DE5C8E">Pink</option>
+                      <option value="001-football.svg">Avatar 01</option>
+                      <option value="002-football.svg">Avatar 02</option>
+                      <option value="003-football.svg">Avatar 03</option>
+                      <option value="004-football.svg">Avatar 04</option>
+                      <option value="005-football.svg">Avatar 05</option>
+                      <option value="006-football.svg">Avatar 06</option>
+                      <option value="007-football.svg">Avatar 07</option>
+                      <option value="008-football.svg">Avatar 08</option>
+                      <option value="009-football.svg">Avatar 09</option>
+                      <option value="010-football.svg">Avatar 10</option>
+                      <option value="011-football.svg">Avatar 11</option>
+                      <option value="012-football.svg">Avatar 12</option>
+                      <option value="013-football.svg">Avatar 13</option>
+                      <option value="014-football.svg">Avatar 14</option>
+                      <option value="015-football.svg">Avatar 15</option>
+                      <option value="016-football.svg">Avatar 16</option>
+                      <option value="017-football.svg">Avatar 17</option>
+                      <option value="018-football.svg">Avatar 18</option>
+                      <option value="019-football.svg">Avatar 19</option>
+                      <option value="020-football.svg">Avatar 20</option>
                     </select>
                   </label>
                 </div>
                 <div class="account-actions">
-                  <button id="account-avatar-random-btn" class="btn" type="button">Randomize</button>
+                  <button id="account-avatar-random-btn" class="btn" type="button">Random Avatar</button>
                   <button id="account-avatar-save-btn" class="btn" type="button">Save Avatar</button>
                 </div>
                 <div id="avatar-save-toast" class="avatar-save-toast hidden" aria-live="polite">Avatar saved</div>
-                <button id="avatar-unlock-toggle-btn" class="btn avatar-unlock-toggle-btn" type="button" aria-expanded="false">Show Unlock Track</button>
-                <div id="avatar-unlock-rail" class="avatar-unlock-rail hidden" aria-live="polite"></div>
-                <p class="muted avatar-future-note">Coming soon: unlock special hairstyles, boot styles, kit types and football accessories via milestones.</p>
+                <p class="muted avatar-future-note">Pick one of the official football SVG avatars and save.</p>
               </div>
             </article>
             <article class="fun-card" id="story-panel">
