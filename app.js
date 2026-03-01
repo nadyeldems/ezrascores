@@ -1589,6 +1589,20 @@ function openAvatarUnlockModal(variant, unlockState = avatarUnlockStateFor()) {
   el.avatarUnlockModal.classList.remove("hidden");
 }
 
+function triggerAvatarConfirmFx(variant) {
+  state.avatarConfirmFxVariant = String(variant || "").trim();
+  state.avatarConfirmFxUntil = Date.now() + 900;
+  if (state.avatarConfirmFxTimer) {
+    clearTimeout(state.avatarConfirmFxTimer);
+  }
+  state.avatarConfirmFxTimer = setTimeout(() => {
+    state.avatarConfirmFxVariant = "";
+    state.avatarConfirmFxUntil = 0;
+    state.avatarConfirmFxTimer = null;
+    renderAvatarPresetGrid();
+  }, 950);
+}
+
 function ensureAvatarVariantUnlocked(variant) {
   const key = String(variant || "").trim();
   if (!key) return "";
@@ -1634,24 +1648,47 @@ function renderAvatarUnlockMeta() {
 function renderAvatarPresetGrid() {
   if (!el.avatarPresetsGrid) return;
   const unlockState = avatarUnlockStateFor();
-  const selectedVariant = ensureAvatarVariantUnlocked(el.avatarVariantInput?.value || currentAccountAvatar().variant);
+  const selectedVariant = ensureAvatarVariantUnlocked(currentAccountAvatar().variant);
+  const pendingVariant = String(state.avatarPendingConfirmVariant || "").trim();
+  const showFx = Date.now() < Number(state.avatarConfirmFxUntil || 0);
   const ordered = [...unlockState.unlockedVariants, ...AVATAR_PRESET_FILES.filter((v) => !unlockState.unlockedVariants.includes(v))];
   const cards = ordered.map((variant) => {
     const unlocked = unlockState.unlockedVariants.includes(variant);
     const selected = selectedVariant === variant;
+    const pending = pendingVariant === variant && unlocked && !selected;
+    const confirmedFx = showFx && state.avatarConfirmFxVariant === variant;
     const label = avatarVariantLabel(variant);
+    const badgeLabel = confirmedFx
+      ? "New avatar selected"
+      : selected
+        ? "Selected"
+        : pending
+          ? "Tap again to confirm"
+          : unlocked
+            ? "Tap to choose"
+            : unlockState.canUnlockMore
+              ? "Tap to unlock"
+              : "Locked";
     return `
       <button
         type="button"
-        class="avatar-preset-card ${unlocked ? "unlocked" : "locked"} ${selected ? "selected" : ""}"
+        class="avatar-preset-card ${unlocked ? "unlocked" : "locked"} ${selected ? "selected" : ""} ${pending ? "pending-confirm" : ""} ${confirmedFx ? "confirmed-fx" : ""}"
         data-avatar-variant-card="${escapeHtml(variant)}"
         ${!unlocked && !unlockState.canUnlockMore ? "disabled" : ""}
         aria-pressed="${selected ? "true" : "false"}"
-        title="${escapeHtml(unlocked ? `Select ${label}` : unlockState.canUnlockMore ? `Unlock ${label}` : `${label} (locked)`)}"
+        title="${escapeHtml(
+          pending
+            ? `Tap again to confirm ${label}`
+            : unlocked
+              ? `Choose ${label}`
+              : unlockState.canUnlockMore
+                ? `Unlock ${label}`
+                : `${label} (locked)`
+        )}"
       >
         <img src="/assets/avatar/presets/${escapeHtml(variant)}" alt="${escapeHtml(label)}" data-pin-nopin="true" />
         <span class="avatar-preset-card-label">${escapeHtml(label)}</span>
-        <span class="avatar-preset-card-badge">${selected ? "Selected" : unlocked ? "Unlocked" : unlockState.canUnlockMore ? "Tap to unlock" : "Locked"}</span>
+        <span class="avatar-preset-card-badge">${badgeLabel}</span>
       </button>
     `;
   }).join("");
@@ -1910,6 +1947,10 @@ const state = {
   avatarTab: "face",
   avatarSaveToastTimer: null,
   avatarAutoSaveTimer: null,
+  avatarPendingConfirmVariant: "",
+  avatarConfirmFxVariant: "",
+  avatarConfirmFxUntil: 0,
+  avatarConfirmFxTimer: null,
   avatarDraftHash: "",
   avatarLastSavedHash: "",
   avatarSaveState: "saved",
@@ -2446,7 +2487,7 @@ function maybeShowFreeAvatarUnlockToast() {
   const seenKey = `ezra_avatar_free_unlock_seen_${accountKey}`;
   if (localStorage.getItem(seenKey) === "1") return;
   localStorage.setItem(seenKey, "1");
-  showRewardToast("Free avatar unlock ready • Open Play → Avatar Builder", "neutral");
+  showRewardToast("Free avatar unlock ready • Open Play → Avatar Choice", "neutral");
 }
 
 function maybeNotifyDailyQuestReset() {
@@ -2692,22 +2733,22 @@ function readAvatarEditorState() {
   const current = currentAccountAvatar();
   return sanitizeAvatarConfig(
     {
-      variant: el.avatarVariantInput?.value,
-      hairStyle: el.avatarHairStyleInput?.value,
-      headShape: el.avatarHeadShapeInput?.value,
-      noseStyle: el.avatarNoseStyleInput?.value,
-      eyeColor: el.avatarEyeColorInput?.value,
-      mouth: el.avatarMouthStyleInput?.value,
+      variant: el.avatarVariantInput?.value || current.variant,
+      hairStyle: el.avatarHairStyleInput?.value || current.hairStyle,
+      headShape: el.avatarHeadShapeInput?.value || current.headShape,
+      noseStyle: el.avatarNoseStyleInput?.value || current.noseStyle,
+      eyeColor: el.avatarEyeColorInput?.value || current.eyeColor,
+      mouth: el.avatarMouthStyleInput?.value || current.mouth,
       brow: state.avatarPersonalityBrow || undefined,
-      skinColor: el.avatarSkinColorInput?.value,
-      hairColor: el.avatarHairColorInput?.value,
-      kitColor1: el.avatarKitColor1Input?.value,
-      kitColor2: el.avatarKitColor2Input?.value,
-      kitStyle: el.avatarKitStyleInput?.value,
-      bootsStyle: el.avatarBootsStyleInput?.value,
-      bootsColor: el.avatarBootsColorInput?.value,
-      shortsColor: el.avatarShortsColorInput?.value,
-      socksColor: el.avatarSocksColorInput?.value,
+      skinColor: el.avatarSkinColorInput?.value || current.skinColor,
+      hairColor: el.avatarHairColorInput?.value || current.hairColor,
+      kitColor1: el.avatarKitColor1Input?.value || current.kitColor1,
+      kitColor2: el.avatarKitColor2Input?.value || current.kitColor2,
+      kitStyle: el.avatarKitStyleInput?.value || current.kitStyle,
+      bootsStyle: el.avatarBootsStyleInput?.value || current.bootsStyle,
+      bootsColor: el.avatarBootsColorInput?.value || current.bootsColor,
+      shortsColor: el.avatarShortsColorInput?.value || current.shortsColor,
+      socksColor: el.avatarSocksColorInput?.value || current.socksColor,
       unlockedVariants: current.unlockedVariants,
     },
     seed
@@ -10964,10 +11005,10 @@ function attachEvents() {
         setAvatarUnlockInlineStatus("Unable to unlock this avatar right now.", true);
         return;
       }
-      const current = readAvatarEditorState();
-      writeAvatarEditorState({ ...current, variant });
+      state.avatarPendingConfirmVariant = variant;
       closeAvatarUnlockModal();
-      await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar).catch(() => null);
+      renderAvatarPresetGrid();
+      setAccountStatus(`Unlocked ${avatarVariantLabel(variant)}. Tap again to confirm selection.`);
     });
   }
 
@@ -10999,9 +11040,26 @@ function attachEvents() {
         openAvatarUnlockModal(variant, unlockState);
         return;
       }
+      const selectedVariant = ensureAvatarVariantUnlocked(currentAccountAvatar().variant);
+      if (variant === selectedVariant) {
+        state.avatarPendingConfirmVariant = "";
+        renderAvatarPresetGrid();
+        setAccountStatus(`${avatarVariantLabel(variant)} already selected.`);
+        return;
+      }
+      const pending = String(state.avatarPendingConfirmVariant || "").trim();
+      if (pending !== variant) {
+        state.avatarPendingConfirmVariant = variant;
+        renderAvatarPresetGrid();
+        setAccountStatus(`Tap again to confirm ${avatarVariantLabel(variant)}.`);
+        return;
+      }
       const current = readAvatarEditorState();
+      state.avatarPendingConfirmVariant = "";
       writeAvatarEditorState({ ...current, variant });
       await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar).catch(() => null);
+      triggerAvatarConfirmFx(variant);
+      renderAvatarPresetGrid();
     });
   }
 
@@ -11440,6 +11498,10 @@ function attachEvents() {
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (state.avatarUnlockModalOpen) {
+      closeAvatarUnlockModal();
+      return;
+    }
     if (state.leagueInviteModalOpen) {
       closeLeagueInviteModal();
       return;

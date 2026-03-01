@@ -2053,7 +2053,7 @@ body.league-member-overlay-open::before {
 }
 
 .avatar-editor {
-  border: 1px dashed var(--line-soft);
+  border: 1px solid var(--line-soft);
   border-radius: 0.65rem;
   padding: 0.66rem;
   display: grid;
@@ -2102,7 +2102,7 @@ body.league-member-overlay-open::before {
   position: absolute;
   inset: 5.5%;
   border-radius: 1rem;
-  border: 1px dashed rgba(255, 179, 90, 0.25);
+  border: 1px solid rgba(255, 179, 90, 0.18);
   pointer-events: none;
   z-index: 0;
 }
@@ -2264,6 +2264,15 @@ body[data-motion="minimal"] .avatar-hero-img {
   box-shadow: 0 0 0 1px rgba(255, 171, 74, 0.4);
 }
 
+.avatar-preset-card.pending-confirm {
+  border-color: #f7b666;
+  box-shadow: 0 0 0 1px rgba(247, 182, 102, 0.45), 0 0 16px rgba(247, 182, 102, 0.2);
+}
+
+.avatar-preset-card.confirmed-fx {
+  animation: avatar-selected-fx 620ms ease-out both;
+}
+
 .avatar-preset-card.locked {
   opacity: 0.84;
 }
@@ -2295,7 +2304,22 @@ body[data-motion="minimal"] .avatar-hero-img {
 .avatar-future-note {
   margin: 0;
   padding-top: 0.18rem;
-  border-top: 1px dashed var(--line-soft);
+  border-top: 1px solid rgba(255, 171, 74, 0.22);
+}
+
+@keyframes avatar-selected-fx {
+  0% {
+    transform: scale(0.98);
+    box-shadow: 0 0 0 0 rgba(255, 176, 79, 0.55);
+  }
+  60% {
+    transform: scale(1.03);
+    box-shadow: 0 0 0 9px rgba(255, 176, 79, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(255, 176, 79, 0);
+  }
 }
 
 .avatar-unlock-toggle-btn {
