@@ -116,11 +116,36 @@ function validateCredentials(name, pin) {
   return { ok: true, cleanName, cleanPin };
 }
 
-const AVATAR_HAIR_STYLES = ["short", "fade", "spike", "curly", "bald"];
+const AVATAR_HAIR_STYLES = ["short", "fade", "spike", "curly", "long", "bun", "bald"];
 const AVATAR_HEAD_SHAPES = ["round", "oval", "square"];
+const AVATAR_NOSE_STYLES = ["button", "straight", "round"];
 const AVATAR_MOUTH_STYLES = ["smile", "flat", "open"];
+const AVATAR_BROW_STYLES = ["soft", "focused", "cheeky"];
 const AVATAR_KIT_STYLES = ["plain", "sleeves", "diamond", "stripes", "hoops", "total90"];
 const AVATAR_BOOTS_STYLES = ["classic", "speed", "high"];
+const AVATAR_PRESET_FILES = [
+  "001-street-striker.svg",
+  "002-goal-guardian.svg",
+  "003-midfield-maestro.svg",
+  "004-captain-comet.svg",
+  "005-egg-superstar.svg",
+  "006-sideline-sprinter.svg",
+  "007-champion-kick.svg",
+  "008-sunburst-striker.svg",
+  "009-pitch-pro.svg",
+  "010-dribble-dynamo.svg",
+  "011-corner-ace.svg",
+  "012-skyline-shooter.svg",
+  "013-playmaker-prime.svg",
+  "014-power-forward.svg",
+  "015-rainbow-rocket.svg",
+  "016-keeper-calm.svg",
+  "017-victory-vibe.svg",
+  "018-flash-footwork.svg",
+  "019-lucky-lefty.svg",
+  "020-final-whistle.svg",
+];
+const AVATAR_STARTER_VARIANTS = AVATAR_PRESET_FILES.slice(0, 3);
 
 function clampHexColor(value, fallback) {
   const raw = String(value || "").trim();
@@ -137,6 +162,19 @@ function avatarSeedIndex(seed, modulo) {
   return modulo > 0 ? hash % modulo : 0;
 }
 
+function normalizeAvatarVariantList(list) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    const key = String(raw || "").trim();
+    if (!AVATAR_PRESET_FILES.includes(key)) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
 function defaultAvatarConfig(seed = "") {
   const primaryPalette = ["#F39A1D", "#E14D2A", "#2B88D8", "#37A060", "#A35BE6", "#DE5C8E"];
   const secondaryPalette = ["#111111", "#1B2233", "#2A1408", "#102A1A", "#1A1032", "#331018"];
@@ -145,10 +183,13 @@ function defaultAvatarConfig(seed = "") {
   const eyePalette = ["#1F1F1F", "#4B2A1E", "#1E3A5F", "#0F5A3E"];
 
   return {
+    variant: AVATAR_PRESET_FILES[avatarSeedIndex(`${seed}:variant`, AVATAR_PRESET_FILES.length)],
     hairStyle: AVATAR_HAIR_STYLES[avatarSeedIndex(`${seed}:hair`, AVATAR_HAIR_STYLES.length)],
     headShape: AVATAR_HEAD_SHAPES[avatarSeedIndex(`${seed}:head`, AVATAR_HEAD_SHAPES.length)],
+    noseStyle: AVATAR_NOSE_STYLES[avatarSeedIndex(`${seed}:nose`, AVATAR_NOSE_STYLES.length)],
     eyeColor: eyePalette[avatarSeedIndex(`${seed}:eye`, eyePalette.length)],
     mouth: AVATAR_MOUTH_STYLES[avatarSeedIndex(`${seed}:mouth`, AVATAR_MOUTH_STYLES.length)],
+    brow: AVATAR_BROW_STYLES[avatarSeedIndex(`${seed}:brow`, AVATAR_BROW_STYLES.length)],
     skinColor: skinPalette[avatarSeedIndex(`${seed}:skin`, skinPalette.length)],
     hairColor: hairPalette[avatarSeedIndex(`${seed}:haircolor`, hairPalette.length)],
     kitColor1: primaryPalette[avatarSeedIndex(`${seed}:kit1`, primaryPalette.length)],
@@ -156,6 +197,9 @@ function defaultAvatarConfig(seed = "") {
     kitStyle: AVATAR_KIT_STYLES[avatarSeedIndex(`${seed}:kitstyle`, AVATAR_KIT_STYLES.length)],
     bootsStyle: AVATAR_BOOTS_STYLES[avatarSeedIndex(`${seed}:boots`, AVATAR_BOOTS_STYLES.length)],
     bootsColor: secondaryPalette[avatarSeedIndex(`${seed}:bootsColor`, secondaryPalette.length)],
+    shortsColor: secondaryPalette[avatarSeedIndex(`${seed}:shortsColor`, secondaryPalette.length)],
+    socksColor: primaryPalette[avatarSeedIndex(`${seed}:socksColor`, primaryPalette.length)],
+    unlockedVariants: [...AVATAR_STARTER_VARIANTS],
   };
 }
 
@@ -163,11 +207,20 @@ function sanitizeAvatarConfig(input, seed = "") {
   const base = defaultAvatarConfig(seed);
   const src = input && typeof input === "object" ? input : {};
   const pick = (value, allow, fallback) => (allow.includes(String(value || "")) ? String(value) : fallback);
+  const unlockedRequested = normalizeAvatarVariantList(src.unlockedVariants);
+  const unlockedVariants = [...AVATAR_STARTER_VARIANTS];
+  unlockedRequested.forEach((variant) => {
+    if (unlockedVariants.includes(variant)) return;
+    unlockedVariants.push(variant);
+  });
   return {
+    variant: pick(src.variant, AVATAR_PRESET_FILES, base.variant),
     hairStyle: pick(src.hairStyle, AVATAR_HAIR_STYLES, base.hairStyle),
     headShape: pick(src.headShape, AVATAR_HEAD_SHAPES, base.headShape),
+    noseStyle: pick(src.noseStyle, AVATAR_NOSE_STYLES, base.noseStyle),
     eyeColor: clampHexColor(src.eyeColor, base.eyeColor),
     mouth: pick(src.mouth, AVATAR_MOUTH_STYLES, base.mouth),
+    brow: pick(src.brow, AVATAR_BROW_STYLES, base.brow),
     skinColor: clampHexColor(src.skinColor, base.skinColor),
     hairColor: clampHexColor(src.hairColor, base.hairColor),
     kitColor1: clampHexColor(src.kitColor1, base.kitColor1),
@@ -175,6 +228,9 @@ function sanitizeAvatarConfig(input, seed = "") {
     kitStyle: pick(src.kitStyle, AVATAR_KIT_STYLES, base.kitStyle),
     bootsStyle: pick(src.bootsStyle, AVATAR_BOOTS_STYLES, base.bootsStyle),
     bootsColor: clampHexColor(src.bootsColor, base.bootsColor),
+    shortsColor: clampHexColor(src.shortsColor, base.shortsColor),
+    socksColor: clampHexColor(src.socksColor, base.socksColor),
+    unlockedVariants,
   };
 }
 

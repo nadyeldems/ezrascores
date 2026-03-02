@@ -11053,6 +11053,8 @@ function attachEvents() {
         closeAvatarUnlockModal();
         return;
       }
+      const seed = state.account.user?.name || state.account.user?.id || "ezra";
+      const previousAvatar = sanitizeAvatarConfig(state.account.user?.avatar, seed);
       const unlockState = avatarUnlockStateFor();
       if (!unlockState.availableCredits) {
         setAvatarUnlockInlineStatus(`No credits available. Earn ${AVATAR_UNLOCK_EVERY_POINTS} pts per extra credit.`, true);
@@ -11063,10 +11065,26 @@ function attachEvents() {
         setAvatarUnlockInlineStatus("Unable to unlock this avatar right now.", true);
         return;
       }
-      state.avatarPendingConfirmVariant = variant;
       closeAvatarUnlockModal();
+      const current = readAvatarEditorState();
+      writeAvatarEditorState({ ...current, variant });
+      const saved = await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar)
+        .then(() => true)
+        .catch(() => false);
+      if (!saved) {
+        if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
+        state.account.user.avatar = previousAvatar;
+        persistStoredAvatarUnlocks(previousAvatar.unlockedVariants || []);
+        persistStoredAvatarConfig(previousAvatar);
+        writeAvatarEditorState(previousAvatar);
+        renderAvatarPresetGrid();
+        setAccountStatus("Unlock not saved. Please retry.", true);
+        return;
+      }
+      state.avatarPendingConfirmVariant = "";
+      triggerAvatarConfirmFx(variant);
       renderAvatarPresetGrid();
-      setAccountStatus(`Unlocked ${avatarVariantLabel(variant)}. Tap again to confirm selection.`);
+      setAccountStatus(`Unlocked and selected ${avatarVariantLabel(variant)}.`);
     });
   }
 
@@ -11113,9 +11131,22 @@ function attachEvents() {
         return;
       }
       const current = readAvatarEditorState();
+      const previousAvatar = sanitizeAvatarConfig(state.account.user?.avatar, state.account.user?.name || state.account.user?.id || "ezra");
       state.avatarPendingConfirmVariant = "";
       writeAvatarEditorState({ ...current, variant });
-      await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar).catch(() => null);
+      const saved = await runAccountAction("save_avatar", "Saving avatar...", "Save avatar failed", saveAccountAvatar)
+        .then(() => true)
+        .catch(() => false);
+      if (!saved) {
+        if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
+        state.account.user.avatar = previousAvatar;
+        persistStoredAvatarUnlocks(previousAvatar.unlockedVariants || []);
+        persistStoredAvatarConfig(previousAvatar);
+        writeAvatarEditorState(previousAvatar);
+        renderAvatarPresetGrid();
+        setAccountStatus("Avatar selection not saved. Please retry.", true);
+        return;
+      }
       triggerAvatarConfirmFx(variant);
       renderAvatarPresetGrid();
     });
