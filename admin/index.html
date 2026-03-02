@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EZRASCORES Admin</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="stylesheet" href="/admin/admin.css" />
+  </head>
+  <body>
+    <main class="admin-shell">
+      <section class="admin-card" id="auth-card">
+        <h1>EZRASCORES Admin</h1>
+        <p class="sub">Separate admin access</p>
+        <form id="login-form" autocomplete="off">
+          <label>
+            Username
+            <input id="username" type="text" required />
+          </label>
+          <label>
+            Password
+            <input id="password" type="password" required />
+          </label>
+          <button type="submit" id="login-btn">Sign In</button>
+        </form>
+        <p id="auth-status" class="status"></p>
+      </section>
+
+      <section class="admin-card hidden" id="dashboard-card">
+        <header class="dash-head">
+          <h2>Users Overview</h2>
+          <div class="actions">
+            <button id="refresh-btn" type="button">Refresh</button>
+            <button id="logout-btn" type="button">Log Out</button>
+          </div>
+        </header>
+
+        <div class="stats">
+          <article>
+            <h3>Total Users</h3>
+            <p id="users-count">--</p>
+          </article>
+          <article>
+            <h3>Active (24h)</h3>
+            <p id="active-24h">--</p>
+          </article>
+        </div>
+
+        <label class="search-wrap">
+          Search username
+          <input id="search-input" type="search" placeholder="Type to filter..." />
+        </label>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Total Points</th>
+                <th>Last Activity</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+
+        <p id="dash-status" class="status"></p>
+      </section>
+    </main>
+
+    <script src="/admin/admin.js" defer></script>
+  </body>
+</html>

@@ -1589,6 +1589,150 @@ async function accountAuth(db, request) {
   return { token, session };
 }
 
+const ADMIN_SESSION_MS = 1000 * 60 * 60 * 12;
+
+function adminConfig(env) {
+  const username = String(env?.EZRA_ADMIN_USERNAME || "").trim().toLowerCase();
+  const password = String(env?.EZRA_ADMIN_PASSWORD || "").trim();
+  const passwordHash = String(env?.EZRA_ADMIN_PASSWORD_SHA256 || "").trim().toLowerCase();
+  const secret = String(env?.EZRA_ADMIN_SECRET || env?.EZRA_CRON_SECRET || "").trim();
+  return { username, password, passwordHash, secret };
+}
+
+async function signAdminToken(payload, secret) {
+  return signInviteToken({ ...payload, t: "admin" }, secret);
+}
+
+async function verifyAdminToken(token, secret) {
+  const verified = await verifyInviteToken(token, secret);
+  if (!verified?.ok) return { ok: false, error: verified?.error || "Invalid token." };
+  const payload = verified.payload || {};
+  if (String(payload.t || "") !== "admin") return { ok: false, error: "Invalid token type." };
+  const exp = Number(payload.exp || 0);
+  if (!Number.isFinite(exp) || Date.now() > exp) return { ok: false, error: "Admin session expired." };
+  return { ok: true, payload };
+}
+
+async function adminAuth(request, env) {
+  const cfg = adminConfig(env);
+  if (!cfg.username || (!cfg.password && !cfg.passwordHash) || !cfg.secret) {
+    return { ok: false, status: 503, error: "Admin auth is not configured." };
+  }
+  const token = getBearerToken(request);
+  if (!token) return { ok: false, status: 401, error: "Missing admin token." };
+  const verified = await verifyAdminToken(token, cfg.secret);
+  if (!verified.ok) return { ok: false, status: 401, error: verified.error || "Unauthorized." };
+  if (String(verified.payload.u || "").trim().toLowerCase() !== cfg.username) {
+    return { ok: false, status: 401, error: "Invalid admin user." };
+  }
+  return { ok: true, username: cfg.username };
+}
+
+async function handleAdminLogin(env, request) {
+  const cfg = adminConfig(env);
+  if (!cfg.username || (!cfg.password && !cfg.passwordHash) || !cfg.secret) {
+    return json({ error: "Admin auth is not configured. Set EZRA_ADMIN_USERNAME, EZRA_ADMIN_SECRET, and password env var." }, 503);
+  }
+  const body = (await parseJson(request)) || {};
+  const username = String(body?.username || "").trim().toLowerCase();
+  const password = String(body?.password || "");
+  if (!username || !password) return json({ error: "Username and password are required." }, 400);
+  if (username !== cfg.username) return json({ error: "Invalid credentials." }, 401);
+  if (cfg.passwordHash) {
+    const hash = await sha256Hex(password);
+    if (hash.toLowerCase() !== cfg.passwordHash) return json({ error: "Invalid credentials." }, 401);
+  } else if (password !== cfg.password) {
+    return json({ error: "Invalid credentials." }, 401);
+  }
+  const now = Date.now();
+  const token = await signAdminToken(
+    {
+      u: cfg.username,
+      iat: now,
+      exp: now + ADMIN_SESSION_MS,
+    },
+    cfg.secret
+  );
+  return json(
+    {
+      ok: true,
+      token,
+      expiresAt: now + ADMIN_SESSION_MS,
+      username: cfg.username,
+    },
+    200
+  );
+}
+
+async function handleAdminUsersOverview(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+
+  const usersCountRow = await db.prepare("SELECT COUNT(*) AS c FROM ezra_users").first();
+  const usersCount = Number(usersCountRow?.c || 0);
+  const users = await db
+    .prepare(
+      `
+      SELECT
+        u.id,
+        u.name,
+        COALESCE(s.points, 0) AS total_points,
+        MAX(
+          COALESCE(u.updated_at, ''),
+          COALESCE(ps.last_state_at, ''),
+          COALESCE(s.updated_at, ''),
+          COALESCE(pl.last_points_at, ''),
+          COALESCE(ss.last_session_at, '')
+        ) AS last_activity_at
+      FROM ezra_users u
+      LEFT JOIN ezra_user_scores s ON s.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, MAX(updated_at) AS last_state_at
+        FROM ezra_profile_states
+        GROUP BY user_id
+      ) ps ON ps.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, MAX(created_at) AS last_points_at
+        FROM ezra_points_ledger
+        GROUP BY user_id
+      ) pl ON pl.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, MAX(created_at) AS last_session_at
+        FROM ezra_sessions
+        GROUP BY user_id
+      ) ss ON ss.user_id = u.id
+      ORDER BY last_activity_at DESC, u.name COLLATE NOCASE ASC
+      LIMIT 1000
+      `
+    )
+    .all();
+
+  const rows = (users?.results || []).map((row) => ({
+    id: String(row?.id || ""),
+    username: String(row?.name || ""),
+    totalPoints: Math.max(0, Number(row?.total_points || 0)),
+    lastActivityAt: String(row?.last_activity_at || ""),
+  }));
+
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const active24h = rows.filter((r) => {
+    const ts = Date.parse(r.lastActivityAt || "");
+    return Number.isFinite(ts) && ts >= cutoff;
+  }).length;
+
+  return json(
+    {
+      summary: {
+        usersCount,
+        active24h,
+      },
+      users: rows,
+    },
+    200,
+    { "Cache-Control": "no-store" }
+  );
+}
+
 async function handleAccountRegister(db, request) {
   const body = await parseJson(request);
   const valid = validateCredentials(body?.name, body?.pin);
@@ -2589,6 +2733,35 @@ async function handleCronSettle(db, request, key, env) {
     },
     200
   );
+}
+
+async function handleEzraAdminRoute(context, adminPath) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  if (!db) {
+    return json({ error: "Account storage not configured. Add D1 binding EZRA_DB." }, 503);
+  }
+
+  try {
+    await ensureAccountSchema(db);
+    const route = String(adminPath || "").toLowerCase();
+    if (route === "login" && request.method === "POST") {
+      return handleAdminLogin(env, request);
+    }
+    if (route === "users" && request.method === "GET") {
+      return handleAdminUsersOverview(db, env, request);
+    }
+
+    return json({ error: "Unsupported admin route or method" }, 405);
+  } catch (err) {
+    return json(
+      {
+        error: "Admin route failed",
+        detail: String(err?.message || err),
+      },
+      500
+    );
+  }
 }
 
 async function handleEzraAccountRoute(context, accountPath, key) {
@@ -4084,6 +4257,10 @@ export async function onRequest(context) {
     if (version === "v1" && lowerPath.startsWith("ezra/account")) {
       const accountPath = upstreamPath.slice("ezra/account".length).replace(/^\/+/, "");
       return handleEzraAccountRoute(context, accountPath, key);
+    }
+    if (version === "v1" && lowerPath.startsWith("ezra/admin")) {
+      const adminPath = upstreamPath.slice("ezra/admin".length).replace(/^\/+/, "");
+      return handleEzraAdminRoute(context, adminPath);
     }
 
     if (request.method !== "GET") {
