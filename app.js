@@ -2708,9 +2708,9 @@ function currentAccountAvatar() {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   const base = state.account.user?.avatar && typeof state.account.user.avatar === "object" ? state.account.user.avatar : {};
   const cached = getStoredAvatarConfig() || {};
+  const hasServerAvatar = Object.keys(base).length > 0;
   const merged = {
-    ...base,
-    ...cached,
+    ...(hasServerAvatar ? base : cached),
     unlockedVariants: normalizeAvatarVariantList([...(base.unlockedVariants || []), ...(cached.unlockedVariants || []), ...getStoredAvatarUnlocks()]),
   };
   return sanitizeAvatarConfig(merged, seed);
@@ -2721,8 +2721,9 @@ function hydrateUserAvatarState(user) {
   const seed = user?.name || user?.id || "ezra";
   const base = user.avatar && typeof user.avatar === "object" ? user.avatar : {};
   const cached = getStoredAvatarConfig(user) || {};
+  const hasServerAvatar = Object.keys(base).length > 0;
   const mergedUnlocks = normalizeAvatarVariantList([...(base.unlockedVariants || []), ...(cached.unlockedVariants || []), ...getStoredAvatarUnlocks(user)]);
-  user.avatar = sanitizeAvatarConfig({ ...base, ...cached, unlockedVariants: mergedUnlocks }, seed);
+  user.avatar = sanitizeAvatarConfig({ ...(hasServerAvatar ? base : cached), unlockedVariants: mergedUnlocks }, seed);
   persistStoredAvatarUnlocks(user.avatar.unlockedVariants || [], user);
   persistStoredAvatarConfig(user.avatar, user);
   return user;
@@ -7565,31 +7566,6 @@ function eventState(event) {
   const kickoff = fixtureKickoffDate(event);
   const elapsedMs = kickoff && !Number.isNaN(kickoff.getTime()) ? Date.now() - kickoff.getTime() : null;
 
-  if (hasFinalStatus) {
-    return { key: "final", label: "final score" };
-  }
-
-  if (scored && date && date < today) {
-    return { key: "final", label: "final score" };
-  }
-
-  if (scored && date === today) {
-    if (elapsedMs !== null) {
-      if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
-      if (elapsedMs >= 135 * 60 * 1000) return { key: "final", label: "final score" };
-      if (hasLiveStatus) {
-        const progress = liveProgressLabel(event);
-        const label = progress === "LIVE" ? "live" : `live ${progress}`;
-        return { key: "live", label };
-      }
-      return { key: "final", label: "final score" };
-    }
-    return hasLiveStatus ? { key: "live", label: "live" } : { key: "final", label: "final score" };
-  }
-
-  if (hasNotStartedStatus) {
-    return { key: "upcoming", label: "upcoming" };
-  }
   if (hasDeferredStatus) {
     return { key: "upcoming", label: "upcoming" };
   }
@@ -7597,6 +7573,22 @@ function eventState(event) {
     const progress = liveProgressLabel(event);
     const label = progress === "LIVE" ? "live" : `live ${progress}`;
     return { key: "live", label };
+  }
+  if (hasFinalStatus) {
+    return { key: "final", label: "final score" };
+  }
+  if (hasNotStartedStatus) {
+    return { key: "upcoming", label: "upcoming" };
+  }
+  if (scored && date && date < today) {
+    return { key: "final", label: "final score" };
+  }
+  if (scored && date === today) {
+    if (elapsedMs !== null) {
+      if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
+      if (elapsedMs >= 150 * 60 * 1000) return { key: "final", label: "final score" };
+    }
+    return { key: "final", label: "final score" };
   }
   if (date === today && !scored && !hasNotStartedStatus && !hasFinalStatus) {
     if (elapsedMs !== null) {
@@ -7654,14 +7646,11 @@ function sortEventsForColumn(events, columnMode) {
 }
 
 function formatKickoffTime(event) {
-  if (!event?.strTime) return "TBA";
-  if (event?.dateEvent) {
-    const dt = new Date(`${event.dateEvent}T${event.strTime}`);
-    if (!Number.isNaN(dt.getTime())) {
-      return dt.toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
-    }
+  const kickoff = fixtureKickoffDate(event);
+  if (kickoff && !Number.isNaN(kickoff.getTime())) {
+    return kickoff.toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
   }
-  const time = event.strTime.slice(0, 5);
+  const time = String(event?.strTime || "").slice(0, 5);
   return time || "TBA";
 }
 
@@ -8560,30 +8549,36 @@ function settleFamilyPredictions() {
   const currentId = currentFamilyMemberId();
   const eventsById = allKnownEventsById();
   let changed = false;
-  let pointsAwardedTotal = 0;
+  let pointsDeltaTotal = 0;
   Object.values(state.familyLeague.predictions || {}).forEach((record) => {
-    if (!record || record.settled || !record.eventId) return;
+    if (!record || !record.eventId) return;
     const event = eventsById.get(record.eventId);
     if (!event) return;
     const stateInfo = eventState(event);
     const home = numericScore(event.intHomeScore);
     const away = numericScore(event.intAwayScore);
     if (stateInfo.key !== "final" || home === null || away === null) return;
+    const prevHome = Number.isFinite(Number(record.finalHome)) ? Number(record.finalHome) : null;
+    const prevAway = Number.isFinite(Number(record.finalAway)) ? Number(record.finalAway) : null;
+    const finalChanged = prevHome !== home || prevAway !== away;
+    if (record.settled && !finalChanged) return;
     const finalResult = predictionResultCode(home, away);
     Object.entries(record.entries || {}).forEach(([memberId, pick]) => {
-      if (memberId !== currentId || !pick || pick.scored) return;
+      if (memberId !== currentId || !pick) return;
       const predHome = Number(pick.home);
       const predAway = Number(pick.away);
       if (!Number.isFinite(predHome) || !Number.isFinite(predAway)) return;
+      const prevAwarded = Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0;
       let points = 0;
       if (predHome === home && predAway === away) {
         points = 2;
       } else if (predictionResultCode(predHome, predAway) === finalResult) {
         points = 1;
       }
-      if (points > 0) {
-        addFamilyPoints(points);
-        pointsAwardedTotal += points;
+      const delta = pick.scored ? points - prevAwarded : points;
+      if (delta !== 0) {
+        addFamilyPoints(delta);
+        pointsDeltaTotal += delta;
       }
       pick.scored = true;
       pick.awarded = points;
@@ -8598,8 +8593,9 @@ function settleFamilyPredictions() {
     persistLocalMetaState();
     scheduleCloudStateSync();
     scheduleLeagueStandingsRefresh();
-    if (pointsAwardedTotal > 0) {
-      showRewardToast(`Prediction settled • +${pointsAwardedTotal} pts`);
+    if (pointsDeltaTotal !== 0) {
+      const sign = pointsDeltaTotal > 0 ? "+" : "";
+      showRewardToast(`Prediction update • ${sign}${pointsDeltaTotal} pts`);
     }
   }
   return changed;
@@ -8692,7 +8688,21 @@ function buildPredictionModule(event, stateInfo) {
         : "";
 
   if (showReadonly) {
-    const awarded = Number(memberPick?.awarded || 0);
+    let awarded = Number(memberPick?.awarded || 0);
+    if (isCompleted) {
+      const pair = scorePair(event);
+      const pickHome = Number(memberPick?.home);
+      const pickAway = Number(memberPick?.away);
+      if (pair && Number.isFinite(pickHome) && Number.isFinite(pickAway)) {
+        if (pickHome === Number(pair.home) && pickAway === Number(pair.away)) {
+          awarded = 2;
+        } else if (predictionResultCode(pickHome, pickAway) === predictionResultCode(Number(pair.home), Number(pair.away))) {
+          awarded = 1;
+        } else {
+          awarded = 0;
+        }
+      }
+    }
     const pointsText = awarded > 0 ? ` • +${awarded} pts` : " • 0 pts";
     wrapper.innerHTML = `
       <div class="predict-head">Your prediction</div>
@@ -8945,12 +8955,51 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   const rich = await getRichEventData(eventId);
   const core = mergeEventPreferFresh(event, rich?.event) || { ...(event || {}), ...(rich?.event || {}) };
   const resolvedState = eventState(core);
+  const fixtureNode = detailsEl.closest(".fixture-item");
+  if (fixtureNode) {
+    const statusEl = fixtureNode.querySelector(".match-state");
+    if (statusEl) {
+      statusEl.classList.remove("live", "upcoming", "final");
+      statusEl.classList.add(resolvedState.key);
+      statusEl.textContent = resolvedState.label;
+    }
+    const kickoffEl = fixtureNode.querySelector(".kickoff-time");
+    if (kickoffEl) kickoffEl.textContent = formatKickoffTime(core);
+    const pair = scorePair(core);
+    const hasScores = Boolean(pair);
+    const homeScoreText = hasScores ? String(pair.home) : "–";
+    const awayScoreText = hasScores ? String(pair.away) : "–";
+    const homeScoreEl = fixtureNode.querySelector(".home-score");
+    const awayScoreEl = fixtureNode.querySelector(".away-score");
+    const homeInlineScoreEl = fixtureNode.querySelector(".home-inline-score");
+    const awayInlineScoreEl = fixtureNode.querySelector(".away-inline-score");
+    if (homeScoreEl) {
+      homeScoreEl.classList.remove("leading");
+      homeScoreEl.textContent = homeScoreText;
+      if (hasScores && Number(pair.home) > Number(pair.away)) homeScoreEl.classList.add("leading");
+    }
+    if (awayScoreEl) {
+      awayScoreEl.classList.remove("leading");
+      awayScoreEl.textContent = awayScoreText;
+      if (hasScores && Number(pair.away) > Number(pair.home)) awayScoreEl.classList.add("leading");
+    }
+    if (homeInlineScoreEl) {
+      homeInlineScoreEl.classList.remove("leading");
+      homeInlineScoreEl.textContent = homeScoreText;
+      if (hasScores && Number(pair.home) > Number(pair.away)) homeInlineScoreEl.classList.add("leading");
+    }
+    if (awayInlineScoreEl) {
+      awayInlineScoreEl.classList.remove("leading");
+      awayInlineScoreEl.textContent = awayScoreText;
+      if (hasScores && Number(pair.away) > Number(pair.home)) awayInlineScoreEl.classList.add("leading");
+    }
+  }
   const rows = detailRowsFromEvent(core, resolvedState);
   const statsHtml = renderStatsTable(rich?.stats);
   const highlightsHtml = renderHighlightsBlock(core, resolvedState);
   const hasExtra = Boolean(statsHtml || highlightsHtml);
   detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${highlightsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
-  const predictionModule = buildPredictionModule(event, resolvedState);
+  const predictionModule = buildPredictionModule(core, resolvedState);
   if (predictionModule) {
     detailsEl.appendChild(predictionModule);
   }
@@ -10668,11 +10717,20 @@ function renderLastRefreshed() {
 }
 
 function fixtureKickoffDate(event) {
+  const timestampCandidates = [event?.strTimestamp, event?.strTimestampUTC, event?.strTimestampLocal];
+  for (const raw of timestampCandidates) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    const ts = Date.parse(text);
+    if (Number.isFinite(ts)) return new Date(ts);
+  }
   if (!event?.dateEvent) return null;
-  const rawTime = (event.strTime || "12:00:00").slice(0, 8);
-  const dt = new Date(`${event.dateEvent}T${rawTime}`);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt;
+  const rawTime = String(event.strTime || "12:00:00").slice(0, 8);
+  const utcTs = Date.parse(`${event.dateEvent}T${rawTime}Z`);
+  if (Number.isFinite(utcTs)) return new Date(utcTs);
+  const localTs = Date.parse(`${event.dateEvent}T${rawTime}`);
+  if (Number.isFinite(localTs)) return new Date(localTs);
+  return null;
 }
 
 function currentPollContext() {

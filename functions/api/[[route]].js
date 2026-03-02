@@ -729,6 +729,7 @@ function eventKickoffMs(event, fallbackKickoffIso = "") {
 
 function eventLikelyFinal(event, fallbackKickoffIso = "") {
   if (!event || typeof event !== "object") return false;
+  if (isLiveEvent(event)) return false;
   if (isFinalEvent(event)) return true;
   const home = numericScore(event.intHomeScore);
   const away = numericScore(event.intAwayScore);
