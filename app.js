@@ -15,7 +15,21 @@ const API_FETCH_RETRIES = 1;
 const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
   CHAMP: { id: "4329", name: "English League Championship" },
+  LALIGA: { id: "4335", name: "Spanish La Liga" },
 };
+const LEAGUE_CODES = Object.keys(LEAGUES);
+
+function emptyLeagueBuckets(seed) {
+  return LEAGUE_CODES.reduce((acc, code) => {
+    acc[code] = typeof seed === "function" ? seed(code) : seed;
+    return acc;
+  }, {});
+}
+
+function concatLeagueBuckets(buckets) {
+  return LEAGUE_CODES.flatMap((code) => (Array.isArray(buckets?.[code]) ? buckets[code] : []));
+}
+
 const inflightApiGets = new Map();
 const STORED_FAVORITE_TEAM = localStorage.getItem("esra_favorite_team") || "";
 const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
@@ -25,8 +39,6 @@ const STORED_KEEP_LOGGED_IN = localStorage.getItem("ezra_keep_logged_in") === "1
 const STORED_ACCOUNT_TOKEN = STORED_ACCOUNT_TOKEN_SESSION || STORED_ACCOUNT_TOKEN_LOCAL || "";
 const EFFECTIVE_KEEP_LOGGED_IN = STORED_ACCOUNT_TOKEN_SESSION ? false : STORED_KEEP_LOGGED_IN;
 const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
-const STORED_AVATAR_UNLOCKS = parseStoredJson("ezra_avatar_unlocks", {});
-const STORED_AVATAR_CACHE = parseStoredJson("ezra_avatar_cache", {});
 let STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
 STORED_MAIN_TAB = String(STORED_MAIN_TAB || "").trim().toLowerCase();
 if (STORED_MAIN_TAB === "squad") {
@@ -1437,39 +1449,19 @@ function avatarUnlockStoreKey(user = state.account.user) {
 }
 
 function getStoredAvatarUnlocks(user = state.account.user) {
-  const key = avatarUnlockStoreKey(user);
-  if (!key) return [];
-  const root = STORED_AVATAR_UNLOCKS && typeof STORED_AVATAR_UNLOCKS === "object" ? STORED_AVATAR_UNLOCKS : {};
-  return normalizeAvatarVariantList(root[key]);
+  return [];
 }
 
 function getStoredAvatarConfig(user = state.account.user) {
-  const key = avatarUnlockStoreKey(user);
-  if (!key) return null;
-  const root = STORED_AVATAR_CACHE && typeof STORED_AVATAR_CACHE === "object" ? STORED_AVATAR_CACHE : {};
-  const item = root[key];
-  if (!item || typeof item !== "object") return null;
-  return item;
+  return null;
 }
 
 function persistStoredAvatarUnlocks(unlockedVariants, user = state.account.user) {
-  const key = avatarUnlockStoreKey(user);
-  if (!key) return;
-  const root = STORED_AVATAR_UNLOCKS && typeof STORED_AVATAR_UNLOCKS === "object" ? STORED_AVATAR_UNLOCKS : {};
-  root[key] = normalizeAvatarVariantList(unlockedVariants);
-  try {
-    localStorage.setItem("ezra_avatar_unlocks", JSON.stringify(root));
-  } catch {}
+  // Server-authoritative account state: local avatar unlock persistence disabled.
 }
 
 function persistStoredAvatarConfig(avatar, user = state.account.user) {
-  const key = avatarUnlockStoreKey(user);
-  if (!key) return;
-  const root = STORED_AVATAR_CACHE && typeof STORED_AVATAR_CACHE === "object" ? STORED_AVATAR_CACHE : {};
-  root[key] = sanitizeAvatarConfig(avatar, user?.name || user?.id || "ezra");
-  try {
-    localStorage.setItem("ezra_avatar_cache", JSON.stringify(root));
-  } catch {}
+  // Server-authoritative account state: local avatar persistence disabled.
 }
 
 function avatarVariantLabel(variant) {
@@ -1506,7 +1498,7 @@ function avatarUnlockStateFor(avatarInput = null) {
   const slotCountByPoints = avatarMilestoneSlotCount(points);
   const earnedCredits = avatarEarnedCredits(points);
   const source = avatarInput && typeof avatarInput === "object" ? avatarInput : state.account.user?.avatar;
-  const requested = normalizeAvatarVariantList([...(source?.unlockedVariants || []), ...getStoredAvatarUnlocks()]);
+  const requested = normalizeAvatarVariantList([...(source?.unlockedVariants || [])]);
   const unlocked = [...AVATAR_STARTER_VARIANTS];
   requested.forEach((variant) => {
     if (unlocked.includes(variant)) return;
@@ -1928,17 +1920,17 @@ const state = {
   mainTab: INITIAL_MAIN_TAB,
   serverTimeOffsetMs: 0,
   selectedDate: "",
-  selectedDateFixtures: { EPL: [], CHAMP: [] },
+  selectedDateFixtures: emptyLeagueBuckets(() => []),
   fixtures: {
-    today: { EPL: [], CHAMP: [] },
-    live: { EPL: [], CHAMP: [] },
-    previous: { EPL: [], CHAMP: [] },
-    next: { EPL: [], CHAMP: [] },
+    today: emptyLeagueBuckets(() => []),
+    live: emptyLeagueBuckets(() => []),
+    previous: emptyLeagueBuckets(() => []),
+    next: emptyLeagueBuckets(() => []),
   },
-  tables: { EPL: [], CHAMP: [] },
-  leagueBadges: { EPL: "", CHAMP: "" },
+  tables: emptyLeagueBuckets(() => []),
+  leagueBadges: emptyLeagueBuckets(() => ""),
   teamBadgeMap: {},
-  teamsByLeague: { EPL: [], CHAMP: [] },
+  teamsByLeague: emptyLeagueBuckets(() => []),
   favoriteTeamId: STORED_FAVORITE_TEAM,
   uiTheme: localStorage.getItem("ezra_ui_theme") || "classic",
   motionLevel: "standard",
@@ -1971,11 +1963,11 @@ const state = {
   dreamTeam: loadDreamTeamState(),
   dreamSwapActiveKey: "",
   dreamManualLayout: false,
-  missions: parseStoredJson("ezra_missions", defaultMissionState()),
-  storyCards: parseStoredJson("ezra_story_cards", defaultStoryCardState()),
+  missions: defaultMissionState(),
+  storyCards: defaultStoryCardState(),
   clubQuizUi: defaultClubQuizUiState(),
   higherLower: defaultHigherLowerState(),
-  familyLeague: parseStoredJson("ezra_family_league", defaultFamilyLeagueState()),
+  familyLeague: defaultFamilyLeagueState(),
   pendingLeagueInvite:
     STORED_PENDING_LEAGUE_INVITE && typeof STORED_PENDING_LEAGUE_INVITE === "object"
       ? {
@@ -2077,35 +2069,13 @@ const state = {
 };
 
 function hydrateCachedBootstrapData() {
-  const cachedEplTeams = parseStoredArray("ezra_cache_teams_epl", []);
-  const cachedChampTeams = parseStoredArray("ezra_cache_teams_champ", []);
-  const cachedEplTable = parseStoredArray("ezra_cache_table_epl", []);
-  const cachedChampTable = parseStoredArray("ezra_cache_table_champ", []);
-  const cachedLeagueBadges = parseStoredJson("ezra_cache_league_badges", { EPL: "", CHAMP: "" });
-
-  if (!state.teamsByLeague.EPL.length && cachedEplTeams.length) state.teamsByLeague.EPL = cachedEplTeams;
-  if (!state.teamsByLeague.CHAMP.length && cachedChampTeams.length) state.teamsByLeague.CHAMP = cachedChampTeams;
-  if (!state.tables.EPL.length && cachedEplTable.length) state.tables.EPL = cachedEplTable;
-  if (!state.tables.CHAMP.length && cachedChampTable.length) state.tables.CHAMP = cachedChampTable;
-  if (cachedLeagueBadges && typeof cachedLeagueBadges === "object") {
-    state.leagueBadges.EPL = cachedLeagueBadges.EPL || state.leagueBadges.EPL || "";
-    state.leagueBadges.CHAMP = cachedLeagueBadges.CHAMP || state.leagueBadges.CHAMP || "";
-  }
-
+  // Server-authoritative bootstrap: local team/table caches are intentionally disabled.
   rebuildTeamBadgeMap();
   ensureDefaultFavoriteTeam();
 }
 
 function persistCachedBootstrapData() {
-  try {
-    localStorage.setItem("ezra_cache_teams_epl", JSON.stringify(state.teamsByLeague.EPL || []));
-    localStorage.setItem("ezra_cache_teams_champ", JSON.stringify(state.teamsByLeague.CHAMP || []));
-    localStorage.setItem("ezra_cache_table_epl", JSON.stringify(state.tables.EPL || []));
-    localStorage.setItem("ezra_cache_table_champ", JSON.stringify(state.tables.CHAMP || []));
-    localStorage.setItem("ezra_cache_league_badges", JSON.stringify(state.leagueBadges || { EPL: "", CHAMP: "" }));
-  } catch {
-    // Ignore localStorage write errors.
-  }
+  // Server-authoritative bootstrap: local team/table caches are intentionally disabled.
 }
 
 const el = {
@@ -2707,25 +2677,14 @@ function setAvatarSaveState(mode, message = "") {
 function currentAccountAvatar() {
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   const base = state.account.user?.avatar && typeof state.account.user.avatar === "object" ? state.account.user.avatar : {};
-  const cached = getStoredAvatarConfig() || {};
-  const hasServerAvatar = Object.keys(base).length > 0;
-  const merged = {
-    ...(hasServerAvatar ? base : cached),
-    unlockedVariants: normalizeAvatarVariantList([...(base.unlockedVariants || []), ...(cached.unlockedVariants || []), ...getStoredAvatarUnlocks()]),
-  };
-  return sanitizeAvatarConfig(merged, seed);
+  return sanitizeAvatarConfig(base, seed);
 }
 
 function hydrateUserAvatarState(user) {
   if (!user || typeof user !== "object") return user;
   const seed = user?.name || user?.id || "ezra";
   const base = user.avatar && typeof user.avatar === "object" ? user.avatar : {};
-  const cached = getStoredAvatarConfig(user) || {};
-  const hasServerAvatar = Object.keys(base).length > 0;
-  const mergedUnlocks = normalizeAvatarVariantList([...(base.unlockedVariants || []), ...(cached.unlockedVariants || []), ...getStoredAvatarUnlocks(user)]);
-  user.avatar = sanitizeAvatarConfig({ ...(hasServerAvatar ? base : cached), unlockedVariants: mergedUnlocks }, seed);
-  persistStoredAvatarUnlocks(user.avatar.unlockedVariants || [], user);
-  persistStoredAvatarConfig(user.avatar, user);
+  user.avatar = sanitizeAvatarConfig(base, seed);
   return user;
 }
 
@@ -2778,8 +2737,6 @@ function writeAvatarEditorState(avatar) {
   if (accountSignedIn()) {
     if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
     state.account.user.avatar = { ...(state.account.user.avatar || {}), ...safe };
-    persistStoredAvatarUnlocks(state.account.user.avatar.unlockedVariants || []);
-    persistStoredAvatarConfig(state.account.user.avatar);
   }
   state.avatarPersonalityBrow = safe.brow;
   setAvatarPersonalityActive(safe.brow);
@@ -3010,6 +2967,7 @@ function currentFamilyMemberId() {
 }
 
 function persistLocalMetaState() {
+  if (accountSignedIn()) return;
   localStorage.setItem("ezra_missions", JSON.stringify(state.missions || defaultMissionState()));
   localStorage.setItem("ezra_story_cards", JSON.stringify(state.storyCards || defaultStoryCardState()));
   localStorage.setItem("ezra_family_league", JSON.stringify(state.familyLeague || defaultFamilyLeagueState()));
@@ -3222,7 +3180,7 @@ function scheduleLeagueStandingsRefresh(delayMs = 1800) {
 }
 
 function allLeagueTeams() {
-  return [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].filter((team) => team?.idTeam && team?.strTeam);
+  return concatLeagueBuckets(state.teamsByLeague).filter((team) => team?.idTeam && team?.strTeam);
 }
 
 function shuffleList(list) {
@@ -3657,8 +3615,8 @@ function storyCardData() {
     table.find((r) => (r.strTeam || "").toLowerCase() === (team.strTeam || "").toLowerCase()) ||
     null;
   const todayIso = toISODate(new Date());
-  const todayPool = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP];
-  const nextPool = [...state.fixtures.next.EPL, ...state.fixtures.next.CHAMP];
+  const todayPool = concatLeagueBuckets(state.fixtures.today);
+  const nextPool = concatLeagueBuckets(state.fixtures.next);
   const teamMatch = (event) => event && (event.strHomeTeam === team.strTeam || event.strAwayTeam === team.strTeam);
   const todayEvent = todayPool.find((e) => teamMatch(e) && e.dateEvent === todayIso) || null;
   const nextEvent =
@@ -5555,11 +5513,11 @@ function squadRoleOrder(position) {
 
 function getTeamById(id) {
   if (!id) return null;
-  return [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].find((team) => team.idTeam === id) || null;
+  return concatLeagueBuckets(state.teamsByLeague).find((team) => team.idTeam === id) || null;
 }
 
 function getQuizTeams() {
-  const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP];
+  const allTeams = concatLeagueBuckets(state.teamsByLeague);
   if (state.playerPopScope !== "favorite") return allTeams;
   const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
   return favorite ? [favorite] : allTeams;
@@ -8158,13 +8116,10 @@ async function saveAccountAvatar() {
   const avatar = readAvatarEditorState();
   const data = await apiRequest("PUT", `${API_PROXY_BASE}/v1/ezra/account/avatar`, { avatar }, state.account.token);
   if (!state.account.user || typeof state.account.user !== "object") state.account.user = {};
-  const keepUnlocks = normalizeAvatarVariantList([...(avatar?.unlockedVariants || []), ...getStoredAvatarUnlocks()]);
   state.account.user.avatar = sanitizeAvatarConfig(
-    { ...avatar, ...(data?.avatar || {}), unlockedVariants: keepUnlocks },
+    { ...avatar, ...(data?.avatar || {}) },
     state.account.user?.name || state.account.user?.id || "ezra"
   );
-  persistStoredAvatarUnlocks(state.account.user.avatar.unlockedVariants || []);
-  persistStoredAvatarConfig(state.account.user.avatar);
   state.avatarLastSavedHash = avatarConfigSignature(state.account.user.avatar);
   state.avatarDraftHash = state.avatarLastSavedHash;
   renderAccountUI();
@@ -8218,8 +8173,9 @@ async function fetchLeagueDayFixtures(leagueId, dateIso) {
   const backoffUntil = Number(state.fixtureFetchBackoffUntil?.[key] || 0);
   if (backoffUntil && Date.now() < backoffUntil) {
     const cached = getDateFixtureCache(dateIso);
-    if (cached && Array.isArray(cached.EPL) && Array.isArray(cached.CHAMP)) {
-      return leagueId === LEAGUES.EPL.id ? cached.EPL : cached.CHAMP;
+    const leagueCode = leagueIdToLeagueCode(leagueId);
+    if (cached && leagueCode && Array.isArray(cached[leagueCode])) {
+      return cached[leagueCode];
     }
     return [];
   }
@@ -8282,7 +8238,7 @@ async function fetchAllTeams(leagueId) {
 async function fetchTeamById(teamId, options = {}) {
   const preferApi = Boolean(options?.preferApi);
   const known = findKnownTeamById(teamId);
-  const allTeams = [...(state.teamsByLeague.EPL || []), ...(state.teamsByLeague.CHAMP || [])];
+  const allTeams = concatLeagueBuckets(state.teamsByLeague);
   const fromLists = allTeams.find((team) => String(team?.idTeam || "") === String(teamId)) || null;
 
   if (!preferApi) {
@@ -8373,6 +8329,7 @@ function teamLeagueCode(team) {
   const leagueName = team.strLeague || "";
   if (leagueName.includes("Premier")) return "EPL";
   if (leagueName.includes("Championship")) return "CHAMP";
+  if (leagueName.toLowerCase().includes("la liga")) return "LALIGA";
   return "";
 }
 
@@ -8416,12 +8373,12 @@ function setFavoritePickerDisplay(team) {
 
 function findKnownTeamById(teamId) {
   if (!teamId) return null;
-  const allTeams = [...(state.teamsByLeague.EPL || []), ...(state.teamsByLeague.CHAMP || [])];
+  const allTeams = concatLeagueBuckets(state.teamsByLeague);
   return allTeams.find((team) => String(team?.idTeam || "") === String(teamId)) || null;
 }
 
 function ensureDefaultFavoriteTeam() {
-  const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP];
+  const allTeams = concatLeagueBuckets(state.teamsByLeague);
   if (!allTeams.length) return;
   const currentExists = allTeams.some((team) => team.idTeam === state.favoriteTeamId);
   if (currentExists) return;
@@ -8495,14 +8452,10 @@ function predictionResultCode(home, away) {
 
 function allKnownEventsById() {
   const all = [
-    ...state.fixtures.today.EPL,
-    ...state.fixtures.today.CHAMP,
-    ...state.fixtures.previous.EPL,
-    ...state.fixtures.previous.CHAMP,
-    ...state.fixtures.next.EPL,
-    ...state.fixtures.next.CHAMP,
-    ...state.selectedDateFixtures.EPL,
-    ...state.selectedDateFixtures.CHAMP,
+    ...concatLeagueBuckets(state.fixtures.today),
+    ...concatLeagueBuckets(state.fixtures.previous),
+    ...concatLeagueBuckets(state.fixtures.next),
+    ...concatLeagueBuckets(state.selectedDateFixtures),
   ];
   const map = new Map();
   all.forEach((event) => {
@@ -9207,6 +9160,10 @@ function tableBandClass(leagueCode, rank) {
     if (r >= 3 && r <= 6) return "table-band-playoff";
     if (r >= 22) return "table-band-relegation";
   }
+  if (leagueCode === "LALIGA") {
+    if (r <= 4) return "table-band-europe";
+    if (r >= 18) return "table-band-relegation";
+  }
   return "";
 }
 
@@ -9224,13 +9181,19 @@ function tableBandLegendHtml(leagueCode) {
       <span class="legend-pill relegation">Bottom 3: Relegation</span>
     </div>`;
   }
+  if (leagueCode === "LALIGA") {
+    return `<div class="table-band-legend">
+      <span class="legend-pill europe">Top 4: Europe</span>
+      <span class="legend-pill relegation">Bottom 3: Relegation</span>
+    </div>`;
+  }
   return "";
 }
 
 function renderTables() {
   el.tablesWrap.innerHTML = "";
 
-  ["EPL", "CHAMP"].forEach((key) => {
+  LEAGUE_CODES.forEach((key) => {
     if (state.selectedLeague !== "ALL" && state.selectedLeague !== key) return;
 
     const rows = state.tables[key] || [];
@@ -9283,7 +9246,7 @@ function renderTables() {
 
 function filteredEvents(kind) {
   if (state.selectedLeague === "ALL") {
-    return [...state.fixtures[kind].EPL, ...state.fixtures[kind].CHAMP];
+    return concatLeagueBuckets(state.fixtures[kind]);
   }
   return [...state.fixtures[kind][state.selectedLeague]];
 }
@@ -9324,77 +9287,90 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
   const nextIso = toISODate(next);
 
   if (dateIso === todayIso) {
-    const todayEmpty = !(state.fixtures.today.EPL.length || state.fixtures.today.CHAMP.length);
+    const todayEmpty = !concatLeagueBuckets(state.fixtures.today).length;
     if (todayEmpty) {
-      const [todayEpl, todayChamp] = await Promise.all([
-        safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, todayIso), []),
-        safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, todayIso), []),
-      ]);
-      state.fixtures.today.EPL = [...todayEpl].sort(fixtureSort);
-      state.fixtures.today.CHAMP = [...todayChamp].sort(fixtureSort);
+      const todayByLeague = await Promise.all(
+        LEAGUE_CODES.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, todayIso), []))
+      );
+      LEAGUE_CODES.forEach((code, index) => {
+        state.fixtures.today[code] = [...(todayByLeague[index] || [])].sort(fixtureSort);
+      });
     }
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-    state.selectedDateFixtures.EPL = [...state.fixtures.today.EPL];
-    state.selectedDateFixtures.CHAMP = [...state.fixtures.today.CHAMP];
-    setDateFixtureCache(dateIso, { EPL: state.selectedDateFixtures.EPL, CHAMP: state.selectedDateFixtures.CHAMP });
+    LEAGUE_CODES.forEach((code) => {
+      state.selectedDateFixtures[code] = [...(state.fixtures.today[code] || [])];
+    });
+    setDateFixtureCache(dateIso, state.selectedDateFixtures);
     return true;
   }
 
   if (dateIso === prevIso || dateIso === nextIso) {
     const cachedFast = getDateFixtureCache(dateIso);
-    const hasFast =
-      Array.isArray(cachedFast?.EPL) &&
-      Array.isArray(cachedFast?.CHAMP) &&
-      ((cachedFast?.EPL?.length || 0) + (cachedFast?.CHAMP?.length || 0) > 0);
+    const hasFast = LEAGUE_CODES.every((code) => Array.isArray(cachedFast?.[code])) && concatLeagueBuckets(cachedFast).length > 0;
     if (hasFast) {
       if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-      state.selectedDateFixtures.EPL = [...(cachedFast?.EPL || [])].sort(fixtureSort);
-      state.selectedDateFixtures.CHAMP = [...(cachedFast?.CHAMP || [])].sort(fixtureSort);
+      LEAGUE_CODES.forEach((code) => {
+        state.selectedDateFixtures[code] = [...(cachedFast?.[code] || [])].sort(fixtureSort);
+      });
       return true;
     }
-    const [quickEpl, quickChamp] = await Promise.all([
-      safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dateIso), []),
-      safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dateIso), []),
-    ]);
-    setDateFixtureCache(dateIso, { EPL: quickEpl, CHAMP: quickChamp });
+    const quickByLeague = await Promise.all(
+      LEAGUE_CODES.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, dateIso), []))
+    );
+    const quickCache = {};
+    LEAGUE_CODES.forEach((code, index) => {
+      quickCache[code] = quickByLeague[index] || [];
+    });
+    setDateFixtureCache(dateIso, quickCache);
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-    state.selectedDateFixtures.EPL = [...quickEpl].sort(fixtureSort);
-    state.selectedDateFixtures.CHAMP = [...quickChamp].sort(fixtureSort);
+    LEAGUE_CODES.forEach((code) => {
+      state.selectedDateFixtures[code] = [...(quickCache[code] || [])].sort(fixtureSort);
+    });
     return true;
   }
 
   const cached = getDateFixtureCache(dateIso);
-  let epl = cached?.EPL;
-  let champ = cached?.CHAMP;
-  const needEpl = state.selectedLeague === "ALL" ? !Array.isArray(epl) : state.selectedLeague === "EPL" && !Array.isArray(epl);
-  const needChamp = state.selectedLeague === "ALL" ? !Array.isArray(champ) : state.selectedLeague === "CHAMP" && !Array.isArray(champ);
+  const dateRows = {};
+  LEAGUE_CODES.forEach((code) => {
+    dateRows[code] = cached?.[code];
+  });
+  const neededCodes =
+    state.selectedLeague === "ALL"
+      ? LEAGUE_CODES.filter((code) => !Array.isArray(dateRows[code]))
+      : !Array.isArray(dateRows[state.selectedLeague])
+        ? [state.selectedLeague]
+        : [];
 
-  const [fetchedEpl, fetchedChamp] = await Promise.all([
-    needEpl ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dateIso), []) : Promise.resolve(epl || []),
-    needChamp ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dateIso), []) : Promise.resolve(champ || []),
-  ]);
-
-  if (needEpl) epl = fetchedEpl;
-  if (needChamp) champ = fetchedChamp;
-  setDateFixtureCache(dateIso, { EPL: Array.isArray(epl) ? epl : [], CHAMP: Array.isArray(champ) ? champ : [] });
+  const fetched = await Promise.all(
+    neededCodes.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, dateIso), []))
+  );
+  neededCodes.forEach((code, index) => {
+    dateRows[code] = fetched[index];
+  });
+  const nextCache = {};
+  LEAGUE_CODES.forEach((code) => {
+    nextCache[code] = Array.isArray(dateRows[code]) ? dateRows[code] : [];
+  });
+  setDateFixtureCache(dateIso, nextCache);
 
   const prefetchedCache = getDateFixtureCache(dateIso);
   // Background prefetch for the other league when user is focused on one league.
   if (state.selectedLeague !== "ALL") {
-    const otherLeague = state.selectedLeague === "EPL" ? "CHAMP" : "EPL";
-    const otherMissing = !Array.isArray(prefetchedCache?.[otherLeague]);
-    if (otherMissing) {
+    LEAGUE_CODES.filter((code) => code !== state.selectedLeague).forEach((otherLeague) => {
+      const otherMissing = !Array.isArray(prefetchedCache?.[otherLeague]);
+      if (!otherMissing) return;
       safeLoad(async () => {
         const rows = await fetchLeagueDayFixtures(LEAGUES[otherLeague].id, dateIso);
         setDateFixtureCache(dateIso, { [otherLeague]: rows });
       }, null);
-    }
+    });
   }
 
   if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
   const resolved = getDateFixtureCache(dateIso);
-  state.selectedDateFixtures.EPL = [...(resolved?.EPL || [])].sort(fixtureSort);
-  state.selectedDateFixtures.CHAMP = [...(resolved?.CHAMP || [])].sort(fixtureSort);
+  LEAGUE_CODES.forEach((code) => {
+    state.selectedDateFixtures[code] = [...(resolved?.[code] || [])].sort(fixtureSort);
+  });
   return true;
 }
 
@@ -9413,21 +9389,21 @@ function selectedDateLabel(dateIso) {
 function getDateFixtureCache(dateIso) {
   const entry = state.dateFixturesCache?.[dateIso];
   if (!entry || typeof entry !== "object") return null;
-  return {
-    EPL: Array.isArray(entry.EPL) ? entry.EPL : null,
-    CHAMP: Array.isArray(entry.CHAMP) ? entry.CHAMP : null,
-    updatedAt: Number(entry.updatedAt || 0),
-  };
+  const next = { updatedAt: Number(entry.updatedAt || 0) };
+  LEAGUE_CODES.forEach((code) => {
+    next[code] = Array.isArray(entry[code]) ? entry[code] : null;
+  });
+  return next;
 }
 
 function setDateFixtureCache(dateIso, next = {}) {
   if (!dateIso) return;
-  const prev = getDateFixtureCache(dateIso) || { EPL: null, CHAMP: null, updatedAt: 0 };
-  state.dateFixturesCache[dateIso] = {
-    EPL: Array.isArray(next.EPL) ? [...next.EPL] : prev.EPL,
-    CHAMP: Array.isArray(next.CHAMP) ? [...next.CHAMP] : prev.CHAMP,
-    updatedAt: Date.now(),
-  };
+  const prev = getDateFixtureCache(dateIso) || { ...emptyLeagueBuckets(() => null), updatedAt: 0 };
+  const merged = { updatedAt: Date.now() };
+  LEAGUE_CODES.forEach((code) => {
+    merged[code] = Array.isArray(next[code]) ? [...next[code]] : prev[code];
+  });
+  state.dateFixturesCache[dateIso] = merged;
 }
 
 async function setSelectedDate(dateIso) {
@@ -9470,8 +9446,8 @@ function renderFixtures() {
   const homeMode = state.mainTab === "home";
   let events;
   if (homeMode) {
-    const today = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP];
-    const tomorrow = [...state.fixtures.next.EPL, ...state.fixtures.next.CHAMP];
+    const today = concatLeagueBuckets(state.fixtures.today);
+    const tomorrow = concatLeagueBuckets(state.fixtures.next);
     const todaySorted = today.sort(fixtureSort);
     if (todaySorted.length > 0) {
       el.fixturesTitle.textContent = `Today's Fixtures (${formatDateWithDayUK(toISODate(new Date()))})`;
@@ -9484,7 +9460,7 @@ function renderFixtures() {
     el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateWithDayUK(state.selectedDate)})`;
     events =
       state.selectedLeague === "ALL"
-        ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
+        ? concatLeagueBuckets(state.selectedDateFixtures)
         : [...state.selectedDateFixtures[state.selectedLeague]];
   }
   renderFixtureList(el.fixturesList, events, "selected");
@@ -9501,14 +9477,13 @@ function renderFixtures() {
 
 function selectedEventsForCurrentView() {
   return state.selectedLeague === "ALL"
-    ? [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP]
+    ? concatLeagueBuckets(state.selectedDateFixtures)
     : [...state.selectedDateFixtures[state.selectedLeague]];
 }
 
 function leagueCodeFromLeagueId(leagueId) {
-  if (String(leagueId) === String(LEAGUES.EPL.id)) return "EPL";
-  if (String(leagueId) === String(LEAGUES.CHAMP.id)) return "CHAMP";
-  return "";
+  const wanted = String(leagueId || "");
+  return LEAGUE_CODES.find((code) => String(LEAGUES[code]?.id || "") === wanted) || "";
 }
 
 function upsertEvents(target, updates) {
@@ -9842,7 +9817,7 @@ function initRevealOnScroll() {
 
 function buildFavoriteOptions() {
   if (!el.favoritePickerMenu) return;
-  const allTeams = [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP];
+  const allTeams = concatLeagueBuckets(state.teamsByLeague);
   const validTeams = allTeams.filter((t) => t && t.idTeam && t.strTeam);
   const uniqueTeams = Array.from(new Map(validTeams.map((t) => [t.idTeam, t])).values());
   const byName = uniqueTeams.sort((a, b) => (a.strTeam || "").localeCompare(b.strTeam || ""));
@@ -9934,13 +9909,13 @@ function buildFavoriteOptions() {
 function findTeamByIdCached(teamId) {
   const wanted = String(teamId || "").trim();
   if (!wanted) return null;
-  const all = [...(state.teamsByLeague.EPL || []), ...(state.teamsByLeague.CHAMP || [])];
+  const all = concatLeagueBuckets(state.teamsByLeague);
   return all.find((team) => String(team?.idTeam || "") === wanted) || null;
 }
 
 function rebuildTeamBadgeMap() {
   state.teamBadgeMap = {};
-  [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].forEach((team) => {
+  concatLeagueBuckets(state.teamsByLeague).forEach((team) => {
     if (team?.strTeam && team?.strBadge) {
       state.teamBadgeMap[team.strTeam] = team.strBadge;
     }
@@ -9968,29 +9943,33 @@ function hydrateTeamsFromTablesIfNeeded() {
     return [...byId.values()].filter((team) => team?.strTeam);
   };
 
-  if (!state.teamsByLeague.EPL.length && state.tables.EPL.length) {
-    state.teamsByLeague.EPL = fromTableRows("EPL");
-  }
-  if (!state.teamsByLeague.CHAMP.length && state.tables.CHAMP.length) {
-    state.teamsByLeague.CHAMP = fromTableRows("CHAMP");
-  }
+  LEAGUE_CODES.forEach((code) => {
+    if (!Array.isArray(state.teamsByLeague[code]) || !state.teamsByLeague[code].length) {
+      const rows = Array.isArray(state.tables[code]) ? state.tables[code] : [];
+      if (rows.length) {
+        state.teamsByLeague[code] = fromTableRows(code);
+      }
+    }
+  });
   rebuildTeamBadgeMap();
 }
 
 async function ensureFavoritePickerDataLoaded() {
-  if (state.teamsByLeague.EPL.length || state.teamsByLeague.CHAMP.length) return;
+  const hasAnyTeams = LEAGUE_CODES.some((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length);
+  if (hasAnyTeams) return;
   hydrateTeamsFromTablesIfNeeded();
-  if (state.teamsByLeague.EPL.length || state.teamsByLeague.CHAMP.length) {
+  const hydratedTeams = LEAGUE_CODES.some((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length);
+  if (hydratedTeams) {
     ensureDefaultFavoriteTeam();
     return;
   }
-  const [teamsEpl, teamsChamp] = await Promise.all([
-    safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []),
-    safeLoad(() => fetchAllTeams(LEAGUES.CHAMP.id), []),
-  ]);
-  state.teamsByLeague.EPL = Array.isArray(teamsEpl) ? teamsEpl : [];
-  state.teamsByLeague.CHAMP = Array.isArray(teamsChamp) ? teamsChamp : [];
-  if (!state.teamsByLeague.EPL.length || !state.teamsByLeague.CHAMP.length) {
+  const teamsByCode = await Promise.all(
+    LEAGUE_CODES.map((code) => safeLoad(() => fetchAllTeams(LEAGUES[code].id), []))
+  );
+  LEAGUE_CODES.forEach((code, index) => {
+    state.teamsByLeague[code] = Array.isArray(teamsByCode[index]) ? teamsByCode[index] : [];
+  });
+  if (!LEAGUE_CODES.every((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length)) {
     hydrateTeamsFromTablesIfNeeded();
   }
   rebuildTeamBadgeMap();
@@ -9998,7 +9977,7 @@ async function ensureFavoritePickerDataLoaded() {
 }
 
 function findLiveForFavorite(teamName) {
-  const pool = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP, ...state.fixtures.live.EPL, ...state.fixtures.live.CHAMP];
+  const pool = [...concatLeagueBuckets(state.fixtures.today), ...concatLeagueBuckets(state.fixtures.live)];
   return (
     pool.find((e) => (e.strHomeTeam === teamName || e.strAwayTeam === teamName) && eventState(e).key === "live") || null
   );
@@ -10006,7 +9985,7 @@ function findLiveForFavorite(teamName) {
 
 function findTodayEventForFavorite(teamId, teamName) {
   const todayIso = toISODate(new Date());
-  const pool = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP];
+  const pool = concatLeagueBuckets(state.fixtures.today);
   return (
     pool.find(
       (e) =>
@@ -10124,7 +10103,7 @@ function detectGoalFlashes() {
     }
   }
 
-  const currentPool = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP];
+  const currentPool = concatLeagueBuckets(state.fixtures.today);
   const nextSnapshot = new Map();
 
   currentPool.forEach((event) => {
@@ -10176,7 +10155,7 @@ function detectGoalFlashes() {
 
 function visibleFixturesForCurrentFilter() {
   if (state.selectedLeague === "ALL") {
-    return [...state.selectedDateFixtures.EPL, ...state.selectedDateFixtures.CHAMP];
+    return concatLeagueBuckets(state.selectedDateFixtures);
   }
   return [...(state.selectedDateFixtures[state.selectedLeague] || [])];
 }
@@ -10620,87 +10599,68 @@ async function loadCoreData(options = {}) {
     today: toISODate(now),
     next: toISODate(next),
   };
-  const prevTablesEpl = Array.isArray(state.tables.EPL) ? state.tables.EPL : [];
-  const prevTablesChamp = Array.isArray(state.tables.CHAMP) ? state.tables.CHAMP : [];
-  const prevTeamsEpl = Array.isArray(state.teamsByLeague.EPL) ? state.teamsByLeague.EPL : [];
-  const prevTeamsChamp = Array.isArray(state.teamsByLeague.CHAMP) ? state.teamsByLeague.CHAMP : [];
+  const prevTables = emptyLeagueBuckets((code) => (Array.isArray(state.tables[code]) ? state.tables[code] : []));
+  const prevTeams = emptyLeagueBuckets((code) =>
+    Array.isArray(state.teamsByLeague[code]) ? state.teamsByLeague[code] : []
+  );
 
-  const [
-    todayEpl,
-    todayChamp,
-    liveEpl,
-    liveChamp,
-    prevEpl,
-    prevChamp,
-    nextEpl,
-    nextChamp,
-    tableEpl,
-    tableChamp,
-    teamsEpl,
-    teamsChamp,
-    leagueMetaEpl,
-    leagueMetaChamp,
-  ] = await Promise.all([
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.today), null),
-    safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.today), null),
-    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.EPL.id), null) : Promise.resolve([]),
-    includeLive ? safeLoad(() => fetchLiveByLeague(LEAGUES.CHAMP.id), null) : Promise.resolve([]),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.prev), null) : Promise.resolve(state.fixtures.previous.EPL || []),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.prev), null) : Promise.resolve(state.fixtures.previous.CHAMP || []),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.EPL.id, dates.next), null) : Promise.resolve(state.fixtures.next.EPL || []),
-    includeSurroundingDays ? safeLoad(() => fetchLeagueDayFixtures(LEAGUES.CHAMP.id, dates.next), null) : Promise.resolve(state.fixtures.next.CHAMP || []),
-    includeTables ? safeLoad(() => fetchTable(LEAGUES.EPL.id), []) : Promise.resolve(state.tables.EPL || []),
-    includeTables ? safeLoad(() => fetchTable(LEAGUES.CHAMP.id), []) : Promise.resolve(state.tables.CHAMP || []),
-    includeStatic ? safeLoad(() => fetchAllTeams(LEAGUES.EPL.id), []) : Promise.resolve(state.teamsByLeague.EPL || []),
-    includeStatic ? safeLoad(() => fetchAllTeams(LEAGUES.CHAMP.id), []) : Promise.resolve(state.teamsByLeague.CHAMP || []),
-    includeStatic ? safeLoad(() => fetchLeagueMeta(LEAGUES.EPL.id), null) : Promise.resolve(null),
-    includeStatic ? safeLoad(() => fetchLeagueMeta(LEAGUES.CHAMP.id), null) : Promise.resolve(null),
-  ]);
+  const leaguePayloads = await Promise.all(
+    LEAGUE_CODES.map(async (code) => {
+      const leagueId = LEAGUES[code].id;
+      const [todayRows, liveRows, prevRows, nextRows, tableRows, teamsRows, leagueMeta] = await Promise.all([
+        safeLoad(() => fetchLeagueDayFixtures(leagueId, dates.today), null),
+        includeLive ? safeLoad(() => fetchLiveByLeague(leagueId), null) : Promise.resolve([]),
+        includeSurroundingDays
+          ? safeLoad(() => fetchLeagueDayFixtures(leagueId, dates.prev), null)
+          : Promise.resolve(state.fixtures.previous[code] || []),
+        includeSurroundingDays
+          ? safeLoad(() => fetchLeagueDayFixtures(leagueId, dates.next), null)
+          : Promise.resolve(state.fixtures.next[code] || []),
+        includeTables ? safeLoad(() => fetchTable(leagueId), []) : Promise.resolve(state.tables[code] || []),
+        includeStatic ? safeLoad(() => fetchAllTeams(leagueId), []) : Promise.resolve(state.teamsByLeague[code] || []),
+        includeStatic ? safeLoad(() => fetchLeagueMeta(leagueId), null) : Promise.resolve(null),
+      ]);
+      return [code, { todayRows, liveRows, prevRows, nextRows, tableRows, teamsRows, leagueMeta }];
+    })
+  );
 
-  const resolvedTodayEpl = Array.isArray(todayEpl) ? todayEpl : state.fixtures.today.EPL || [];
-  const resolvedTodayChamp = Array.isArray(todayChamp) ? todayChamp : state.fixtures.today.CHAMP || [];
-  const resolvedLiveEpl = Array.isArray(liveEpl) ? liveEpl : state.fixtures.live.EPL || [];
-  const resolvedLiveChamp = Array.isArray(liveChamp) ? liveChamp : state.fixtures.live.CHAMP || [];
-  const resolvedPrevEpl = Array.isArray(prevEpl) ? prevEpl : state.fixtures.previous.EPL || [];
-  const resolvedPrevChamp = Array.isArray(prevChamp) ? prevChamp : state.fixtures.previous.CHAMP || [];
-  const resolvedNextEpl = Array.isArray(nextEpl) ? nextEpl : state.fixtures.next.EPL || [];
-  const resolvedNextChamp = Array.isArray(nextChamp) ? nextChamp : state.fixtures.next.CHAMP || [];
+  LEAGUE_CODES.forEach((code) => {
+    const payload = leaguePayloads.find((entry) => entry[0] === code)?.[1];
+    if (!payload) return;
+    const resolvedToday = Array.isArray(payload.todayRows) ? payload.todayRows : state.fixtures.today[code] || [];
+    const resolvedLive = Array.isArray(payload.liveRows) ? payload.liveRows : state.fixtures.live[code] || [];
+    const resolvedPrev = Array.isArray(payload.prevRows) ? payload.prevRows : state.fixtures.previous[code] || [];
+    const resolvedNext = Array.isArray(payload.nextRows) ? payload.nextRows : state.fixtures.next[code] || [];
 
-  state.fixtures.today.EPL = mergeTodayWithLive(resolvedTodayEpl, resolvedLiveEpl).sort(fixtureSort);
-  state.fixtures.today.CHAMP = mergeTodayWithLive(resolvedTodayChamp, resolvedLiveChamp).sort(fixtureSort);
-  state.fixtures.live.EPL = resolvedLiveEpl.sort(fixtureSort);
-  state.fixtures.live.CHAMP = resolvedLiveChamp.sort(fixtureSort);
-  state.fixtures.previous.EPL = resolvedPrevEpl.sort(fixtureSort);
-  state.fixtures.previous.CHAMP = resolvedPrevChamp.sort(fixtureSort);
-  state.fixtures.next.EPL = resolvedNextEpl.sort(fixtureSort);
-  state.fixtures.next.CHAMP = resolvedNextChamp.sort(fixtureSort);
-  setDateFixtureCache(dates.today, { EPL: state.fixtures.today.EPL, CHAMP: state.fixtures.today.CHAMP });
-  setDateFixtureCache(dates.prev, { EPL: state.fixtures.previous.EPL, CHAMP: state.fixtures.previous.CHAMP });
-  setDateFixtureCache(dates.next, { EPL: state.fixtures.next.EPL, CHAMP: state.fixtures.next.CHAMP });
-  state.tables.EPL = includeTables ? (tableEpl.length ? tableEpl : prevTablesEpl) : prevTablesEpl;
-  state.tables.CHAMP = includeTables ? (tableChamp.length ? tableChamp : prevTablesChamp) : prevTablesChamp;
-  state.teamsByLeague.EPL = includeStatic ? (teamsEpl.length ? teamsEpl : prevTeamsEpl) : prevTeamsEpl;
-  state.teamsByLeague.CHAMP = includeStatic ? (teamsChamp.length ? teamsChamp : prevTeamsChamp) : prevTeamsChamp;
-  if (!state.teamsByLeague.EPL.length || !state.teamsByLeague.CHAMP.length) {
-    hydrateTeamsFromTablesIfNeeded();
-  }
-  state.teamBadgeMap = {};
-  [...state.teamsByLeague.EPL, ...state.teamsByLeague.CHAMP].forEach((team) => {
-    if (team?.strTeam && team?.strBadge) {
-      state.teamBadgeMap[team.strTeam] = team.strBadge;
+    state.fixtures.today[code] = mergeTodayWithLive(resolvedToday, resolvedLive).sort(fixtureSort);
+    state.fixtures.live[code] = resolvedLive.sort(fixtureSort);
+    state.fixtures.previous[code] = resolvedPrev.sort(fixtureSort);
+    state.fixtures.next[code] = resolvedNext.sort(fixtureSort);
+    state.tables[code] = includeTables ? (payload.tableRows.length ? payload.tableRows : prevTables[code]) : prevTables[code];
+    state.teamsByLeague[code] = includeStatic
+      ? payload.teamsRows.length
+        ? payload.teamsRows
+        : prevTeams[code]
+      : prevTeams[code];
+    if (payload.leagueMeta) {
+      state.leagueBadges[code] = payload.leagueMeta.strBadge || payload.leagueMeta.strLogo || state.leagueBadges[code] || "";
     }
   });
+
+  setDateFixtureCache(dates.today, emptyLeagueBuckets((code) => state.fixtures.today[code]));
+  setDateFixtureCache(dates.prev, emptyLeagueBuckets((code) => state.fixtures.previous[code]));
+  setDateFixtureCache(dates.next, emptyLeagueBuckets((code) => state.fixtures.next[code]));
+
+  const missingTeamBuckets = LEAGUE_CODES.some((code) => !Array.isArray(state.teamsByLeague[code]) || !state.teamsByLeague[code].length);
+  if (missingTeamBuckets) {
+    hydrateTeamsFromTablesIfNeeded();
+  }
+  rebuildTeamBadgeMap();
   if (includeStatic) {
     state.lastStaticRefreshAt = Date.now();
   }
   if (includeTables) {
     state.lastTableRefreshAt = Date.now();
-  }
-  if (leagueMetaEpl) {
-    state.leagueBadges.EPL = leagueMetaEpl.strBadge || leagueMetaEpl.strLogo || state.leagueBadges.EPL || "";
-  }
-  if (leagueMetaChamp) {
-    state.leagueBadges.CHAMP = leagueMetaChamp.strBadge || leagueMetaChamp.strLogo || state.leagueBadges.CHAMP || "";
   }
   if (includeLive) {
     state.lastLiveProbeAt = Date.now();
@@ -10736,7 +10696,7 @@ function fixtureKickoffDate(event) {
 function currentPollContext() {
   const now = new Date();
   const todayIso = toISODate(now);
-  const todayPool = [...state.fixtures.today.EPL, ...state.fixtures.today.CHAMP].filter((event) => event?.dateEvent === todayIso);
+  const todayPool = concatLeagueBuckets(state.fixtures.today).filter((event) => event?.dateEvent === todayIso);
   const hasTodayFixtures = todayPool.length > 0;
   const hasLive = todayPool.some((event) => eventState(event).key === "live");
   const selectedDateIsToday = state.selectedDate === todayIso;
@@ -10766,12 +10726,12 @@ function currentPollContext() {
 }
 
 function shouldFetchStaticData() {
-  if (!state.tables.EPL.length || !state.tables.CHAMP.length) return true;
+  if (LEAGUE_CODES.some((code) => !Array.isArray(state.tables[code]) || !state.tables[code].length)) return true;
   return Date.now() - state.lastStaticRefreshAt >= STATIC_REFRESH_MS;
 }
 
 function shouldFetchTables(context) {
-  if (!state.tables.EPL.length || !state.tables.CHAMP.length) return true;
+  if (LEAGUE_CODES.some((code) => !Array.isArray(state.tables[code]) || !state.tables[code].length)) return true;
   const intervalMs = context?.hasLive ? ONE_MINUTE_MS : THREE_HOURS_MS;
   return Date.now() - state.lastTableRefreshAt >= intervalMs;
 }

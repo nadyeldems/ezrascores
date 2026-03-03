@@ -7,5 +7,5 @@ crons = ["* * * * *"]
 
 [vars]
 PAGES_BASE_URL = "https://ezrascores.pages.dev"
-TABLE_LEAGUES = "4328,4329"
+TABLE_LEAGUES = "4328,4329,4335"
 TABLE_WARM_TIMEOUT_MS = "15000"

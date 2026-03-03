@@ -1,4 +1,4 @@
-const DEFAULT_LEAGUES = ["4328", "4329"];
+const DEFAULT_LEAGUES = ["4328", "4329", "4335"];
 
 function splitCsv(value) {
   return String(value || "")

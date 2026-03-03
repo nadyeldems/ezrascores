@@ -15,12 +15,14 @@ const el = {
   active24h: document.getElementById("active-24h"),
   usersTbody: document.getElementById("users-tbody"),
   searchInput: document.getElementById("search-input"),
+  leagueFilterBtns: Array.from(document.querySelectorAll(".league-filter-btn")),
   dashStatus: document.getElementById("dash-status"),
 };
 
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || "",
   users: [],
+  league: "ALL",
 };
 
 function setStatus(node, msg, type = "") {
@@ -48,7 +50,10 @@ async function login(username, password) {
 }
 
 async function fetchUsers() {
-  const res = await fetch(`${API}/users`, { headers: authHeaders() });
+  const qs = new URLSearchParams();
+  if (state.league && state.league !== "ALL") qs.set("league", state.league);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  const res = await fetch(`${API}/users${suffix}`, { headers: authHeaders() });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `Fetch failed (${res.status})`);
   return data;
@@ -97,9 +102,20 @@ function setAuthedView(authed) {
   el.dashCard.classList.toggle("hidden", !authed);
 }
 
+function setLeagueFilter(nextLeague) {
+  const normalized = String(nextLeague || "ALL").toUpperCase();
+  state.league = ["ALL", "EPL", "CHAMP", "LALIGA"].includes(normalized) ? normalized : "ALL";
+  for (const btn of el.leagueFilterBtns) {
+    const isActive = String(btn.dataset.league || "").toUpperCase() === state.league;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+  }
+}
+
 async function refreshDashboard() {
   try {
-    setStatus(el.dashStatus, "Loading users...");
+    const scope = state.league === "ALL" ? "all leagues" : state.league;
+    setStatus(el.dashStatus, `Loading users (${scope})...`);
     const data = await fetchUsers();
     state.users = Array.isArray(data.users) ? data.users : [];
     el.usersCount.textContent = String(data?.summary?.usersCount ?? state.users.length ?? 0);
@@ -152,8 +168,17 @@ el.loginForm.addEventListener("submit", async (e) => {
 el.refreshBtn.addEventListener("click", refreshDashboard);
 el.logoutBtn.addEventListener("click", logout);
 el.searchInput.addEventListener("input", renderUsers);
+for (const btn of el.leagueFilterBtns) {
+  btn.addEventListener("click", async () => {
+    const nextLeague = String(btn.dataset.league || "ALL");
+    if (nextLeague === state.league) return;
+    setLeagueFilter(nextLeague);
+    await refreshDashboard();
+  });
+}
 
 (async function init() {
+  setLeagueFilter("ALL");
   if (!state.token) {
     setAuthedView(false);
     return;

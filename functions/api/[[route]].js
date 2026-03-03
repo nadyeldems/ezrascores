@@ -864,6 +864,7 @@ function leagueIdToCode(value) {
   const v = String(value || "").trim();
   if (v === "4328") return "EPL";
   if (v === "4329") return "CHAMP";
+  if (v === "4335") return "LALIGA";
   return "";
 }
 
@@ -1430,7 +1431,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
         }
         const awarded = safePredictionAward(base, comboCount);
         predictionPoints += awarded;
-        if (inSeasonByKickoff(pick.kickoffIso, season) && (leagueCode === "EPL" || leagueCode === "CHAMP")) {
+        if (inSeasonByKickoff(pick.kickoffIso, season) && (leagueCode === "EPL" || leagueCode === "CHAMP" || leagueCode === "LALIGA")) {
           seasonPoints += awarded;
         }
         if (base === 2) totalExact += 1;
@@ -1668,11 +1669,19 @@ async function handleAdminUsersOverview(db, env, request) {
   const auth = await adminAuth(request, env);
   if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
 
-  const usersCountRow = await db.prepare("SELECT COUNT(*) AS c FROM ezra_users").first();
-  const usersCount = Number(usersCountRow?.c || 0);
-  const users = await db
-    .prepare(
-      `
+  const url = new URL(request.url);
+  const leagueCode = String(url.searchParams.get("league") || "ALL")
+    .trim()
+    .toUpperCase();
+  const leagueIdByCode = {
+    EPL: "4328",
+    CHAMP: "4329",
+    LALIGA: "4335",
+  };
+  const leagueId = leagueIdByCode[leagueCode] || "";
+  const isLeagueFiltered = Boolean(leagueId);
+
+  const baseSql = `
       SELECT
         u.id,
         u.name,
@@ -1701,11 +1710,28 @@ async function handleAdminUsersOverview(db, env, request) {
         FROM ezra_sessions
         GROUP BY user_id
       ) ss ON ss.user_id = u.id
+  `;
+
+  const filterSql = `
+      WHERE EXISTS (
+        SELECT 1
+        FROM ezra_points_ledger plg
+        JOIN ezra_fixtures_cache fx ON fx.event_id = plg.event_id
+        WHERE plg.user_id = u.id
+          AND plg.type = 'prediction'
+          AND fx.league_id = ?1
+      )
+  `;
+
+  const finalSql = `${baseSql}
+      ${isLeagueFiltered ? filterSql : ""}
       ORDER BY last_activity_at DESC, u.name COLLATE NOCASE ASC
       LIMIT 1000
-      `
-    )
-    .all();
+  `;
+
+  const usersQuery = db.prepare(finalSql);
+  const users = (isLeagueFiltered ? await usersQuery.bind(leagueId).all() : await usersQuery.all()) || { results: [] };
+  const usersCount = Number((users.results || []).length);
 
   const rows = (users?.results || []).map((row) => ({
     id: String(row?.id || ""),
@@ -1725,6 +1751,7 @@ async function handleAdminUsersOverview(db, env, request) {
       summary: {
         usersCount,
         active24h,
+        league: isLeagueFiltered ? leagueCode : "ALL",
       },
       users: rows,
     },
@@ -2928,7 +2955,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
   }
 }
 
-const TABLE_LEAGUE_IDS = ["4328", "4329"];
+const TABLE_LEAGUE_IDS = ["4328", "4329", "4335"];
 const TABLE_REFRESH_LIVE_MS = 60 * 1000;
 const TABLE_REFRESH_MATCHDAY_MS = 2 * 60 * 1000;
 const TABLE_REFRESH_IDLE_MS = 15 * 60 * 1000;
@@ -2997,6 +3024,7 @@ async function handleEzraClubQuizRoute(context, key) {
   const leagueNames = {
     "4328": "English Premier League",
     "4329": "English League Championship",
+    "4335": "Spanish La Liga",
   };
 
   const tablePayloads = await Promise.all(
@@ -3466,7 +3494,7 @@ async function handleEzraFixturesRoute(context, key) {
   const leagueId = String(url.searchParams.get("l") || "").trim();
   const dateIso = normalizeEventDate(url.searchParams.get("d"));
   if (!TABLE_LEAGUE_IDS.includes(leagueId) || !dateIso) {
-    return json({ error: "Missing or invalid parameters. Use l=4328|4329 and d=YYYY-MM-DD" }, 400);
+    return json({ error: "Missing or invalid parameters. Use l=4328|4329|4335 and d=YYYY-MM-DD" }, 400);
   }
   const todayIso = new Date().toISOString().slice(0, 10);
   if (!fixtureDateInWindow(dateIso, todayIso)) {
@@ -3737,8 +3765,10 @@ function normalizeLeagueId(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (TABLE_LEAGUE_IDS.includes(raw)) return raw;
-  if (raw.toLowerCase().includes("premier")) return "4328";
-  if (raw.toLowerCase().includes("championship")) return "4329";
+  const lowered = raw.toLowerCase();
+  if (lowered.includes("premier")) return "4328";
+  if (lowered.includes("championship")) return "4329";
+  if (lowered.includes("la liga") || lowered.includes("laliga")) return "4335";
   return "";
 }
 

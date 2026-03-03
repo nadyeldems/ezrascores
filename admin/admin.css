@@ -94,6 +94,26 @@ button:hover { filter: brightness(1.08); }
 
 .search-wrap { margin: 10px 0 12px; }
 
+.league-filter-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.league-filter-btn {
+  border: 1px solid var(--line);
+  background: #0f0f0f;
+  color: var(--text);
+  min-height: 40px;
+}
+
+.league-filter-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #1b1208;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--line);
