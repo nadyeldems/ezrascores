@@ -39,6 +39,7 @@ const STORED_KEEP_LOGGED_IN = localStorage.getItem("ezra_keep_logged_in") === "1
 const STORED_ACCOUNT_TOKEN = STORED_ACCOUNT_TOKEN_SESSION || STORED_ACCOUNT_TOKEN_LOCAL || "";
 const EFFECTIVE_KEEP_LOGGED_IN = STORED_ACCOUNT_TOKEN_SESSION ? false : STORED_KEEP_LOGGED_IN;
 const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
+const STORED_LAST_REFRESH_ISO = localStorage.getItem("ezra_last_refresh_iso") || "";
 let STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
 STORED_MAIN_TAB = String(STORED_MAIN_TAB || "").trim().toLowerCase();
 if (STORED_MAIN_TAB === "squad") {
@@ -2065,7 +2066,10 @@ const state = {
   },
   dreamRenderRaf: null,
   dreamRenderReason: "default",
-  lastRefresh: null,
+  lastRefresh: (() => {
+    const parsed = Date.parse(STORED_LAST_REFRESH_ISO);
+    return Number.isFinite(parsed) ? new Date(parsed) : null;
+  })(),
 };
 
 function hydrateCachedBootstrapData() {
@@ -2090,6 +2094,7 @@ const el = {
   dateQuickButtons: [...document.querySelectorAll(".date-quick-btn")],
   tablesWrap: document.getElementById("tables-wrap"),
   lastRefreshed: document.getElementById("last-refreshed"),
+  forceRefreshBtn: document.getElementById("force-refresh-btn"),
   leagueButtons: [...document.querySelectorAll(".league-btn")],
   fixtureTemplate: document.getElementById("fixture-template"),
   tableTemplate: document.getElementById("table-template"),
@@ -10669,11 +10674,16 @@ async function loadCoreData(options = {}) {
 }
 
 function renderLastRefreshed() {
-  if (!state.lastRefresh) {
-    el.lastRefreshed.textContent = "Last refreshed: --";
+  if (state.refreshInFlight && !state.lastRefresh) {
+    el.lastRefreshed.textContent = "Last refreshed: refreshing...";
     return;
   }
-  el.lastRefreshed.textContent = `Last refreshed: ${state.lastRefresh.toLocaleString("en-GB")}`;
+  if (!state.lastRefresh) {
+    el.lastRefreshed.textContent = "Last refreshed: loading...";
+    return;
+  }
+  const baseText = `Last refreshed: ${state.lastRefresh.toLocaleString("en-GB")}`;
+  el.lastRefreshed.textContent = state.refreshInFlight ? `${baseText} (refreshing...)` : baseText;
 }
 
 function fixtureKickoffDate(event) {
@@ -10774,6 +10784,11 @@ async function fullRefresh() {
   const perfStart = performance.now();
   state.refreshInFlight = true;
   state.refreshStartedAt = Date.now();
+  if (el.forceRefreshBtn) {
+    el.forceRefreshBtn.disabled = true;
+    el.forceRefreshBtn.classList.add("is-spinning");
+  }
+  renderLastRefreshed();
   let nextContext = currentPollContext();
   try {
     maybeNotifyDailyQuestReset();
@@ -10834,6 +10849,7 @@ async function fullRefresh() {
     ensurePlayerPopContinuity();
 
     state.lastRefresh = new Date();
+    localStorage.setItem("ezra_last_refresh_iso", state.lastRefresh.toISOString());
     renderLastRefreshed();
     console.debug(`[perf] fullRefresh ${Math.round(performance.now() - perfStart)}ms`);
     nextContext = currentPollContext();
@@ -10856,6 +10872,11 @@ async function fullRefresh() {
   } finally {
     state.refreshInFlight = false;
     state.refreshStartedAt = 0;
+    if (el.forceRefreshBtn) {
+      el.forceRefreshBtn.disabled = false;
+      el.forceRefreshBtn.classList.remove("is-spinning");
+    }
+    renderLastRefreshed();
     persistCachedBootstrapData();
     if (!state.boot.firstRefreshDone) {
       state.boot.firstRefreshDone = true;
@@ -11613,6 +11634,12 @@ function attachEvents() {
     });
   }
 
+  if (el.forceRefreshBtn) {
+    el.forceRefreshBtn.addEventListener("click", () => {
+      fullRefresh();
+    });
+  }
+
   window.addEventListener("scroll", () => {
     positionFavoritePickerMenu();
   });
@@ -11689,6 +11716,7 @@ initRevealOnScroll();
 persistLocalMetaState();
 renderFunZone();
 renderMobileSectionLayout();
+renderLastRefreshed();
 if (state.playerPopEnabled) {
   showRandomPlayerPop();
 }
