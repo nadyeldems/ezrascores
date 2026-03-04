@@ -2036,6 +2036,8 @@ const state = {
     syncing: false,
     bootstrapInFlight: false,
     bootstrapPromise: null,
+    lastRenderedAvatarHash: "",
+    lastRenderedSignedIn: false,
   },
   maxDreamTeamPlayers: 18,
   dreamTeamOpen: false,
@@ -2795,8 +2797,14 @@ function writeAvatarEditorState(avatar) {
   scheduleAvatar3DUpgrade();
 }
 
-function renderAccountAvatarButton() {
+function renderAccountAvatarButton(signedIn = accountSignedIn()) {
   if (!el.accountToggleAvatar || !el.accountToggleAvatarFallback) return;
+  if (!signedIn) {
+    el.accountToggleAvatar.classList.add("hidden");
+    el.accountToggleAvatar.removeAttribute("src");
+    el.accountToggleAvatarFallback.classList.remove("hidden");
+    return;
+  }
   const seed = state.account.user?.name || state.account.user?.id || "ezra";
   const safe = currentAccountAvatar();
   el.accountToggleAvatar.src = avatarSvgDataUri(safe, seed, 80);
@@ -2862,7 +2870,7 @@ function renderAccountUI() {
   el.accountAuthSignedIn.classList.toggle("hidden", !signedIn);
   if (el.avatarBuilderSignedOut) el.avatarBuilderSignedOut.classList.toggle("hidden", signedIn);
   if (el.avatarBuilderSignedIn) el.avatarBuilderSignedIn.classList.toggle("hidden", !signedIn);
-  renderAccountAvatarButton();
+  renderAccountAvatarButton(signedIn);
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
     if (el.accountEmailInput && state.account.user?.email) {
@@ -2872,8 +2880,17 @@ function renderAccountUI() {
       el.accountEmailManageInput.value = String(state.account.user?.email || "");
       el.accountEmailManageInput.placeholder = state.account.user?.email ? "Recovery email" : "Add recovery email";
     }
-    writeAvatarEditorState(currentAccountAvatar());
-    state.avatarLastSavedHash = avatarConfigSignature(currentAccountAvatar());
+    const serverAvatar = currentAccountAvatar();
+    const serverAvatarHash = avatarConfigSignature(serverAvatar);
+    const shouldHydrateEditor =
+      !state.account.lastRenderedSignedIn ||
+      !state.account.lastRenderedAvatarHash ||
+      serverAvatarHash !== state.account.lastRenderedAvatarHash;
+    if (shouldHydrateEditor) {
+      writeAvatarEditorState(serverAvatar);
+    }
+    state.account.lastRenderedAvatarHash = serverAvatarHash;
+    state.avatarLastSavedHash = serverAvatarHash;
     setAvatarSaveState("saved", "Saved");
     applyAvatarStyleLocks();
     const avatarInputs = [
@@ -2902,10 +2919,15 @@ function renderAccountUI() {
     setAccountRecoveryOpen(false);
     maybeShowFreeAvatarUnlockToast();
   } else {
-    writeAvatarEditorState(defaultAvatarConfig("ezra"));
+    const shouldResetEditor = state.account.lastRenderedSignedIn || !state.account.lastRenderedAvatarHash;
+    if (shouldResetEditor) {
+      writeAvatarEditorState(defaultAvatarConfig("ezra"));
+    }
+    state.account.lastRenderedAvatarHash = "";
     setAvatarSaveState("saved", "Sign in to save");
     setAccountRecoveryOpen(Boolean(state.account.recoveryOpen));
   }
+  state.account.lastRenderedSignedIn = signedIn;
   renderAvatarUnlockRail();
   renderLifetimePointsPill();
   renderAccountHelper();
@@ -9718,6 +9740,9 @@ function setMobileTab(tab) {
 
 function setMainTab(tab) {
   const safe = ["home", "play", "predict", "squad", "tables"].includes(tab) ? tab : "home";
+  if (safe === state.mainTab) {
+    return;
+  }
   state.mainTab = safe;
   localStorage.setItem("ezra_main_tab", safe === "squad" ? "home" : safe);
   closeFavoritePickerMenu();
