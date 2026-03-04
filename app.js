@@ -2076,6 +2076,8 @@ const state = {
   fixtureFetchBackoffUntil: {},
   selectedDateLoadSeq: 0,
   selectedDateTimer: null,
+  selectedDateLoading: false,
+  selectedDateLoadingFor: "",
   rewardToastTimer: null,
   liveStream: { es: null, reconnectTimer: null, lastVersion: "", connected: false },
   playerPop: {
@@ -9578,7 +9580,14 @@ async function setSelectedDate(dateIso) {
   const normalized = normalizeDateIsoInput(dateIso);
   state.selectedDate = normalized;
   const seq = ++state.selectedDateLoadSeq;
+  state.selectedDateLoading = true;
+  state.selectedDateLoadingFor = normalized;
+  renderFixtures();
   const applied = await refreshSelectedDateFixtures(normalized, seq);
+  if (state.selectedDateLoadingFor === normalized) {
+    state.selectedDateLoading = false;
+    state.selectedDateLoadingFor = "";
+  }
   if (!applied) return;
   if (seq !== state.selectedDateLoadSeq || normalized !== state.selectedDate) return;
   renderFixtures();
@@ -9586,6 +9595,7 @@ async function setSelectedDate(dateIso) {
 
 function scheduleSelectedDateChange(dateIso, delayMs = 35) {
   const nextIso = normalizeDateIsoInput(dateIso);
+  if (nextIso === state.selectedDate && !state.selectedDateLoading) return;
   if (state.selectedDateTimer) {
     clearTimeout(state.selectedDateTimer);
     state.selectedDateTimer = null;
@@ -9631,6 +9641,24 @@ function renderFixtures() {
       state.selectedLeague === "ALL"
         ? concatLeagueBuckets(state.selectedDateFixtures)
         : [...state.selectedDateFixtures[state.selectedLeague]];
+  }
+
+  if (state.selectedDateLoading && state.selectedDateLoadingFor === state.selectedDate && state.mainTab !== "home") {
+    el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateWithDayUK(state.selectedDate)}) • updating...`;
+    const div = document.createElement("div");
+    div.className = "empty";
+    div.textContent = "Updating fixtures...";
+    el.fixturesList.innerHTML = "";
+    el.fixturesList.appendChild(div);
+    if (el.datePicker) {
+      el.datePicker.value = state.selectedDate;
+      const bounds = fixtureWindowBounds();
+      el.datePicker.min = bounds.minIso;
+      el.datePicker.max = bounds.maxIso;
+    }
+    setDateButtonState();
+    updateDateNavControls();
+    return;
   }
 
   const showLoadingSkeleton = state.refreshInFlight && !state.boot.firstRefreshDone && (!Array.isArray(events) || !events.length);
@@ -9789,7 +9817,7 @@ function setMainTab(tab) {
   if (!needsFixtureRefresh) return;
   const refreshDate = normalizeDateIsoInput(state.selectedDate || toISODate(new Date()));
   state.selectedDate = refreshDate;
-  const seq = ++state.selectedDateLoadSeq;
+  const seq = state.selectedDateLoadSeq;
   safeLoad(async () => {
     const applied = await refreshSelectedDateFixtures(refreshDate, seq);
     if (!applied) return null;
@@ -11025,7 +11053,7 @@ async function fullRefresh() {
     detectGoalFlashes();
     const selectedDateForRefresh = normalizeDateIsoInput(state.selectedDate || todayIso);
     state.selectedDate = selectedDateForRefresh;
-    const selectedSeq = ++state.selectedDateLoadSeq;
+    const selectedSeq = state.selectedDateLoadSeq;
     await refreshSelectedDateFixtures(selectedDateForRefresh, selectedSeq);
     settleFamilyPredictions();
     buildFavoriteOptions();
