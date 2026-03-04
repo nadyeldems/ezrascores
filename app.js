@@ -2075,6 +2075,9 @@ const state = {
   dateFixturesCache: {},
   fixtureFetchBackoffUntil: {},
   fixtureFetchInflight: {},
+  tableFetchInflight: {},
+  allTeamsInflight: {},
+  teamByIdInflight: {},
   selectedDateLoadSeq: 0,
   selectedDateTimer: null,
   selectedDateLoading: false,
@@ -8307,8 +8310,20 @@ async function fetchLiveByLeague(leagueId) {
 }
 
 async function fetchTable(leagueId) {
-  const data = await apiGetV1(`ezra/tables?l=${leagueId}`);
-  return safeArray(data, "table");
+  const key = String(leagueId || "").trim();
+  if (!key) return [];
+  const existingInflight = state.tableFetchInflight[key];
+  if (existingInflight && typeof existingInflight.then === "function") {
+    return existingInflight;
+  }
+  const inflight = (async () => {
+    const data = await apiGetV1(`ezra/tables?l=${encodeURIComponent(key)}`);
+    return safeArray(data, "table");
+  })().finally(() => {
+    delete state.tableFetchInflight[key];
+  });
+  state.tableFetchInflight[key] = inflight;
+  return inflight;
 }
 
 async function fetchLeagueMeta(leagueId) {
@@ -8377,41 +8392,65 @@ async function fetchTeamFormFromCache(team, n = 5) {
 async function fetchAllTeams(leagueId) {
   const leagueCode = Object.values(LEAGUES).find((l) => l.id === leagueId)?.code || "";
   if (!leagueCode) return [];
+  const inflightKey = String(leagueId || "").trim();
+  const existingInflight = state.allTeamsInflight[inflightKey];
+  if (existingInflight && typeof existingInflight.then === "function") {
+    return existingInflight;
+  }
+  const inflight = (async () => {
   const existing = state.teamsByLeague[leagueCode] || [];
-  if (existing.length) return existing;
-  const tableRows = state.tables[leagueCode] || [];
-  const leagueName = LEAGUES[leagueCode]?.name || "";
-  return tableRows
-    .map((row) => ({
-      idTeam: String(row?.idTeam || "").trim() || `fallback:${leagueCode}:${String(row?.strTeam || "").trim()}`,
-      strTeam: String(row?.strTeam || "").trim(),
-      strLeague: leagueName,
-      strBadge: row?.strTeamBadge || row?.strBadge || state.teamBadgeMap[String(row?.strTeam || "").trim()] || "",
-    }))
-    .filter((team) => team.strTeam);
+    if (existing.length) return existing;
+    const tableRows = state.tables[leagueCode] || [];
+    const leagueName = LEAGUES[leagueCode]?.name || "";
+    return tableRows
+      .map((row) => ({
+        idTeam: String(row?.idTeam || "").trim() || `fallback:${leagueCode}:${String(row?.strTeam || "").trim()}`,
+        strTeam: String(row?.strTeam || "").trim(),
+        strLeague: leagueName,
+        strBadge: row?.strTeamBadge || row?.strBadge || state.teamBadgeMap[String(row?.strTeam || "").trim()] || "",
+      }))
+      .filter((team) => team.strTeam);
+  })().finally(() => {
+    delete state.allTeamsInflight[inflightKey];
+  });
+  state.allTeamsInflight[inflightKey] = inflight;
+  return inflight;
 }
 
 async function fetchTeamById(teamId, options = {}) {
+  const teamKey = String(teamId || "").trim();
+  if (!teamKey) return null;
   const preferApi = Boolean(options?.preferApi);
-  const known = findKnownTeamById(teamId);
+  const known = findKnownTeamById(teamKey);
   const allTeams = concatLeagueBuckets(state.teamsByLeague);
-  const fromLists = allTeams.find((team) => String(team?.idTeam || "") === String(teamId)) || null;
+  const fromLists = allTeams.find((team) => String(team?.idTeam || "") === teamKey) || null;
 
   if (!preferApi) {
     if (known) return known;
     if (fromLists) return fromLists;
   }
 
-  const fromApi = await safeLoad(async () => {
-    const payload = await apiGetV1(`ezra/team?id=${encodeURIComponent(teamId)}`);
-    return payload?.team || null;
-  }, null);
+  const inflightKey = teamKey;
+  const existingInflight = state.teamByIdInflight[inflightKey];
+  const fromApi = existingInflight && typeof existingInflight.then === "function"
+    ? await existingInflight
+    : await (() => {
+        const inflight = safeLoad(async () => {
+          const payload = await apiGetV1(`ezra/team?id=${encodeURIComponent(teamKey)}`);
+          return payload?.team || null;
+        }, null).finally(() => {
+          delete state.teamByIdInflight[inflightKey];
+        });
+        state.teamByIdInflight[inflightKey] = inflight;
+        return inflight;
+      })();
+
   if (fromApi) {
     return { ...(fromLists || {}), ...(known || {}), ...fromApi };
   }
   if (known) return known;
   if (fromLists) return fromLists;
-  if (state.favoriteTeam && String(state.favoriteTeam.idTeam || "") === String(teamId)) {
+  if (state.favoriteTeam && String(state.favoriteTeam.idTeam || "") === teamKey) {
     return state.favoriteTeam;
   }
   return null;
