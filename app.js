@@ -3576,6 +3576,17 @@ function dailyQuestList() {
 
 function renderMissionsPanel() {
   if (!el.missionsList || !el.missionsMeta) return;
+  if (state.refreshInFlight && !state.boot.firstRefreshDone && accountSignedIn() && !state.challengeDashboard) {
+    el.missionsMeta.textContent = "Loading quests...";
+    el.missionsList.innerHTML = `
+      <div class="challenge-skeleton">
+        <span class="skeleton-line w-40"></span>
+        <span class="skeleton-line w-90"></span>
+        <span class="skeleton-line w-65"></span>
+      </div>
+    `;
+    return;
+  }
   ensureFamilyLeagueState();
   if (ensureDailyQuestBonusesForSignedInUser()) {
     persistLocalMetaState();
@@ -3681,7 +3692,7 @@ function storyCardData() {
 
 function renderStoryCardsPanel() {
   if (!el.storyList) return;
-  if (state.favoriteDataLoading) {
+  if (state.favoriteDataLoading || (state.refreshInFlight && !state.boot.firstRefreshDone)) {
     el.storyList.innerHTML = "";
     for (let i = 0; i < 3; i += 1) {
       const item = document.createElement("article");
@@ -4722,6 +4733,10 @@ function renderFamilyLeaguePanel() {
   }
   el.familyMembers.innerHTML = "";
   const standings = Array.isArray(currentLeague?.standings) ? currentLeague.standings : [];
+  if (state.refreshInFlight && !state.boot.firstRefreshDone && accountSignedIn() && !state.leagueDirectory.items.length) {
+    el.familyMembers.innerHTML = `<div class="empty">Loading league standings...</div>`;
+    return;
+  }
   if (state.leagueDirectory.loading) {
     el.familyMembers.innerHTML = `<div class="empty">Loading league standings...</div>`;
     return;
@@ -9270,9 +9285,17 @@ function tableBandLegendHtml(leagueCode) {
 }
 
 function renderTables() {
+  const visibleCodes = getVisibleLeagueCodes().filter((key) => state.selectedLeague === "ALL" || state.selectedLeague === key);
+  const hasAnyRows = visibleCodes.some((key) => Array.isArray(state.tables[key]) && state.tables[key].length > 0);
+  const showLoadingSkeleton = state.refreshInFlight && !state.boot.firstRefreshDone && !hasAnyRows;
+  if (showLoadingSkeleton) {
+    renderTableSkeletons(Math.max(1, visibleCodes.length || 2));
+    return;
+  }
+
   el.tablesWrap.innerHTML = "";
 
-  getVisibleLeagueCodes().forEach((key) => {
+  visibleCodes.forEach((key) => {
     if (state.selectedLeague !== "ALL" && state.selectedLeague !== key) return;
 
     const rows = state.tables[key] || [];
@@ -9556,6 +9579,23 @@ function renderFixtures() {
         ? concatLeagueBuckets(state.selectedDateFixtures)
         : [...state.selectedDateFixtures[state.selectedLeague]];
   }
+
+  const showLoadingSkeleton = state.refreshInFlight && !state.boot.firstRefreshDone && (!Array.isArray(events) || !events.length);
+  if (showLoadingSkeleton) {
+    el.fixturesTitle.textContent = "Fixtures (loading...)";
+    renderFixtureSkeletons(6);
+    if (el.datePicker) {
+      el.datePicker.value = state.selectedDate;
+      const bounds = fixtureWindowBounds();
+      el.datePicker.min = bounds.minIso;
+      el.datePicker.max = bounds.maxIso;
+    }
+    setDateButtonState();
+    updateDateNavControls();
+    renderMobileSectionLayout();
+    return;
+  }
+
   renderFixtureList(el.fixturesList, events, "selected");
   if (el.datePicker) {
     el.datePicker.value = state.selectedDate;
@@ -9689,6 +9729,8 @@ function setMainTab(tab) {
   renderTables();
   renderFunZone();
   renderFamilyLeaguePanel();
+  const needsFixtureRefresh = safe === "home" || safe === "predict";
+  if (!needsFixtureRefresh) return;
   const refreshDate = normalizeDateIsoInput(state.selectedDate || toISODate(new Date()));
   state.selectedDate = refreshDate;
   const seq = ++state.selectedDateLoadSeq;
@@ -10903,13 +10945,12 @@ async function fullRefresh() {
     }
     maybeNotifyDailyQuestReset();
     if (el.fixturesTitle) {
-      el.fixturesTitle.textContent = "Fixtures (updating...)";
+      el.fixturesTitle.textContent = state.boot.firstRefreshDone ? "Fixtures (updating...)" : "Fixtures (loading...)";
     }
-    if (state.lastRefresh && state.pollMode !== "live" && !selectedEventsForCurrentView().length) {
-      renderFixtureSkeletons(6);
-      if (shouldFetchTables(nextContext) || shouldFetchStaticData()) {
-        renderTableSkeletons(2);
-      }
+    if (!state.boot.firstRefreshDone) {
+      renderFixtures();
+      renderTables();
+      renderFunZone();
     }
     if (!state.selectedDate) {
       state.selectedDate = toISODate(new Date());
