@@ -7567,6 +7567,9 @@ function eventState(event) {
   if (hasNotStartedStatus) {
     return { key: "upcoming", label: "upcoming" };
   }
+  if (date && date < today && !hasDeferredStatus) {
+    return { key: "final", label: "final score" };
+  }
   if (scored && date && date < today) {
     return { key: "final", label: "final score" };
   }
@@ -7574,8 +7577,9 @@ function eventState(event) {
     if (elapsedMs !== null) {
       if (elapsedMs < 0) return { key: "upcoming", label: "upcoming" };
       if (elapsedMs >= 150 * 60 * 1000) return { key: "final", label: "final score" };
+      return { key: "live", label: "live" };
     }
-    return { key: "final", label: "final score" };
+    return { key: "live", label: "live" };
   }
   if (date === today && !scored && !hasNotStartedStatus && !hasFinalStatus) {
     if (elapsedMs !== null) {
@@ -9685,6 +9689,16 @@ function setMainTab(tab) {
   renderTables();
   renderFunZone();
   renderFamilyLeaguePanel();
+  const refreshDate = normalizeDateIsoInput(state.selectedDate || toISODate(new Date()));
+  state.selectedDate = refreshDate;
+  const seq = ++state.selectedDateLoadSeq;
+  safeLoad(async () => {
+    const applied = await refreshSelectedDateFixtures(refreshDate, seq);
+    if (!applied) return null;
+    if (seq !== state.selectedDateLoadSeq || refreshDate !== state.selectedDate) return null;
+    renderFixtures();
+    return true;
+  }, null);
 }
 
 function renderMainTabButtons() {
