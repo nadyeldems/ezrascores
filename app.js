@@ -2074,6 +2074,7 @@ const state = {
   fixtureScoreSnapshot: new Map(),
   dateFixturesCache: {},
   fixtureFetchBackoffUntil: {},
+  fixtureFetchInflight: {},
   selectedDateLoadSeq: 0,
   selectedDateTimer: null,
   selectedDateLoading: false,
@@ -8271,16 +8272,33 @@ async function fetchLeagueDayFixtures(leagueId, dateIso) {
     }
     return [];
   }
-  const fromCache = await safeLoad(async () => {
-    const payload = await apiGetV1(`ezra/fixtures?l=${encodeURIComponent(leagueId)}&d=${encodeURIComponent(dateIso)}`);
-    return safeArray(payload, "events");
-  }, null);
-  if (Array.isArray(fromCache)) {
-    state.fixtureFetchBackoffUntil[key] = 0;
-    return fromCache;
+  const existingInflight = state.fixtureFetchInflight[key];
+  if (existingInflight && typeof existingInflight.then === "function") {
+    return existingInflight;
   }
-  state.fixtureFetchBackoffUntil[key] = Date.now() + 30 * 1000;
-  return [];
+
+  const inflight = (async () => {
+    const fromCache = await safeLoad(async () => {
+      const payload = await apiGetV1(`ezra/fixtures?l=${encodeURIComponent(leagueId)}&d=${encodeURIComponent(dateIso)}`);
+      return safeArray(payload, "events");
+    }, null);
+    if (Array.isArray(fromCache)) {
+      state.fixtureFetchBackoffUntil[key] = 0;
+      return fromCache;
+    }
+    state.fixtureFetchBackoffUntil[key] = Date.now() + 30 * 1000;
+    return [];
+  })()
+    .catch(() => {
+      state.fixtureFetchBackoffUntil[key] = Date.now() + 30 * 1000;
+      return [];
+    })
+    .finally(() => {
+      delete state.fixtureFetchInflight[key];
+    });
+
+  state.fixtureFetchInflight[key] = inflight;
+  return inflight;
 }
 
 async function fetchLiveByLeague(leagueId) {
