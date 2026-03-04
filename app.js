@@ -2162,8 +2162,8 @@ const el = {
   accountAuthSignedOut: document.getElementById("account-auth-signedout"),
   accountAuthSignedIn: document.getElementById("account-auth-signedin"),
   accountNameInput: document.getElementById("account-name-input"),
-  accountEmailInput: document.getElementById("account-email-input"),
   accountPinInput: document.getElementById("account-pin-input"),
+  accountRecoveryEmailInput: document.getElementById("account-recovery-email-input"),
   accountKeepLoggedIn: document.getElementById("account-keep-logged-in"),
   accountRegisterBtn: document.getElementById("account-register-btn"),
   accountLoginBtn: document.getElementById("account-login-btn"),
@@ -2299,7 +2299,6 @@ const el = {
   leagueInviteYesBtn: document.getElementById("league-invite-yes-btn"),
   leagueInviteNoBtn: document.getElementById("league-invite-no-btn"),
   leagueInviteNameInput: document.getElementById("league-invite-name-input"),
-  leagueInviteEmailInput: document.getElementById("league-invite-email-input"),
   leagueInvitePinInput: document.getElementById("league-invite-pin-input"),
   leagueInviteSigninBtn: document.getElementById("league-invite-signin-btn"),
   leagueInviteRegisterBtn: document.getElementById("league-invite-register-btn"),
@@ -2639,7 +2638,7 @@ function updateAccountControlsState() {
   if (el.accountEmailSaveBtn) el.accountEmailSaveBtn.disabled = busy || !signedIn;
   if (el.accountNameInput) el.accountNameInput.disabled = busy || signedIn;
   if (el.accountPinInput) el.accountPinInput.disabled = busy || signedIn;
-  if (el.accountEmailInput) el.accountEmailInput.disabled = busy || signedIn;
+  if (el.accountRecoveryEmailInput) el.accountRecoveryEmailInput.disabled = busy || signedIn;
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.disabled = busy || signedIn;
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.disabled = busy || signedIn;
   if (el.accountEmailManageInput) el.accountEmailManageInput.disabled = busy || !signedIn;
@@ -2684,6 +2683,9 @@ function setAccountRecoveryOpen(open) {
   if (el.accountForgotBtn) {
     el.accountForgotBtn.setAttribute("aria-expanded", String(state.account.recoveryOpen));
     el.accountForgotBtn.textContent = state.account.recoveryOpen ? "Hide Reset" : "Forgot PIN?";
+  }
+  if (state.account.recoveryOpen && el.accountRecoveryEmailInput) {
+    el.accountRecoveryEmailInput.focus();
   }
 }
 
@@ -2866,7 +2868,7 @@ function renderAccountHelper() {
     el.accountHelper.textContent = "Forgot PIN: enter name + recovery email, send code, then set a new PIN.";
     return;
   }
-  el.accountHelper.textContent = "Create account or sign in. Recovery email is optional but required for PIN reset.";
+  el.accountHelper.textContent = "Create account or sign in. Add recovery email after account creation for PIN reset.";
 }
 
 function renderAccountUI() {
@@ -2879,9 +2881,6 @@ function renderAccountUI() {
   renderAccountAvatarButton(signedIn);
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
-    if (el.accountEmailInput && state.account.user?.email) {
-      el.accountEmailInput.value = state.account.user.email;
-    }
     if (el.accountEmailManageInput) {
       el.accountEmailManageInput.value = String(state.account.user?.email || "");
       el.accountEmailManageInput.placeholder = state.account.user?.email ? "Recovery email" : "Add recovery email";
@@ -3808,7 +3807,6 @@ function setLeagueInviteInlineStatus(text = "", isError = false) {
 function setLeagueInviteAuthBusy(isBusy) {
   const busy = Boolean(isBusy);
   if (el.leagueInviteNameInput) el.leagueInviteNameInput.disabled = busy;
-  if (el.leagueInviteEmailInput) el.leagueInviteEmailInput.disabled = busy;
   if (el.leagueInvitePinInput) el.leagueInvitePinInput.disabled = busy;
   if (el.leagueInviteSigninBtn) el.leagueInviteSigninBtn.disabled = busy;
   if (el.leagueInviteRegisterBtn) el.leagueInviteRegisterBtn.disabled = busy;
@@ -3830,9 +3828,6 @@ function setLeagueInviteStep(step = "confirm") {
 function fillInviteAuthFromAccountInputs() {
   if (el.leagueInviteNameInput && !el.leagueInviteNameInput.value) {
     el.leagueInviteNameInput.value = String(el.accountNameInput?.value || state.account.user?.name || "");
-  }
-  if (el.leagueInviteEmailInput && !el.leagueInviteEmailInput.value) {
-    el.leagueInviteEmailInput.value = String(el.accountEmailInput?.value || state.account.user?.email || "");
   }
 }
 
@@ -4004,7 +3999,6 @@ async function signInFromInviteModal() {
 
 async function registerFromInviteModal() {
   const name = String(el.leagueInviteNameInput?.value || "").trim();
-  const email = String(el.leagueInviteEmailInput?.value || "").trim();
   const pin = String(el.leagueInvitePinInput?.value || "");
   if (!name || !pin) {
     setLeagueInviteInlineStatus("Enter a display name and PIN to create an account.", true);
@@ -4013,7 +4007,7 @@ async function registerFromInviteModal() {
   setLeagueInviteAuthBusy(true);
   setLeagueInviteInlineStatus("Creating account...");
   try {
-    const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin, email });
+    const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin });
     state.account.token = data.token || "";
     state.account.user = hydrateUserAvatarState(data.user || null);
     state.account.recoveryOpen = false;
@@ -8064,9 +8058,8 @@ async function initAccountSession() {
 
 async function registerAccount() {
   const name = el.accountNameInput?.value || "";
-  const email = el.accountEmailInput?.value || "";
   const pin = el.accountPinInput?.value || "";
-  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin, email });
+  const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin });
   state.account.token = data.token || "";
   state.account.user = hydrateUserAvatarState(data.user || null);
   state.account.recoveryOpen = false;
@@ -8152,7 +8145,7 @@ async function loginAccount() {
 
 async function startPinRecovery() {
   const name = String(el.accountNameInput?.value || "").trim();
-  const email = String(el.accountEmailInput?.value || "").trim();
+  const email = String(el.accountRecoveryEmailInput?.value || "").trim();
   if (!name || !email) {
     throw new Error("Enter your display name and recovery email first.");
   }
@@ -8168,7 +8161,7 @@ async function startPinRecovery() {
 
 async function completePinRecovery() {
   const name = String(el.accountNameInput?.value || "").trim();
-  const email = String(el.accountEmailInput?.value || "").trim();
+  const email = String(el.accountRecoveryEmailInput?.value || "").trim();
   const code = String(el.accountRecoveryCodeInput?.value || "").trim();
   const newPin = String(el.accountRecoveryNewPinInput?.value || "");
   if (!name || !email || !code || !newPin) {
@@ -8182,6 +8175,7 @@ async function completePinRecovery() {
   state.account.keepLoggedIn = getKeepLoggedInSelection();
   storeAccountToken(state.account.token, state.account.keepLoggedIn);
   if (el.accountPinInput) el.accountPinInput.value = "";
+  if (el.accountRecoveryEmailInput) el.accountRecoveryEmailInput.value = "";
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.value = "";
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.value = "";
   await runPostAuthBootstrap("PIN reset");
@@ -8199,7 +8193,11 @@ async function updateAccountEmail() {
   const data = await apiRequest("PATCH", `${API_PROXY_BASE}/v1/ezra/account/me`, { email }, state.account.token);
   state.account.user = hydrateUserAvatarState(data?.user || state.account.user);
   renderAccountUI();
-  setAccountStatus(`Recovery email saved for ${state.account.user?.name || "user"}.`);
+  if (data?.emailConfirmationSent) {
+    setAccountStatus(`Recovery email saved. Confirmation sent to ${email}.`);
+  } else {
+    setAccountStatus(`Recovery email saved for ${state.account.user?.name || "user"}.`);
+  }
 }
 
 async function saveAccountAvatar() {

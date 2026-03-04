@@ -668,6 +668,31 @@ async function sendRecoveryEmail(env, email, code) {
   return { ok: true, configured: true };
 }
 
+async function sendRecoveryEmailAddedConfirmation(env, email, displayName = "") {
+  const apiKey = String(env?.RESEND_API_KEY || "").trim();
+  const from = String(env?.EZRA_FROM_EMAIL || "").trim();
+  if (!apiKey || !from) return { ok: false, configured: false };
+  const who = String(displayName || "there").trim();
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      from,
+      to: [email],
+      subject: "Recovery email added to your EZRASCORES account",
+      text: `Hi ${who}, your recovery email was added successfully. You can now use Forgot PIN if needed.`,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Email delivery failed (${res.status}): ${detail.slice(0, 160)}`);
+  }
+  return { ok: true, configured: true };
+}
+
 async function createRecoveryCode(db, userId, emailKey, purpose = "pin_reset") {
   const id = randomHex(12);
   const code = randomNumericCode(6);
@@ -1977,7 +2002,7 @@ async function handleAccountMe(db, request) {
   );
 }
 
-async function handleAccountUpdateMe(db, request) {
+async function handleAccountUpdateMe(db, request, env) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
   const body = await parseJson(request);
@@ -2001,9 +2026,20 @@ async function handleAccountUpdateMe(db, request) {
     .prepare("UPDATE ezra_users SET email = ?2, email_key = ?3, avatar_json = ?4, updated_at = ?5 WHERE id = ?1")
     .bind(session.user_id, emailCheck.clean, emailCheck.clean, JSON.stringify(avatar), nowIso)
     .run();
+  const previousEmail = normalizeEmail(session.email || "");
+  let emailConfirmationSent = false;
+  if (emailCheck.clean && emailCheck.clean !== previousEmail) {
+    try {
+      const out = await sendRecoveryEmailAddedConfirmation(env, emailCheck.clean, session.name || "");
+      emailConfirmationSent = Boolean(out?.ok);
+    } catch {
+      emailConfirmationSent = false;
+    }
+  }
   return json(
     {
       ok: true,
+      emailConfirmationSent,
       user: {
         id: session.user_id,
         name: session.name,
@@ -2923,7 +2959,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       return handleAccountMe(db, request);
     }
     if (route === "me" && (request.method === "PATCH" || request.method === "PUT")) {
-      return handleAccountUpdateMe(db, request);
+      return handleAccountUpdateMe(db, request, env);
     }
     if (route === "avatar" && request.method === "GET") {
       return handleAccountGetAvatar(db, request);

@@ -102,7 +102,6 @@
                 <p class="settings-label">Account (optional cloud save)</p>
                 <div id="account-auth-signedout" class="account-auth-box">
                   <input id="account-name-input" class="account-input" type="text" maxlength="32" placeholder="Display name" />
-                  <input id="account-email-input" class="account-input" type="email" maxlength="254" placeholder="Recovery email (optional)" />
                   <input id="account-pin-input" class="account-input" type="password" maxlength="24" placeholder="PIN / passcode" />
                   <label class="account-checkbox">
                     <input id="account-keep-logged-in" type="checkbox" />
@@ -114,6 +113,7 @@
                     <button id="account-forgot-btn" class="btn" type="button">Forgot PIN?</button>
                   </div>
                   <div id="account-recovery-box" class="account-recovery-box hidden">
+                    <input id="account-recovery-email-input" class="account-input" type="email" maxlength="254" placeholder="Recovery email" />
                     <input id="account-recovery-code-input" class="account-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Recovery code from email (6 digits)" />
                     <input id="account-recovery-new-pin-input" class="account-input" type="password" maxlength="24" placeholder="New PIN / passcode" />
                     <div class="account-actions">
@@ -136,7 +136,7 @@
                     <button id="account-logout-btn" class="btn" type="button">Sign Out</button>
                   </div>
                 </div>
-                <p id="account-helper" class="settings-note muted">Create account or sign in. Recovery email is optional but required for PIN reset.</p>
+                <p id="account-helper" class="settings-note muted">Create account or sign in. Add recovery email after account creation for PIN reset.</p>
                 <p id="account-status" class="settings-note muted" role="status" aria-live="polite">Logged out. Existing features still work locally.</p>
               </div>
             </div>
@@ -513,7 +513,6 @@
         </div>
         <div id="league-invite-auth-box" class="hidden">
           <input id="league-invite-name-input" class="account-input" type="text" maxlength="32" placeholder="Display name" />
-          <input id="league-invite-email-input" class="account-input" type="email" maxlength="254" placeholder="Recovery email (optional)" />
           <input id="league-invite-pin-input" class="account-input" type="password" maxlength="24" placeholder="PIN / passcode" />
           <div class="account-actions">
             <button id="league-invite-signin-btn" class="btn" type="button">Sign In</button>
