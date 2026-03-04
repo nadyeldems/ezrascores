@@ -7433,7 +7433,18 @@ function normalizeName(value) {
 
 function formatDateTime(dateStr, timeStr) {
   if (!dateStr) return "TBA";
-  const full = new Date(`${dateStr}T${timeStr || "12:00:00"}`);
+  const safeTime = String(timeStr || "").trim().slice(0, 8);
+  if (!safeTime) {
+    const dayOnly = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(dayOnly.getTime())) return "TBA";
+    return dayOnly.toLocaleString("en-GB", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  }
+  const full = new Date(`${dateStr}T${safeTime}`);
+  if (Number.isNaN(full.getTime())) return "TBA";
   return full.toLocaleString("en-GB", {
     weekday: "short",
     month: "short",
@@ -7478,7 +7489,13 @@ function firstArrayValue(payload) {
 }
 
 function parseStatusText(event) {
-  return (event?.strStatus || event?.strProgress || "").toLowerCase();
+  const status = String(event?.strStatus || "").trim();
+  const progress = String(event?.strProgress || "").trim();
+  const minute = String(event?.strMinute || "").trim();
+  return [status, progress, minute]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }
 
 function eventStateWeight(event) {
@@ -7576,6 +7593,9 @@ function isDeferredEvent(event) {
 function isNotStartedEvent(event) {
   const s = parseStatusText(event);
   if (!s) return false;
+  if (/\b(ht|1h|2h|live|in play|playing|et|pen)\b/.test(s) || /\d{1,3}\s*'/.test(s)) {
+    return false;
+  }
   return /\b(not started|ns|scheduled|fixture)\b/.test(s);
 }
 
@@ -8758,17 +8778,28 @@ function buildPredictionModule(event, stateInfo) {
 
   if (showReadonly) {
     let awarded = Number(memberPick?.awarded || 0);
-    if (isCompleted) {
+    if (isCompleted || record?.settled) {
       const pair = scorePair(event);
+      const finalHome = pair ? Number(pair.home) : numericScore(record?.finalHome);
+      const finalAway = pair ? Number(pair.away) : numericScore(record?.finalAway);
       const pickHome = Number(memberPick?.home);
       const pickAway = Number(memberPick?.away);
-      if (pair && Number.isFinite(pickHome) && Number.isFinite(pickAway)) {
-        if (pickHome === Number(pair.home) && pickAway === Number(pair.away)) {
+      if (Number.isFinite(finalHome) && Number.isFinite(finalAway) && Number.isFinite(pickHome) && Number.isFinite(pickAway)) {
+        if (pickHome === finalHome && pickAway === finalAway) {
           awarded = 2;
-        } else if (predictionResultCode(pickHome, pickAway) === predictionResultCode(Number(pair.home), Number(pair.away))) {
+        } else if (predictionResultCode(pickHome, pickAway) === predictionResultCode(finalHome, finalAway)) {
           awarded = 1;
         } else {
           awarded = 0;
+        }
+        if (record) {
+          record.settled = true;
+          record.finalHome = finalHome;
+          record.finalAway = finalAway;
+        }
+        if (memberPick.awarded !== awarded) {
+          memberPick.awarded = awarded;
+          memberPick.scored = true;
         }
       }
     }
@@ -9875,6 +9906,8 @@ function patchVisibleFixtureRows(events) {
       statusEl.classList.add(stateInfo.key);
       statusEl.textContent = stateInfo.label;
     }
+    const kickoffEl = node.querySelector(".kickoff-time");
+    if (kickoffEl) kickoffEl.textContent = formatKickoffTime(event);
     const favName = state.favoriteTeam?.strTeam || "";
     const homeName = event.strHomeTeam || "TBC";
     const awayName = event.strAwayTeam || "TBC";

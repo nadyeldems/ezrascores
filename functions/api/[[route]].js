@@ -762,7 +762,12 @@ function predictionResultCode(home, away) {
 }
 
 function parseStatusText(event) {
-  return String(event?.strStatus || event?.strProgress || "")
+  const status = String(event?.strStatus || "").trim();
+  const progress = String(event?.strProgress || "").trim();
+  const minute = String(event?.strMinute || "").trim();
+  return [status, progress, minute]
+    .filter(Boolean)
+    .join(" ")
     .toLowerCase()
     .trim();
 }
@@ -803,7 +808,9 @@ function eventLikelyFinal(event, fallbackKickoffIso = "") {
   const kickoffMs = eventKickoffMs(event, fallbackKickoffIso);
   if (!Number.isFinite(kickoffMs)) return false;
   const elapsedMs = Date.now() - kickoffMs;
-  return elapsedMs > 150 * 60 * 1000;
+  // Guard against false finals from partial/stale scores.
+  // For same-day fixtures without explicit final status, require a larger buffer.
+  return elapsedMs > 210 * 60 * 1000;
 }
 
 function questBonusPointsFromState(state, userId) {
@@ -900,7 +907,8 @@ function predictionEntriesForUser(state, userId) {
 }
 
 function ttlForEventResult(result) {
-  if (result?.final) return 30 * 24 * 60 * 60 * 1000;
+  // Keep finals reasonably fresh so corrected post-match scores can still reconcile.
+  if (result?.final) return 6 * 60 * 60 * 1000;
   if (result?.home !== null && result?.away !== null) return 2 * 60 * 1000;
   return 15 * 60 * 1000;
 }
