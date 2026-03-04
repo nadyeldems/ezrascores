@@ -781,10 +781,8 @@ function isLiveEvent(event) {
 
 function eventKickoffMs(event, fallbackKickoffIso = "") {
   const date = String(event?.dateEvent || "").trim();
-  const time = String(event?.strTime || "12:00:00")
-    .trim()
-    .slice(0, 8);
-  const fromEvent = date ? Date.parse(`${date}T${time}Z`) : Number.NaN;
+  const time = normalizeTime(event?.strTime || "");
+  const fromEvent = date && time ? Date.parse(`${date}T${time}Z`) : Number.NaN;
   if (Number.isFinite(fromEvent)) return fromEvent;
   const fromFallback = fallbackKickoffIso ? Date.parse(String(fallbackKickoffIso)) : Number.NaN;
   return Number.isFinite(fromFallback) ? fromFallback : Number.NaN;
@@ -982,9 +980,8 @@ async function fetchEventResultById(key, eventId, resultCache, db, options = {})
     const event = firstArray(data)?.[0] || null;
     const home = numericScore(event?.intHomeScore);
     const away = numericScore(event?.intAwayScore);
-    const kickoffAt = (event?.dateEvent && event?.strTime)
-      ? `${String(event.dateEvent).trim()}T${String(event.strTime || "12:00:00").trim().slice(0, 8)}Z`
-      : String(options?.kickoffIso || "");
+    const normalizedTime = normalizeTime(event?.strTime || "");
+    const kickoffAt = event?.dateEvent && normalizedTime ? `${String(event.dateEvent).trim()}T${normalizedTime}Z` : String(options?.kickoffIso || "");
     const final = eventLikelyFinal(event, options?.kickoffIso || "") && home !== null && away !== null;
     const result = { final, home, away, kickoffAt, event };
     await writeCachedEventResult(db, cacheKey, event, result);
@@ -1015,9 +1012,8 @@ async function hydrateLiveScoresForEvents(events, key, db) {
   // Keep this bounded: only hydrate likely live rows that are missing scores.
   await Promise.allSettled(
     candidates.slice(0, 12).map(async (event) => {
-      const kickoffIso = event?.dateEvent
-        ? `${String(event.dateEvent).trim()}T${String(event.strTime || "12:00:00").trim().slice(0, 8)}Z`
-        : "";
+      const normalizedTime = normalizeTime(event?.strTime || "");
+      const kickoffIso = event?.dateEvent && normalizedTime ? `${String(event.dateEvent).trim()}T${normalizedTime}Z` : "";
       const result = await fetchEventResultById(key, event.idEvent, resultCache, db, { kickoffIso });
       const scoreHome = numericScore(result?.home);
       const scoreAway = numericScore(result?.away);
@@ -1031,6 +1027,43 @@ async function hydrateLiveScoresForEvents(events, key, db) {
         event.strProgress = fullEvent.strProgress || event.strProgress || "";
         event.strMinute = fullEvent.strMinute || event.strMinute || "";
         event.strTimestamp = fullEvent.strTimestamp || event.strTimestamp || "";
+      }
+    })
+  );
+  return list;
+}
+
+async function hydrateEventScoresForDay(events, key, db, dayIso) {
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) return list;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (!dayIso || dayIso > todayIso) return list;
+  const resultCache = new Map();
+  const candidates = list.filter((event) => {
+    if (!event || typeof event !== "object") return false;
+    if (!String(event.idEvent || "").trim()) return false;
+    return numericScore(event.intHomeScore) === null || numericScore(event.intAwayScore) === null;
+  });
+  if (!candidates.length) return list;
+
+  await Promise.allSettled(
+    candidates.slice(0, 36).map(async (event) => {
+      const normalizedTime = normalizeTime(event?.strTime || "");
+      const kickoffIso = event?.dateEvent && normalizedTime ? `${String(event.dateEvent).trim()}T${normalizedTime}Z` : "";
+      const result = await fetchEventResultById(key, event.idEvent, resultCache, db, { kickoffIso });
+      const scoreHome = numericScore(result?.home);
+      const scoreAway = numericScore(result?.away);
+      if (scoreHome !== null && scoreAway !== null) {
+        event.intHomeScore = scoreHome;
+        event.intAwayScore = scoreAway;
+      }
+      const fullEvent = result?.event && typeof result.event === "object" ? normalizeEventForCache(result.event) : null;
+      if (fullEvent) {
+        event.strStatus = fullEvent.strStatus || event.strStatus || "";
+        event.strProgress = fullEvent.strProgress || event.strProgress || "";
+        event.strMinute = fullEvent.strMinute || event.strMinute || "";
+        event.strTimestamp = fullEvent.strTimestamp || event.strTimestamp || "";
+        if (fullEvent.strTime) event.strTime = fullEvent.strTime;
       }
     })
   );
@@ -3620,6 +3653,7 @@ async function handleEzraFixturesRoute(context, key) {
   }
 
   let eventsOut = sortByDateTime(fromCache);
+  eventsOut = await hydrateEventScoresForDay(eventsOut, key, db, dateIso);
   if (dateIso === todayIso) {
     try {
       const origin = `${url.protocol}//${url.host}`;

@@ -9395,15 +9395,12 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
 
   if (dateIso === prevIso || dateIso === nextIso) {
     const cachedFast = getDateFixtureCache(dateIso);
-    const hasFast =
-      activeCodes.every((code) => Array.isArray(cachedFast?.[code])) &&
-      concatLeagueBuckets(cachedFast, activeCodes).length > 0;
+    const hasFast = activeCodes.every((code) => Array.isArray(cachedFast?.[code]));
     if (hasFast) {
       if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
       activeCodes.forEach((code) => {
         state.selectedDateFixtures[code] = [...(cachedFast?.[code] || [])].sort(fixtureSort);
       });
-      return true;
     }
     const quickByLeague = await Promise.all(
       activeCodes.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, dateIso), []))
@@ -9686,6 +9683,8 @@ function setMainTab(tab) {
   renderMobileSectionLayout();
   renderFixtures();
   renderTables();
+  renderFunZone();
+  renderFamilyLeaguePanel();
 }
 
 function renderMainTabButtons() {
@@ -10784,11 +10783,13 @@ function fixtureKickoffDate(event) {
     if (Number.isFinite(ts)) return new Date(ts);
   }
   if (!event?.dateEvent) return null;
-  const rawTime = String(event.strTime || "12:00:00").slice(0, 8);
-  const utcTs = Date.parse(`${event.dateEvent}T${rawTime}Z`);
-  if (Number.isFinite(utcTs)) return new Date(utcTs);
-  const localTs = Date.parse(`${event.dateEvent}T${rawTime}`);
-  if (Number.isFinite(localTs)) return new Date(localTs);
+  const rawTime = String(event.strTime || "").trim().slice(0, 8);
+  if (rawTime) {
+    const utcTs = Date.parse(`${event.dateEvent}T${rawTime}Z`);
+    if (Number.isFinite(utcTs)) return new Date(utcTs);
+    const localTs = Date.parse(`${event.dateEvent}T${rawTime}`);
+    if (Number.isFinite(localTs)) return new Date(localTs);
+  }
   return null;
 }
 
@@ -10913,12 +10914,6 @@ async function fullRefresh() {
     state.selectedDate = selectedDateForRefresh;
     const selectedSeq = ++state.selectedDateLoadSeq;
     await refreshSelectedDateFixtures(selectedDateForRefresh, selectedSeq);
-    if (accountSignedIn() && !state.account.bootstrapInFlight && Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
-      await safeLoad(() => refreshLeagueDirectory(), null);
-    }
-    if (accountSignedIn() && !state.account.bootstrapInFlight) {
-      await safeLoad(() => refreshChallengeDashboard(false), null);
-    }
     settleFamilyPredictions();
     buildFavoriteOptions();
     await safeLoad(() => renderFavorite(), null);
@@ -10942,6 +10937,12 @@ async function fullRefresh() {
       showRandomPlayerPop();
     }
     ensurePlayerPopContinuity();
+    if (accountSignedIn() && !state.account.bootstrapInFlight) {
+      if (Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
+        safeLoad(() => refreshLeagueDirectory(), null);
+      }
+      safeLoad(() => refreshChallengeDashboard(false), null);
+    }
 
     state.lastRefresh = new Date();
     localStorage.setItem("ezra_last_refresh_iso", state.lastRefresh.toISOString());
