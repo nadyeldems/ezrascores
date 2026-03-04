@@ -1,6 +1,7 @@
 const API_PROXY_BASE = "/api";
 const ONE_MINUTE_MS = 60 * 1000;
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+const LEAGUE_VISIBILITY_REFRESH_MS = ONE_MINUTE_MS;
 const RESULTS_HISTORY_DAYS = 92;
 const FIXTURES_FUTURE_DAYS = 183;
 const POLL_LIVE_MS = ONE_MINUTE_MS;
@@ -18,6 +19,26 @@ const LEAGUES = {
   LALIGA: { id: "4335", name: "Spanish La Liga" },
 };
 const LEAGUE_CODES = Object.keys(LEAGUES);
+const DEFAULT_LEAGUE_VISIBILITY = { EPL: true, CHAMP: true, LALIGA: true };
+
+function normalizeLeagueVisibility(input) {
+  const next = {
+    EPL: Boolean(input?.EPL),
+    CHAMP: Boolean(input?.CHAMP),
+    LALIGA: Boolean(input?.LALIGA),
+  };
+  if (!next.EPL && !next.CHAMP && !next.LALIGA) {
+    next.EPL = true;
+  }
+  return next;
+}
+
+function getVisibleLeagueCodes() {
+  if (typeof state === "undefined" || !state || !state.leagueVisibility) return [...LEAGUE_CODES];
+  const normalized = normalizeLeagueVisibility(state.leagueVisibility);
+  const visible = LEAGUE_CODES.filter((code) => normalized[code]);
+  return visible.length ? visible : ["EPL"];
+}
 
 function emptyLeagueBuckets(seed) {
   return LEAGUE_CODES.reduce((acc, code) => {
@@ -26,8 +47,9 @@ function emptyLeagueBuckets(seed) {
   }, {});
 }
 
-function concatLeagueBuckets(buckets) {
-  return LEAGUE_CODES.flatMap((code) => (Array.isArray(buckets?.[code]) ? buckets[code] : []));
+function concatLeagueBuckets(buckets, codes = null) {
+  const useCodes = Array.isArray(codes) && codes.length ? codes : getVisibleLeagueCodes();
+  return useCodes.flatMap((code) => (Array.isArray(buckets?.[code]) ? buckets[code] : []));
 }
 
 const inflightApiGets = new Map();
@@ -1918,6 +1940,8 @@ const INITIAL_MAIN_TAB = SAFE_STORED_MAIN_TAB === "squad" ? "home" : SAFE_STORED
 
 const state = {
   selectedLeague: "ALL",
+  leagueVisibility: { ...DEFAULT_LEAGUE_VISIBILITY },
+  lastLeagueVisibilityAt: 0,
   mainTab: INITIAL_MAIN_TAB,
   serverTimeOffsetMs: 0,
   selectedDate: "",
@@ -8211,6 +8235,52 @@ async function fetchLeagueMeta(leagueId) {
   return data?.league || null;
 }
 
+async function fetchLeagueVisibility() {
+  const data = await apiGetV1("ezra/league-visibility");
+  return normalizeLeagueVisibility(data?.visibility || DEFAULT_LEAGUE_VISIBILITY);
+}
+
+async function syncLeagueVisibilityFromServer(force = false) {
+  const now = Date.now();
+  if (!force && now - Number(state.lastLeagueVisibilityAt || 0) < LEAGUE_VISIBILITY_REFRESH_MS) {
+    return false;
+  }
+
+  const visibility = await safeLoad(() => fetchLeagueVisibility(), null);
+  if (!visibility) return false;
+
+  state.lastLeagueVisibilityAt = now;
+  const normalized = normalizeLeagueVisibility(visibility);
+  const changed = LEAGUE_CODES.some((code) => Boolean(state.leagueVisibility?.[code]) !== Boolean(normalized?.[code]));
+  state.leagueVisibility = normalized;
+
+  if (!changed) return false;
+
+  ensureSelectedLeagueVisible();
+  LEAGUE_CODES.forEach((code) => {
+    if (!normalized[code]) {
+      state.selectedDateFixtures[code] = [];
+      state.fixtures.live[code] = [];
+      state.fixtures.today[code] = [];
+      state.fixtures.previous[code] = [];
+      state.fixtures.next[code] = [];
+      state.tables[code] = [];
+      state.teamsByLeague[code] = [];
+    }
+  });
+  rebuildTeamBadgeMap();
+  ensureDefaultFavoriteTeam();
+  return true;
+}
+
+function ensureSelectedLeagueVisible() {
+  const visible = getVisibleLeagueCodes();
+  if (state.selectedLeague === "ALL") return;
+  if (!visible.includes(state.selectedLeague)) {
+    state.selectedLeague = "ALL";
+  }
+}
+
 async function fetchTeamFormFromCache(team, n = 5) {
   if (!team?.idTeam) return [];
   const leagueCode = teamLeagueCode(team);
@@ -8383,7 +8453,7 @@ function findKnownTeamById(teamId) {
 }
 
 function ensureDefaultFavoriteTeam() {
-  const allTeams = concatLeagueBuckets(state.teamsByLeague);
+  const allTeams = concatLeagueBuckets(state.teamsByLeague, getVisibleLeagueCodes());
   if (!allTeams.length) return;
   const currentExists = allTeams.some((team) => team.idTeam === state.favoriteTeamId);
   if (currentExists) return;
@@ -9198,7 +9268,7 @@ function tableBandLegendHtml(leagueCode) {
 function renderTables() {
   el.tablesWrap.innerHTML = "";
 
-  LEAGUE_CODES.forEach((key) => {
+  getVisibleLeagueCodes().forEach((key) => {
     if (state.selectedLeague !== "ALL" && state.selectedLeague !== key) return;
 
     const rows = state.tables[key] || [];
@@ -9251,14 +9321,27 @@ function renderTables() {
 
 function filteredEvents(kind) {
   if (state.selectedLeague === "ALL") {
-    return concatLeagueBuckets(state.fixtures[kind]);
+    return concatLeagueBuckets(state.fixtures[kind], getVisibleLeagueCodes());
   }
   return [...state.fixtures[kind][state.selectedLeague]];
 }
 
 function setLeagueButtonState() {
+  ensureSelectedLeagueVisible();
+  const visibleCodes = new Set(getVisibleLeagueCodes());
   el.leagueButtons.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.league === state.selectedLeague);
+    const code = String(btn.dataset.league || "");
+    const isAll = code === "ALL";
+    const visible = isAll ? true : visibleCodes.has(code);
+    btn.classList.toggle("hidden", !visible);
+    if (!visible) {
+      btn.classList.remove("active");
+      btn.setAttribute("aria-pressed", "false");
+      return;
+    }
+    const active = code === state.selectedLeague;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
   });
 }
 
@@ -9281,6 +9364,7 @@ function normalizeDateIsoInput(value) {
 }
 
 async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = state.selectedDateLoadSeq) {
+  const activeCodes = getVisibleLeagueCodes();
   const now = new Date();
   const prev = new Date(now);
   prev.setDate(now.getDate() - 1);
@@ -9295,14 +9379,14 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
     const todayEmpty = !concatLeagueBuckets(state.fixtures.today).length;
     if (todayEmpty) {
       const todayByLeague = await Promise.all(
-        LEAGUE_CODES.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, todayIso), []))
+        activeCodes.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, todayIso), []))
       );
-      LEAGUE_CODES.forEach((code, index) => {
+      activeCodes.forEach((code, index) => {
         state.fixtures.today[code] = [...(todayByLeague[index] || [])].sort(fixtureSort);
       });
     }
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-    LEAGUE_CODES.forEach((code) => {
+    activeCodes.forEach((code) => {
       state.selectedDateFixtures[code] = [...(state.fixtures.today[code] || [])];
     });
     setDateFixtureCache(dateIso, state.selectedDateFixtures);
@@ -9311,24 +9395,26 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
 
   if (dateIso === prevIso || dateIso === nextIso) {
     const cachedFast = getDateFixtureCache(dateIso);
-    const hasFast = LEAGUE_CODES.every((code) => Array.isArray(cachedFast?.[code])) && concatLeagueBuckets(cachedFast).length > 0;
+    const hasFast =
+      activeCodes.every((code) => Array.isArray(cachedFast?.[code])) &&
+      concatLeagueBuckets(cachedFast, activeCodes).length > 0;
     if (hasFast) {
       if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-      LEAGUE_CODES.forEach((code) => {
+      activeCodes.forEach((code) => {
         state.selectedDateFixtures[code] = [...(cachedFast?.[code] || [])].sort(fixtureSort);
       });
       return true;
     }
     const quickByLeague = await Promise.all(
-      LEAGUE_CODES.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, dateIso), []))
+      activeCodes.map((code) => safeLoad(() => fetchLeagueDayFixtures(LEAGUES[code].id, dateIso), []))
     );
     const quickCache = {};
-    LEAGUE_CODES.forEach((code, index) => {
+    activeCodes.forEach((code, index) => {
       quickCache[code] = quickByLeague[index] || [];
     });
     setDateFixtureCache(dateIso, quickCache);
     if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
-    LEAGUE_CODES.forEach((code) => {
+    activeCodes.forEach((code) => {
       state.selectedDateFixtures[code] = [...(quickCache[code] || [])].sort(fixtureSort);
     });
     return true;
@@ -9336,12 +9422,12 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
 
   const cached = getDateFixtureCache(dateIso);
   const dateRows = {};
-  LEAGUE_CODES.forEach((code) => {
+  activeCodes.forEach((code) => {
     dateRows[code] = cached?.[code];
   });
   const neededCodes =
     state.selectedLeague === "ALL"
-      ? LEAGUE_CODES.filter((code) => !Array.isArray(dateRows[code]))
+      ? activeCodes.filter((code) => !Array.isArray(dateRows[code]))
       : !Array.isArray(dateRows[state.selectedLeague])
         ? [state.selectedLeague]
         : [];
@@ -9353,7 +9439,7 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
     dateRows[code] = fetched[index];
   });
   const nextCache = {};
-  LEAGUE_CODES.forEach((code) => {
+  activeCodes.forEach((code) => {
     nextCache[code] = Array.isArray(dateRows[code]) ? dateRows[code] : [];
   });
   setDateFixtureCache(dateIso, nextCache);
@@ -9361,7 +9447,7 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
   const prefetchedCache = getDateFixtureCache(dateIso);
   // Background prefetch for the other league when user is focused on one league.
   if (state.selectedLeague !== "ALL") {
-    LEAGUE_CODES.filter((code) => code !== state.selectedLeague).forEach((otherLeague) => {
+    activeCodes.filter((code) => code !== state.selectedLeague).forEach((otherLeague) => {
       const otherMissing = !Array.isArray(prefetchedCache?.[otherLeague]);
       if (!otherMissing) return;
       safeLoad(async () => {
@@ -9373,7 +9459,7 @@ async function refreshSelectedDateFixtures(dateIso = state.selectedDate, seq = s
 
   if (seq !== state.selectedDateLoadSeq || dateIso !== state.selectedDate) return false;
   const resolved = getDateFixtureCache(dateIso);
-  LEAGUE_CODES.forEach((code) => {
+  activeCodes.forEach((code) => {
     state.selectedDateFixtures[code] = [...(resolved?.[code] || [])].sort(fixtureSort);
   });
   return true;
@@ -9451,8 +9537,9 @@ function renderFixtures() {
   const homeMode = state.mainTab === "home";
   let events;
   if (homeMode) {
-    const today = concatLeagueBuckets(state.fixtures.today);
-    const tomorrow = concatLeagueBuckets(state.fixtures.next);
+    const visibleCodes = getVisibleLeagueCodes();
+    const today = concatLeagueBuckets(state.fixtures.today, visibleCodes);
+    const tomorrow = concatLeagueBuckets(state.fixtures.next, visibleCodes);
     const todaySorted = today.sort(fixtureSort);
     if (todaySorted.length > 0) {
       el.fixturesTitle.textContent = `Today's Fixtures (${formatDateWithDayUK(toISODate(new Date()))})`;
@@ -9482,7 +9569,7 @@ function renderFixtures() {
 
 function selectedEventsForCurrentView() {
   return state.selectedLeague === "ALL"
-    ? concatLeagueBuckets(state.selectedDateFixtures)
+    ? concatLeagueBuckets(state.selectedDateFixtures, getVisibleLeagueCodes())
     : [...state.selectedDateFixtures[state.selectedLeague]];
 }
 
@@ -9822,7 +9909,7 @@ function initRevealOnScroll() {
 
 function buildFavoriteOptions() {
   if (!el.favoritePickerMenu) return;
-  const allTeams = concatLeagueBuckets(state.teamsByLeague);
+  const allTeams = concatLeagueBuckets(state.teamsByLeague, getVisibleLeagueCodes());
   const validTeams = allTeams.filter((t) => t && t.idTeam && t.strTeam);
   const uniqueTeams = Array.from(new Map(validTeams.map((t) => [t.idTeam, t])).values());
   const byName = uniqueTeams.sort((a, b) => (a.strTeam || "").localeCompare(b.strTeam || ""));
@@ -9914,7 +10001,7 @@ function buildFavoriteOptions() {
 function findTeamByIdCached(teamId) {
   const wanted = String(teamId || "").trim();
   if (!wanted) return null;
-  const all = concatLeagueBuckets(state.teamsByLeague);
+  const all = concatLeagueBuckets(state.teamsByLeague, getVisibleLeagueCodes());
   return all.find((team) => String(team?.idTeam || "") === wanted) || null;
 }
 
@@ -9948,7 +10035,7 @@ function hydrateTeamsFromTablesIfNeeded() {
     return [...byId.values()].filter((team) => team?.strTeam);
   };
 
-  LEAGUE_CODES.forEach((code) => {
+  getVisibleLeagueCodes().forEach((code) => {
     if (!Array.isArray(state.teamsByLeague[code]) || !state.teamsByLeague[code].length) {
       const rows = Array.isArray(state.tables[code]) ? state.tables[code] : [];
       if (rows.length) {
@@ -9960,21 +10047,22 @@ function hydrateTeamsFromTablesIfNeeded() {
 }
 
 async function ensureFavoritePickerDataLoaded() {
-  const hasAnyTeams = LEAGUE_CODES.some((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length);
+  const activeCodes = getVisibleLeagueCodes();
+  const hasAnyTeams = activeCodes.some((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length);
   if (hasAnyTeams) return;
   hydrateTeamsFromTablesIfNeeded();
-  const hydratedTeams = LEAGUE_CODES.some((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length);
+  const hydratedTeams = activeCodes.some((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length);
   if (hydratedTeams) {
     ensureDefaultFavoriteTeam();
     return;
   }
   const teamsByCode = await Promise.all(
-    LEAGUE_CODES.map((code) => safeLoad(() => fetchAllTeams(LEAGUES[code].id), []))
+    activeCodes.map((code) => safeLoad(() => fetchAllTeams(LEAGUES[code].id), []))
   );
-  LEAGUE_CODES.forEach((code, index) => {
+  activeCodes.forEach((code, index) => {
     state.teamsByLeague[code] = Array.isArray(teamsByCode[index]) ? teamsByCode[index] : [];
   });
-  if (!LEAGUE_CODES.every((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length)) {
+  if (!activeCodes.every((code) => Array.isArray(state.teamsByLeague[code]) && state.teamsByLeague[code].length)) {
     hydrateTeamsFromTablesIfNeeded();
   }
   rebuildTeamBadgeMap();
@@ -10593,6 +10681,7 @@ async function loadCoreData(options = {}) {
   const includeStatic = options.includeStatic !== false;
   const includeTables = options.includeTables !== false;
   const includeSurroundingDays = options.includeSurroundingDays !== false;
+  const activeCodes = getVisibleLeagueCodes();
   const now = new Date();
   const prev = new Date(now);
   prev.setDate(now.getDate() - 1);
@@ -10610,7 +10699,7 @@ async function loadCoreData(options = {}) {
   );
 
   const leaguePayloads = await Promise.all(
-    LEAGUE_CODES.map(async (code) => {
+    activeCodes.map(async (code) => {
       const leagueId = LEAGUES[code].id;
       const [todayRows, liveRows, prevRows, nextRows, tableRows, teamsRows, leagueMeta] = await Promise.all([
         safeLoad(() => fetchLeagueDayFixtures(leagueId, dates.today), null),
@@ -10629,7 +10718,7 @@ async function loadCoreData(options = {}) {
     })
   );
 
-  LEAGUE_CODES.forEach((code) => {
+  activeCodes.forEach((code) => {
     const payload = leaguePayloads.find((entry) => entry[0] === code)?.[1];
     if (!payload) return;
     const resolvedToday = Array.isArray(payload.todayRows) ? payload.todayRows : state.fixtures.today[code] || [];
@@ -10656,7 +10745,7 @@ async function loadCoreData(options = {}) {
   setDateFixtureCache(dates.prev, emptyLeagueBuckets((code) => state.fixtures.previous[code]));
   setDateFixtureCache(dates.next, emptyLeagueBuckets((code) => state.fixtures.next[code]));
 
-  const missingTeamBuckets = LEAGUE_CODES.some((code) => !Array.isArray(state.teamsByLeague[code]) || !state.teamsByLeague[code].length);
+  const missingTeamBuckets = activeCodes.some((code) => !Array.isArray(state.teamsByLeague[code]) || !state.teamsByLeague[code].length);
   if (missingTeamBuckets) {
     hydrateTeamsFromTablesIfNeeded();
   }
@@ -10736,12 +10825,14 @@ function currentPollContext() {
 }
 
 function shouldFetchStaticData() {
-  if (LEAGUE_CODES.some((code) => !Array.isArray(state.tables[code]) || !state.tables[code].length)) return true;
+  const visibleCodes = getVisibleLeagueCodes();
+  if (visibleCodes.some((code) => !Array.isArray(state.tables[code]) || !state.tables[code].length)) return true;
   return Date.now() - state.lastStaticRefreshAt >= STATIC_REFRESH_MS;
 }
 
 function shouldFetchTables(context) {
-  if (LEAGUE_CODES.some((code) => !Array.isArray(state.tables[code]) || !state.tables[code].length)) return true;
+  const visibleCodes = getVisibleLeagueCodes();
+  if (visibleCodes.some((code) => !Array.isArray(state.tables[code]) || !state.tables[code].length)) return true;
   const intervalMs = context?.hasLive ? ONE_MINUTE_MS : THREE_HOURS_MS;
   return Date.now() - state.lastTableRefreshAt >= intervalMs;
 }
@@ -10791,6 +10882,10 @@ async function fullRefresh() {
   renderLastRefreshed();
   let nextContext = currentPollContext();
   try {
+    const visibilityChanged = await syncLeagueVisibilityFromServer(!state.lastLeagueVisibilityAt || !state.boot.firstRefreshDone);
+    if (visibilityChanged) {
+      setLeagueButtonState();
+    }
     maybeNotifyDailyQuestReset();
     if (el.fixturesTitle) {
       el.fixturesTitle.textContent = "Fixtures (updating...)";

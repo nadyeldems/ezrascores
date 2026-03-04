@@ -22,7 +22,11 @@ const el = {
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || "",
   users: [],
-  league: "ALL",
+  leagueVisibility: {
+    EPL: true,
+    CHAMP: true,
+    LALIGA: true,
+  },
 };
 
 function setStatus(node, msg, type = "") {
@@ -50,13 +54,41 @@ async function login(username, password) {
 }
 
 async function fetchUsers() {
-  const qs = new URLSearchParams();
-  if (state.league && state.league !== "ALL") qs.set("league", state.league);
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  const res = await fetch(`${API}/users${suffix}`, { headers: authHeaders() });
+  const res = await fetch(`${API}/users`, { headers: authHeaders() });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `Fetch failed (${res.status})`);
   return data;
+}
+
+function normalizeLeagueVisibility(input) {
+  const next = {
+    EPL: Boolean(input?.EPL),
+    CHAMP: Boolean(input?.CHAMP),
+    LALIGA: Boolean(input?.LALIGA),
+  };
+  if (!next.EPL && !next.CHAMP && !next.LALIGA) {
+    next.EPL = true;
+  }
+  return next;
+}
+
+async function fetchLeagueVisibility() {
+  const res = await fetch(`${API}/league-visibility`, { headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Visibility fetch failed (${res.status})`);
+  return normalizeLeagueVisibility(data?.visibility || {});
+}
+
+async function saveLeagueVisibility(visibility) {
+  const payload = normalizeLeagueVisibility(visibility || {});
+  const res = await fetch(`${API}/league-visibility`, {
+    method: "PUT",
+    headers: authHeaders(),
+    body: JSON.stringify({ visibility: payload }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Visibility save failed (${res.status})`);
+  return normalizeLeagueVisibility(data?.visibility || payload);
 }
 
 function formatLastActivity(iso) {
@@ -102,11 +134,12 @@ function setAuthedView(authed) {
   el.dashCard.classList.toggle("hidden", !authed);
 }
 
-function setLeagueFilter(nextLeague) {
-  const normalized = String(nextLeague || "ALL").toUpperCase();
-  state.league = ["ALL", "EPL", "CHAMP", "LALIGA"].includes(normalized) ? normalized : "ALL";
+function setLeagueVisibility(nextVisibility) {
+  state.leagueVisibility = normalizeLeagueVisibility(nextVisibility || {});
+  const allEnabled = state.leagueVisibility.EPL && state.leagueVisibility.CHAMP && state.leagueVisibility.LALIGA;
   for (const btn of el.leagueFilterBtns) {
-    const isActive = String(btn.dataset.league || "").toUpperCase() === state.league;
+    const code = String(btn.dataset.league || "").toUpperCase();
+    const isActive = code === "ALL" ? allEnabled : Boolean(state.leagueVisibility[code]);
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-pressed", isActive ? "true" : "false");
   }
@@ -114,10 +147,10 @@ function setLeagueFilter(nextLeague) {
 
 async function refreshDashboard() {
   try {
-    const scope = state.league === "ALL" ? "all leagues" : state.league;
-    setStatus(el.dashStatus, `Loading users (${scope})...`);
-    const data = await fetchUsers();
+    setStatus(el.dashStatus, "Loading users and league visibility...");
+    const [data, visibility] = await Promise.all([fetchUsers(), fetchLeagueVisibility()]);
     state.users = Array.isArray(data.users) ? data.users : [];
+    setLeagueVisibility(visibility);
     el.usersCount.textContent = String(data?.summary?.usersCount ?? state.users.length ?? 0);
     el.active24h.textContent = String(data?.summary?.active24h ?? 0);
     renderUsers();
@@ -170,15 +203,35 @@ el.logoutBtn.addEventListener("click", logout);
 el.searchInput.addEventListener("input", renderUsers);
 for (const btn of el.leagueFilterBtns) {
   btn.addEventListener("click", async () => {
-    const nextLeague = String(btn.dataset.league || "ALL");
-    if (nextLeague === state.league) return;
-    setLeagueFilter(nextLeague);
-    await refreshDashboard();
+    if (!state.token) return;
+    const code = String(btn.dataset.league || "").toUpperCase();
+    const current = normalizeLeagueVisibility(state.leagueVisibility);
+    let next = { ...current };
+    if (code === "ALL") {
+      next = { EPL: true, CHAMP: true, LALIGA: true };
+    } else if (["EPL", "CHAMP", "LALIGA"].includes(code)) {
+      next[code] = !next[code];
+      if (!next.EPL && !next.CHAMP && !next.LALIGA) {
+        next[code] = true;
+      }
+    } else {
+      return;
+    }
+    setLeagueVisibility(next);
+    try {
+      setStatus(el.dashStatus, "Saving league visibility...");
+      const saved = await saveLeagueVisibility(next);
+      setLeagueVisibility(saved);
+      setStatus(el.dashStatus, "League visibility saved.", "ok");
+    } catch (err) {
+      setLeagueVisibility(current);
+      setStatus(el.dashStatus, String(err?.message || err), "error");
+    }
   });
 }
 
 (async function init() {
-  setLeagueFilter("ALL");
+  setLeagueVisibility({ EPL: true, CHAMP: true, LALIGA: true });
   if (!state.token) {
     setAuthedView(false);
     return;

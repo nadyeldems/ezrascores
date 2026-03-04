@@ -566,6 +566,13 @@ async function ensureAccountSchema(db) {
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_user ON ezra_auth_codes(user_id, purpose, expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_ezra_auth_codes_email ON ezra_auth_codes(email_key, purpose, expires_at)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_app_settings (
+        key TEXT PRIMARY KEY,
+        value_text TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -1591,6 +1598,49 @@ async function accountAuth(db, request) {
 }
 
 const ADMIN_SESSION_MS = 1000 * 60 * 60 * 12;
+const LEAGUE_VISIBILITY_KEY = "league_visibility_v1";
+const LEAGUE_VISIBILITY_CODES = ["EPL", "CHAMP", "LALIGA"];
+
+function defaultLeagueVisibility() {
+  return { EPL: true, CHAMP: true, LALIGA: true };
+}
+
+function normalizeLeagueVisibilityMap(value) {
+  const base = defaultLeagueVisibility();
+  if (!value || typeof value !== "object") return base;
+  for (const code of LEAGUE_VISIBILITY_CODES) {
+    if (Object.prototype.hasOwnProperty.call(value, code)) {
+      base[code] = Boolean(value[code]);
+    }
+  }
+  if (!Object.values(base).some(Boolean)) {
+    // Keep at least one visible to avoid a broken client state.
+    base.EPL = true;
+  }
+  return base;
+}
+
+async function getLeagueVisibility(db) {
+  const row = await db.prepare("SELECT value_text FROM ezra_app_settings WHERE key = ?1 LIMIT 1").bind(LEAGUE_VISIBILITY_KEY).first();
+  if (!row?.value_text) return defaultLeagueVisibility();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(String(row.value_text || ""));
+  } catch {
+    parsed = null;
+  }
+  return normalizeLeagueVisibilityMap(parsed);
+}
+
+async function putLeagueVisibility(db, value) {
+  const normalized = normalizeLeagueVisibilityMap(value);
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare("INSERT OR REPLACE INTO ezra_app_settings (key, value_text, updated_at) VALUES (?1, ?2, ?3)")
+    .bind(LEAGUE_VISIBILITY_KEY, JSON.stringify(normalized), nowIso)
+    .run();
+  return normalized;
+}
 
 function adminConfig(env) {
   const username = String(env?.EZRA_ADMIN_USERNAME || "").trim().toLowerCase();
@@ -1758,6 +1808,21 @@ async function handleAdminUsersOverview(db, env, request) {
     200,
     { "Cache-Control": "no-store" }
   );
+}
+
+async function handleAdminLeagueVisibilityGet(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+  const visibility = await getLeagueVisibility(db);
+  return json({ visibility }, 200, { "Cache-Control": "no-store" });
+}
+
+async function handleAdminLeagueVisibilityPut(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+  const body = (await parseJson(request)) || {};
+  const visibility = await putLeagueVisibility(db, body?.visibility);
+  return json({ ok: true, visibility }, 200, { "Cache-Control": "no-store" });
 }
 
 async function handleAccountRegister(db, request) {
@@ -2778,6 +2843,12 @@ async function handleEzraAdminRoute(context, adminPath) {
     if (route === "users" && request.method === "GET") {
       return handleAdminUsersOverview(db, env, request);
     }
+    if (route === "league-visibility" && request.method === "GET") {
+      return handleAdminLeagueVisibilityGet(db, env, request);
+    }
+    if (route === "league-visibility" && (request.method === "PUT" || request.method === "PATCH")) {
+      return handleAdminLeagueVisibilityPut(db, env, request);
+    }
 
     return json({ error: "Unsupported admin route or method" }, 405);
   } catch (err) {
@@ -3782,6 +3853,21 @@ async function handleEzraLeagueRoute(context, key) {
   return json({ league }, 200, { "Cache-Control": "public, max-age=300, s-maxage=300" });
 }
 
+async function handleEzraLeagueVisibilityRoute(context) {
+  const { env } = context;
+  const db = env.EZRA_DB;
+  if (!db) {
+    return json({ visibility: defaultLeagueVisibility() }, 200, { "Cache-Control": "public, max-age=60, s-maxage=60" });
+  }
+  try {
+    await ensureAccountSchema(db);
+    const visibility = await getLeagueVisibility(db);
+    return json({ visibility }, 200, { "Cache-Control": "public, max-age=30, s-maxage=30" });
+  } catch {
+    return json({ visibility: defaultLeagueVisibility() }, 200, { "Cache-Control": "public, max-age=30, s-maxage=30" });
+  }
+}
+
 async function handleEzraTeamRoute(context, key) {
   const { request } = context;
   const url = new URL(request.url);
@@ -4314,6 +4400,9 @@ export async function onRequest(context) {
     }
     if (version === "v1" && lowerPath === "ezra/league" && request.method === "GET") {
       return handleEzraLeagueRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/league-visibility" && request.method === "GET") {
+      return handleEzraLeagueVisibilityRoute(context);
     }
     if (version === "v1" && lowerPath === "ezra/team" && request.method === "GET") {
       return handleEzraTeamRoute(context, key);
