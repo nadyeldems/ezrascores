@@ -158,6 +158,7 @@
             </div>
           </div>
           <p id="lifetime-points-pill" class="lifetime-points-pill">Total points: --</p>
+          <p id="active-route-indicator" class="active-route-indicator" aria-live="polite">Home</p>
           <p id="game-day-message" class="game-day-message neutral">Select a favourite team</p>
           <div class="favorite-picker header-picker" id="favorite-picker">
             <button
@@ -505,6 +506,12 @@
     <div id="league-invite-modal" class="league-invite-modal hidden" role="dialog" aria-modal="true" aria-labelledby="league-invite-title">
       <div class="league-invite-card">
         <h3 id="league-invite-title">League Invite</h3>
+        <div id="league-invite-steps" class="league-invite-steps" aria-label="Invite flow steps">
+          <span data-invite-step="confirm" class="active">Invite</span>
+          <span data-invite-step="auth">Auth</span>
+          <span data-invite-step="join">Join</span>
+          <span data-invite-step="done">Done</span>
+        </div>
         <p id="league-invite-text" class="muted">You've been invited to a league. Would you like to join?</p>
         <p id="league-invite-status" class="settings-note muted" role="status" aria-live="polite"></p>
         <div id="league-invite-confirm-box" class="account-actions">

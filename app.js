@@ -1676,13 +1676,13 @@ function renderAvatarPresetGrid() {
     const badgeLabel = confirmedFx
       ? "New avatar selected"
       : selected
-        ? "Selected"
+        ? "Unlocked"
         : pending
           ? "Tap again to confirm"
           : unlocked
-            ? "Tap to choose"
+            ? "Available now"
             : unlockState.canUnlockMore
-              ? "Tap to unlock"
+              ? `Unlock at ${AVATAR_UNLOCK_EVERY_POINTS} pts`
               : "Locked";
     return `
       <button
@@ -2076,6 +2076,12 @@ const state = {
   fixtureFetchBackoffUntil: {},
   fixtureFetchInflight: {},
   tableFetchInflight: {},
+  networkRecovery: {
+    fixturesRetryCount: 0,
+    tablesRetryCount: 0,
+    fixturesLastError: "",
+    tablesLastError: "",
+  },
   allTeamsInflight: {},
   teamByIdInflight: {},
   selectedDateLoadSeq: 0,
@@ -2216,6 +2222,7 @@ const el = {
   notificationsMenu: document.getElementById("notifications-menu"),
   notificationsToggleBtn: document.getElementById("notifications-toggle-btn"),
   notificationsBadge: document.getElementById("notifications-badge"),
+  activeRouteIndicator: document.getElementById("active-route-indicator"),
   notificationsPanel: document.getElementById("notifications-panel"),
   notificationsList: document.getElementById("notifications-list"),
   notificationsHelper: document.getElementById("notifications-helper"),
@@ -2292,6 +2299,7 @@ const el = {
   avatarUnlockConfirmBtn: document.getElementById("avatar-unlock-confirm-btn"),
   avatarUnlockCancelBtn: document.getElementById("avatar-unlock-cancel-btn"),
   leagueInviteModal: document.getElementById("league-invite-modal"),
+  leagueInviteSteps: [...document.querySelectorAll("#league-invite-steps [data-invite-step]")],
   leagueInviteText: document.getElementById("league-invite-text"),
   leagueInviteStatus: document.getElementById("league-invite-status"),
   leagueInviteConfirmBox: document.getElementById("league-invite-confirm-box"),
@@ -3816,12 +3824,40 @@ function setLeagueInviteAuthBusy(isBusy) {
 }
 
 function setLeagueInviteStep(step = "confirm") {
-  state.leagueInviteStep = step === "auth" ? "auth" : "confirm";
+  state.leagueInviteStep = ["confirm", "auth", "join", "done"].includes(step) ? step : "confirm";
+  const visualStep = state.leagueInviteStep;
+  el.leagueInviteSteps.forEach((node) => {
+    const nodeStep = String(node.dataset.inviteStep || "");
+    const order = ["confirm", "auth", "join", "done"];
+    const activeIdx = order.indexOf(visualStep);
+    const nodeIdx = order.indexOf(nodeStep);
+    const isActive = nodeStep === visualStep;
+    node.classList.toggle("active", isActive);
+    node.classList.toggle("done", nodeIdx > -1 && activeIdx > -1 && nodeIdx < activeIdx);
+  });
   if (el.leagueInviteConfirmBox) {
     el.leagueInviteConfirmBox.classList.toggle("hidden", state.leagueInviteStep !== "confirm");
   }
   if (el.leagueInviteAuthBox) {
     el.leagueInviteAuthBox.classList.toggle("hidden", state.leagueInviteStep !== "auth");
+  }
+  if (el.leagueInviteModal) {
+    el.leagueInviteModal.dataset.step = visualStep;
+  }
+  if (el.leagueInviteStatus && !String(el.leagueInviteStatus.textContent || "").trim()) {
+    if (visualStep === "confirm") {
+      el.leagueInviteStatus.textContent = "Review invite and continue when ready.";
+      el.leagueInviteStatus.classList.remove("error");
+    } else if (visualStep === "auth") {
+      el.leagueInviteStatus.textContent = "Sign in or create account to continue.";
+      el.leagueInviteStatus.classList.remove("error");
+    } else if (visualStep === "join") {
+      el.leagueInviteStatus.textContent = "Joining league...";
+      el.leagueInviteStatus.classList.remove("error");
+    } else if (visualStep === "done") {
+      el.leagueInviteStatus.textContent = "Success. You are in.";
+      el.leagueInviteStatus.classList.remove("error");
+    }
   }
 }
 
@@ -3935,6 +3971,7 @@ async function joinPendingLeagueInviteFromModal() {
     return;
   }
   setLeagueInviteAuthBusy(true);
+  setLeagueInviteStep("join");
   setLeagueInviteInlineStatus("Joining league...");
   try {
     if (token) {
@@ -3956,6 +3993,8 @@ async function joinPendingLeagueInviteFromModal() {
     }
     state.pendingInviteJoinIntent = false;
     setPendingLeagueInvite(null);
+    setLeagueInviteStep("done");
+    setLeagueInviteInlineStatus("Joined league successfully.");
     closeLeagueInviteModal();
     showRewardToast("Joined league invite", "success");
     renderFamilyLeaguePanel();
@@ -3974,6 +4013,7 @@ async function signInFromInviteModal() {
     return;
   }
   setLeagueInviteAuthBusy(true);
+  setLeagueInviteStep("auth");
   setLeagueInviteInlineStatus("Signing in...");
   try {
     const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/login`, { name, pin });
@@ -4005,6 +4045,7 @@ async function registerFromInviteModal() {
     return;
   }
   setLeagueInviteAuthBusy(true);
+  setLeagueInviteStep("auth");
   setLeagueInviteInlineStatus("Creating account...");
   try {
     const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/register`, { name, pin });
@@ -8285,12 +8326,18 @@ async function fetchLeagueDayFixtures(leagueId, dateIso) {
     }, null);
     if (Array.isArray(fromCache)) {
       state.fixtureFetchBackoffUntil[key] = 0;
+      state.networkRecovery.fixturesRetryCount = 0;
+      state.networkRecovery.fixturesLastError = "";
       return fromCache;
     }
+    state.networkRecovery.fixturesRetryCount = Number(state.networkRecovery.fixturesRetryCount || 0) + 1;
+    state.networkRecovery.fixturesLastError = "Loading fixtures";
     state.fixtureFetchBackoffUntil[key] = Date.now() + 30 * 1000;
     return [];
   })()
-    .catch(() => {
+    .catch((err) => {
+      state.networkRecovery.fixturesRetryCount = Number(state.networkRecovery.fixturesRetryCount || 0) + 1;
+      state.networkRecovery.fixturesLastError = String(err?.message || "Loading fixtures");
       state.fixtureFetchBackoffUntil[key] = Date.now() + 30 * 1000;
       return [];
     })
@@ -8316,10 +8363,21 @@ async function fetchTable(leagueId) {
   }
   const inflight = (async () => {
     const data = await apiGetV1(`ezra/tables?l=${encodeURIComponent(key)}`);
-    return safeArray(data, "table");
-  })().finally(() => {
-    delete state.tableFetchInflight[key];
-  });
+    const rows = safeArray(data, "table");
+    if (rows.length) {
+      state.networkRecovery.tablesRetryCount = 0;
+      state.networkRecovery.tablesLastError = "";
+    }
+    return rows;
+  })()
+    .catch((err) => {
+      state.networkRecovery.tablesRetryCount = Number(state.networkRecovery.tablesRetryCount || 0) + 1;
+      state.networkRecovery.tablesLastError = String(err?.message || "Loading table");
+      throw err;
+    })
+    .finally(() => {
+      delete state.tableFetchInflight[key];
+    });
   state.tableFetchInflight[key] = inflight;
   return inflight;
 }
@@ -8861,16 +8919,26 @@ function buildPredictionModule(event, stateInfo) {
       }
     }
     const pointsText = awarded > 0 ? ` • +${awarded} pts` : " • 0 pts";
+    const pair = scorePair(event);
+    const finalHome = pair ? pair.home : numericScore(record?.finalHome);
+    const finalAway = pair ? pair.away : numericScore(record?.finalAway);
+    const settled = Boolean(record?.settled || isCompleted);
     wrapper.innerHTML = `
-      <div class="predict-head">Your prediction</div>
-      <div class="predict-status ${awarded > 0 ? "success" : ""}">
-        ${escapeHtml(`${homeTeam} ${memberPick.home} - ${memberPick.away} ${awayTeam}`)}${escapeHtml(pointsText)}
+      <div class="predict-head-row">
+        <div class="predict-head">Prediction result</div>
+        <span class="predict-settle-badge ${settled ? "done" : "pending"}">${settled ? "Scored/settled" : "Pending settlement"}</span>
+      </div>
+      <div class="predict-readonly-grid ${awarded > 0 ? "success" : ""}">
+        <div class="predict-readonly-row"><span class="predict-readonly-label">Your pick</span><span class="predict-readonly-value">${escapeHtml(`${homeTeam} ${memberPick.home} - ${memberPick.away} ${awayTeam}`)}</span></div>
+        <div class="predict-readonly-row"><span class="predict-readonly-label">Final</span><span class="predict-readonly-value">${finalHome !== null && finalAway !== null ? escapeHtml(`${homeTeam} ${finalHome} - ${finalAway} ${awayTeam}`) : "Final score pending"}</span></div>
+        <div class="predict-readonly-row"><span class="predict-readonly-label">Points awarded</span><span class="predict-readonly-value">${escapeHtml(pointsText.replace(" • ", ""))}</span></div>
       </div>
     `;
+    const grid = wrapper.querySelector(".predict-readonly-grid");
     if (awarded === 2) {
-      wrapper.querySelector(".predict-status")?.insertAdjacentHTML("beforeend", ` <span class="predict-success-label">Perfect Scoreline</span>`);
+      grid?.insertAdjacentHTML("beforeend", `<span class="predict-success-label">Perfect Scoreline</span>`);
     } else if (awarded === 1) {
-      wrapper.querySelector(".predict-status")?.insertAdjacentHTML("beforeend", ` <span class="predict-success-label">Correct Result</span>`);
+      grid?.insertAdjacentHTML("beforeend", `<span class="predict-success-label">Correct Result</span>`);
     }
     return wrapper;
   }
@@ -9209,8 +9277,12 @@ function renderFixtureList(target, events, mode) {
     if (state.refreshInFlight && !refreshingForAWhile) {
       const div = document.createElement("div");
       div.className = "empty";
-      div.textContent = "Updating fixtures...";
+      div.textContent = "Loading fixtures...";
       target.appendChild(div);
+      return;
+    }
+    if (Number(state.networkRecovery.fixturesRetryCount || 0) > 0) {
+      renderRecoverableError(target, "fixtures");
       return;
     }
     const div = document.createElement("div");
@@ -9336,6 +9408,11 @@ function renderFixtureList(target, events, mode) {
           if (other === node) return;
           other.open = false;
         });
+        if (isMobileViewport()) {
+          setTimeout(() => {
+            summaryEl?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+          }, 40);
+        }
         await hydrateFixtureDetails(detailsEl, event, stateInfo);
       } else if (state.openFixtureKey === key) {
         state.openFixtureKey = "";
@@ -9373,25 +9450,34 @@ function tableBandClass(leagueCode, rank) {
 
 function tableBandLegendHtml(leagueCode) {
   if (leagueCode === "EPL") {
-    return `<div class="table-band-legend">
+    return `<div class="table-band-legend" data-table-legend>
       <span class="legend-pill europe">Top 4: Europe</span>
       <span class="legend-pill relegation">Bottom 3: Relegation</span>
     </div>`;
   }
   if (leagueCode === "CHAMP") {
-    return `<div class="table-band-legend">
+    return `<div class="table-band-legend" data-table-legend>
       <span class="legend-pill promotion">Top 2: Promotion</span>
       <span class="legend-pill playoff">3-6: Playoffs</span>
       <span class="legend-pill relegation">Bottom 3: Relegation</span>
     </div>`;
   }
   if (leagueCode === "LALIGA") {
-    return `<div class="table-band-legend">
+    return `<div class="table-band-legend" data-table-legend>
       <span class="legend-pill europe">Top 4: Europe</span>
       <span class="legend-pill relegation">Bottom 3: Relegation</span>
     </div>`;
   }
   return "";
+}
+
+function isFavoriteTableRow(row) {
+  const fav = state.favoriteTeam;
+  if (!fav || !row) return false;
+  const favId = String(fav.idTeam || "").trim();
+  const rowId = String(row.idTeam || "").trim();
+  if (favId && rowId && favId === rowId) return true;
+  return normalizeTeamLabel(row.strTeam) === normalizeTeamLabel(fav.strTeam);
 }
 
 function renderTables() {
@@ -9404,6 +9490,10 @@ function renderTables() {
   }
 
   el.tablesWrap.innerHTML = "";
+  if (!hasAnyRows && Number(state.networkRecovery.tablesRetryCount || 0) > 0) {
+    renderRecoverableError(el.tablesWrap, "tables");
+    return;
+  }
 
   visibleCodes.forEach((key) => {
     if (state.selectedLeague !== "ALL" && state.selectedLeague !== key) return;
@@ -9420,12 +9510,29 @@ function renderTables() {
     }
     const tbody = card.querySelector("tbody");
     card.insertAdjacentHTML("beforeend", tableBandLegendHtml(key));
+    const legend = card.querySelector("[data-table-legend]");
+    if (legend) {
+      const toggle = document.createElement("button");
+      toggle.className = "btn table-legend-toggle-btn";
+      toggle.type = "button";
+      toggle.textContent = "Legend";
+      const collapsed = isMobileViewport();
+      legend.classList.toggle("collapsed", collapsed);
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      toggle.addEventListener("click", () => {
+        const nextCollapsed = !legend.classList.contains("collapsed");
+        legend.classList.toggle("collapsed", nextCollapsed);
+        toggle.setAttribute("aria-expanded", String(!nextCollapsed));
+      });
+      const head = card.querySelector(".table-head");
+      head?.appendChild(toggle);
+    }
 
     if (!rows.length) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");
       td.colSpan = 8;
-      td.textContent = "Table unavailable.";
+      td.textContent = state.refreshInFlight ? "Loading table..." : "Table unavailable.";
       tr.appendChild(td);
       tbody.appendChild(tr);
     } else {
@@ -9433,6 +9540,7 @@ function renderTables() {
         const tr = document.createElement("tr");
         const bandClass = tableBandClass(key, row.intRank);
         if (bandClass) tr.classList.add(bandClass);
+        if (isFavoriteTableRow(row)) tr.classList.add("table-favorite-row");
         const cols = [
           row.intRank,
           row.strTeam,
@@ -9699,10 +9807,10 @@ function renderFixtures() {
   }
 
   if (state.selectedDateLoading && state.selectedDateLoadingFor === state.selectedDate && state.mainTab !== "home") {
-    el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateWithDayUK(state.selectedDate)}) • updating...`;
+    el.fixturesTitle.textContent = `${selectedDateLabel(state.selectedDate)} (${formatDateWithDayUK(state.selectedDate)}) • Loading fixtures`;
     const div = document.createElement("div");
     div.className = "empty";
-    div.textContent = "Updating fixtures...";
+    div.textContent = "Loading fixtures...";
     el.fixturesList.innerHTML = "";
     el.fixturesList.appendChild(div);
     if (el.datePicker) {
@@ -9888,6 +9996,11 @@ function renderMainTabButtons() {
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-selected", String(active));
   });
+  document.body.setAttribute("data-main-tab", state.mainTab);
+  if (el.activeRouteIndicator) {
+    const label = state.mainTab.charAt(0).toUpperCase() + state.mainTab.slice(1);
+    el.activeRouteIndicator.textContent = label;
+  }
 }
 
 function setPanelVisible(panel, visible) {
@@ -10860,6 +10973,41 @@ function displayApiError(sectionEl, err) {
   sectionEl.appendChild(box);
 }
 
+function renderRecoverableError(sectionEl, kind = "fixtures") {
+  if (!sectionEl) return;
+  const isFixture = kind === "fixtures";
+  const retries = isFixture
+    ? Number(state.networkRecovery.fixturesRetryCount || 0)
+    : Number(state.networkRecovery.tablesRetryCount || 0);
+  const errorMsg = String(
+    isFixture ? state.networkRecovery.fixturesLastError || "" : state.networkRecovery.tablesLastError || ""
+  ).trim();
+  sectionEl.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "error actionable";
+  const title = isFixture ? "Loading fixtures from server..." : "Syncing league table...";
+  const sub = isFixture
+    ? `Attempt ${Math.max(1, retries)}${errorMsg ? ` • ${escapeHtml(errorMsg)}` : ""}`
+    : `Attempt ${Math.max(1, retries)}${errorMsg ? ` • ${escapeHtml(errorMsg)}` : ""}`;
+  const hint = isFixture
+    ? "You can keep browsing while this retries."
+    : "Table will auto-update as soon as sync completes.";
+  box.innerHTML = `
+    <div class="error-title">${title}</div>
+    <div class="error-sub">${sub}</div>
+    <div class="error-hint">${hint}</div>
+    <button class="btn retry-now-btn" type="button">Tap to retry now</button>
+  `;
+  box.querySelector(".retry-now-btn")?.addEventListener("click", () => {
+    if (isFixture) {
+      safeLoad(() => setSelectedDate(state.selectedDate || toISODate(new Date())), null);
+      return;
+    }
+    safeLoad(() => fullRefresh(), null);
+  });
+  sectionEl.appendChild(box);
+}
+
 async function safeLoad(loader, fallback) {
   try {
     return await loader();
@@ -11042,6 +11190,13 @@ function shouldFetchLiveData(context) {
 }
 
 function nextPollDelay(context) {
+  const retryCount = Math.max(
+    Number(state.networkRecovery.fixturesRetryCount || 0),
+    Number(state.networkRecovery.tablesRetryCount || 0)
+  );
+  if (retryCount > 0) {
+    return Math.min(15000, 2500 * retryCount);
+  }
   if (context.hasLive) {
     state.pollMode = "live";
     return POLL_LIVE_MS;
@@ -11150,10 +11305,14 @@ async function fullRefresh() {
     const hasFixtureRows = Boolean(el.fixturesList?.querySelector(".fixture-item"));
     const hasTableRows = Boolean(el.tablesWrap?.querySelector(".table-card"));
     if (!hasFixtureRows) {
-      displayApiError(el.fixturesList, err);
+      state.networkRecovery.fixturesRetryCount = Number(state.networkRecovery.fixturesRetryCount || 0) + 1;
+      state.networkRecovery.fixturesLastError = String(err?.message || "Loading fixtures");
+      renderRecoverableError(el.fixturesList, "fixtures");
     }
     if (!hasTableRows) {
-      el.tablesWrap.innerHTML = `<div class="error">Unable to load league tables. ${err.message}</div>`;
+      state.networkRecovery.tablesRetryCount = Number(state.networkRecovery.tablesRetryCount || 0) + 1;
+      state.networkRecovery.tablesLastError = String(err?.message || "Loading table");
+      renderRecoverableError(el.tablesWrap, "tables");
     }
     await safeLoad(() => ensureFavoritePickerDataLoaded(), null);
     buildFavoriteOptions();
