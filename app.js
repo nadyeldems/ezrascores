@@ -2011,11 +2011,12 @@ const state = {
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
-  leagueDirectory: { items: [], loading: false },
+  leagueDirectory: { items: [], loading: false, promise: null },
   leagueRankByCode: {},
   lastLeagueDirectoryAt: 0,
   challengeDashboard: null,
   challengeDashboardAt: 0,
+  challengeDashboardPromise: null,
   notificationsOpen: false,
   notifications: parseStoredJson("ezra_notifications", defaultNotificationsState()),
   lastQuestNotificationDate: localStorage.getItem("ezra_last_quest_notification_date") || currentUtcDateKey(),
@@ -3236,7 +3237,7 @@ function scheduleLeagueStandingsRefresh(delayMs = 1800) {
   }
   state.account.leagueRefreshTimer = setTimeout(async () => {
     state.account.leagueRefreshTimer = null;
-    await refreshLeagueDirectory();
+    await refreshLeagueDirectory(true);
     await safeLoad(() => refreshChallengeDashboard(true), null);
     renderFamilyLeaguePanel();
     renderMissionsPanel();
@@ -3984,7 +3985,7 @@ async function joinPendingLeagueInviteFromModal() {
       persistLocalMetaState();
       scheduleCloudStateSync();
       setAccountStatus(`Joined ${state.pendingLeagueInvite?.leagueName || `League ${code}`} from invite.`);
-      await safeLoad(() => refreshLeagueDirectory(), null);
+      await safeLoad(() => refreshLeagueDirectory(true), null);
     } else {
       await joinFamilyLeagueCode(code, {
         referrerName: state.pendingLeagueInvite?.referrerName || "",
@@ -4102,7 +4103,7 @@ async function joinFamilyLeagueCode(code, options = {}) {
     state.familyLeague.joinedLeagueCodes.push(clean);
   }
   state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(clean));
-  await refreshLeagueDirectory();
+  await refreshLeagueDirectory(true);
   persistLocalMetaState();
   scheduleCloudStateSync();
   setAccountStatus(`Joined league code ${clean}.`);
@@ -4123,7 +4124,7 @@ async function createFamilyLeagueCode() {
     state.familyLeague.joinedLeagueCodes.push(code);
   }
   state.familyLeague.currentLeagueIndex = Math.max(0, state.familyLeague.joinedLeagueCodes.indexOf(code));
-  await refreshLeagueDirectory();
+  await refreshLeagueDirectory(true);
   persistLocalMetaState();
   scheduleCloudStateSync();
   setAccountStatus(`League created: ${code}${data?.name ? ` (${data.name})` : ""}`);
@@ -4139,7 +4140,7 @@ async function leaveFamilyLeagueCode() {
   const code = String(currentLeague?.code || state.familyLeague.leagueCode || "").toUpperCase();
   if (!code) return;
   await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/leave`, { code }, state.account.token);
-  await refreshLeagueDirectory();
+  await refreshLeagueDirectory(true);
   persistLocalMetaState();
   scheduleCloudStateSync();
   setAccountStatus(`Left league ${code}.`);
@@ -4155,96 +4156,112 @@ async function deleteFamilyLeagueCode() {
   const code = String(currentLeague?.code || state.familyLeague.leagueCode || "").toUpperCase();
   if (!code) return;
   await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/league/delete`, { code }, state.account.token);
-  await refreshLeagueDirectory();
+  await refreshLeagueDirectory(true);
   persistLocalMetaState();
   scheduleCloudStateSync();
   setAccountStatus(`Deleted league ${code}.`);
 }
 
-async function refreshLeagueDirectory() {
+async function refreshLeagueDirectory(force = false) {
   ensureFamilyLeagueState();
-  state.leagueDirectory.loading = true;
-  const prevItems = Array.isArray(state.leagueDirectory.items) ? [...state.leagueDirectory.items] : [];
-  const prevCodes = Array.isArray(state.familyLeague.joinedLeagueCodes) ? [...state.familyLeague.joinedLeagueCodes] : [];
-  const prevCode = String(state.familyLeague.leagueCode || "").toUpperCase();
-  const prevIdx = Number.isInteger(state.familyLeague.currentLeagueIndex) ? state.familyLeague.currentLeagueIndex : 0;
-  try {
-    let nextItems = prevItems;
-    let nextCodes = prevCodes;
-    let nextCode = prevCode;
-    let nextIdx = prevIdx;
-
-  if (accountSignedIn()) {
-    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
-    const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
-    const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
-    nextItems = leagues;
-    if (codes.length) {
-      nextCodes = codes;
-      const current = nextCode;
-      if (!current || !codes.includes(current)) {
-        nextCode = codes[0];
-      }
-      nextIdx = Math.max(0, codes.indexOf(nextCode));
-    } else {
-      nextCodes = [];
-      nextCode = "";
-      nextIdx = 0;
-    }
-    } else {
-      const codes = Array.from(
-        new Set(
-          [nextCode, ...nextCodes]
-            .map((code) => String(code || "").trim().toUpperCase())
-            .filter(Boolean)
-        )
-      );
-      const leagues = [];
-      for (const code of codes) {
-        const data = await safeLoad(
-          () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/standings?code=${encodeURIComponent(code)}`),
-          null
-        );
-        if (!data?.league) continue;
-        leagues.push({
-          code: String(data.league.code || code).toUpperCase(),
-          name: data.league.name || `League ${code}`,
-          ownerUserId: data.league.ownerUserId || "",
-          isOwner: false,
-          memberCount: Number(data.league.memberCount || 0),
-          season: data.season || null,
-          standings: Array.isArray(data.standings) ? data.standings : [],
-        });
-      }
-      nextItems = leagues;
-      if (leagues.length) {
-        const discoveredCodes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
-        nextCodes = discoveredCodes;
-        const current = nextCode;
-        if (!current || !discoveredCodes.includes(current)) {
-          nextCode = discoveredCodes[0];
-        }
-        nextIdx = Math.max(0, discoveredCodes.indexOf(nextCode));
-      }
-    }
-
-    state.leagueDirectory.items = nextItems;
-    state.familyLeague.joinedLeagueCodes = nextCodes;
-    state.familyLeague.leagueCode = nextCode;
-    state.familyLeague.currentLeagueIndex = nextIdx;
-    updateLeagueRankSignals(nextItems, Boolean(prevItems.length));
-    state.lastLeagueDirectoryAt = Date.now();
-  } catch (err) {
-    state.leagueDirectory.items = prevItems;
-    state.familyLeague.joinedLeagueCodes = prevCodes;
-    state.familyLeague.leagueCode = prevCode;
-    state.familyLeague.currentLeagueIndex = prevIdx;
-    setAccountStatus(`League sync issue: ${err.message || "using last known standings."}`, true);
-    return false;
-  } finally {
-    state.leagueDirectory.loading = false;
+  if (state.leagueDirectory.promise && typeof state.leagueDirectory.promise.then === "function") {
+    return state.leagueDirectory.promise;
   }
-  return true;
+  if (!force && accountSignedIn() && state.leagueDirectory.items.length && Date.now() - Number(state.lastLeagueDirectoryAt || 0) < 30_000) {
+    return true;
+  }
+
+  const task = (async () => {
+    state.leagueDirectory.loading = true;
+    const prevItems = Array.isArray(state.leagueDirectory.items) ? [...state.leagueDirectory.items] : [];
+    const prevCodes = Array.isArray(state.familyLeague.joinedLeagueCodes) ? [...state.familyLeague.joinedLeagueCodes] : [];
+    const prevCode = String(state.familyLeague.leagueCode || "").toUpperCase();
+    const prevIdx = Number.isInteger(state.familyLeague.currentLeagueIndex) ? state.familyLeague.currentLeagueIndex : 0;
+    try {
+      let nextItems = prevItems;
+      let nextCodes = prevCodes;
+      let nextCode = prevCode;
+      let nextIdx = prevIdx;
+
+      if (accountSignedIn()) {
+        const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/leagues`, null, state.account.token);
+        const leagues = Array.isArray(data?.leagues) ? data.leagues : [];
+        const codes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+        nextItems = leagues;
+        if (codes.length) {
+          nextCodes = codes;
+          const current = nextCode;
+          if (!current || !codes.includes(current)) {
+            nextCode = codes[0];
+          }
+          nextIdx = Math.max(0, codes.indexOf(nextCode));
+        } else {
+          nextCodes = [];
+          nextCode = "";
+          nextIdx = 0;
+        }
+      } else {
+        const codes = Array.from(
+          new Set(
+            [nextCode, ...nextCodes]
+              .map((code) => String(code || "").trim().toUpperCase())
+              .filter(Boolean)
+          )
+        );
+        const leagues = [];
+        for (const code of codes) {
+          const data = await safeLoad(
+            () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/standings?code=${encodeURIComponent(code)}`),
+            null
+          );
+          if (!data?.league) continue;
+          leagues.push({
+            code: String(data.league.code || code).toUpperCase(),
+            name: data.league.name || `League ${code}`,
+            ownerUserId: data.league.ownerUserId || "",
+            isOwner: false,
+            memberCount: Number(data.league.memberCount || 0),
+            season: data.season || null,
+            standings: Array.isArray(data.standings) ? data.standings : [],
+          });
+        }
+        nextItems = leagues;
+        if (leagues.length) {
+          const discoveredCodes = leagues.map((league) => String(league.code || "").toUpperCase()).filter(Boolean);
+          nextCodes = discoveredCodes;
+          const current = nextCode;
+          if (!current || !discoveredCodes.includes(current)) {
+            nextCode = discoveredCodes[0];
+          }
+          nextIdx = Math.max(0, discoveredCodes.indexOf(nextCode));
+        }
+      }
+
+      state.leagueDirectory.items = nextItems;
+      state.familyLeague.joinedLeagueCodes = nextCodes;
+      state.familyLeague.leagueCode = nextCode;
+      state.familyLeague.currentLeagueIndex = nextIdx;
+      updateLeagueRankSignals(nextItems, Boolean(prevItems.length));
+      state.lastLeagueDirectoryAt = Date.now();
+    } catch (err) {
+      state.leagueDirectory.items = prevItems;
+      state.familyLeague.joinedLeagueCodes = prevCodes;
+      state.familyLeague.leagueCode = prevCode;
+      state.familyLeague.currentLeagueIndex = prevIdx;
+      setAccountStatus(`League sync issue: ${err.message || "using last known standings."}`, true);
+      return false;
+    } finally {
+      state.leagueDirectory.loading = false;
+    }
+    return true;
+  })();
+
+  state.leagueDirectory.promise = task;
+  try {
+    return await task;
+  } finally {
+    state.leagueDirectory.promise = null;
+  }
 }
 
 function cycleLeague(delta) {
@@ -4729,7 +4746,7 @@ async function updateFamilyLeagueName(nextName) {
     { code: currentLeague.code, name: clean },
     state.account.token
   );
-  await refreshLeagueDirectory();
+  await refreshLeagueDirectory(true);
   renderFamilyLeaguePanel();
   setAccountStatus(`League renamed to ${clean}.`);
 }
@@ -7977,16 +7994,33 @@ async function runPostAuthBootstrap(contextLabel = "auth") {
     let partialWarning = false;
     try {
       resetAccountScopedLocalState();
-      const cloud = await safeLoad(() => loadCloudState(), null);
-      if (cloud === null) partialWarning = true;
-      const dash = await safeLoad(() => refreshChallengeDashboard(true), null);
-      if (!dash) partialWarning = true;
+      const bootPayload = await safeLoad(
+        () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, state.account.token),
+        null
+      );
+      if (bootPayload && typeof bootPayload === "object") {
+        state.account.user = hydrateUserAvatarState(bootPayload.user || state.account.user);
+        applyCloudState(bootPayload.state || {}, { strict: true });
+        state.challengeDashboard = bootPayload.dashboard || null;
+        state.challengeDashboardAt = Date.now();
+        mergeChallengeSeasonIntoLeagueDirectory(state.challengeDashboard);
+        state.leagueDirectory.items = Array.isArray(bootPayload.leagues) ? bootPayload.leagues : [];
+        state.lastLeagueDirectoryAt = Date.now();
+        updateLeagueRankSignals(state.leagueDirectory.items, true);
+        renderChallengeDashboardPanels();
+        renderLifetimePointsPill();
+      } else {
+        const cloud = await safeLoad(() => loadCloudState(), null);
+        if (cloud === null) partialWarning = true;
+        const dash = await safeLoad(() => refreshChallengeDashboard(true), null);
+        if (!dash) partialWarning = true;
+        const leaguesOk = await safeLoad(async () => {
+          await refreshLeagueDirectory(true);
+          return true;
+        }, false);
+        if (!leaguesOk) partialWarning = true;
+      }
       ensureSignedInUserInFamilyLeague();
-      const leaguesOk = await safeLoad(async () => {
-        await refreshLeagueDirectory();
-        return true;
-      }, false);
-      if (!leaguesOk) partialWarning = true;
       const inviteHandled = await safeLoad(() => processPendingLeagueInviteAfterAuth(), false);
       if (inviteHandled === false && state.pendingLeagueInvite?.code && accountSignedIn()) {
         partialWarning = true;
@@ -8014,22 +8048,62 @@ async function runPostAuthBootstrap(contextLabel = "auth") {
   return promise;
 }
 
+function mergeChallengeSeasonIntoLeagueDirectory(dash) {
+  const season = dash?.currentSeason;
+  const code = String(season?.leagueCode || "").toUpperCase();
+  const standings = Array.isArray(season?.standings) ? season.standings : null;
+  if (!code || !standings) return;
+  const nextItems = Array.isArray(state.leagueDirectory.items) ? [...state.leagueDirectory.items] : [];
+  const idx = nextItems.findIndex((item) => String(item?.code || "").toUpperCase() === code);
+  if (idx < 0) return;
+  nextItems[idx] = {
+    ...nextItems[idx],
+    season: season
+      ? {
+          seasonId: season.seasonId || "",
+          startsAt: season.startsAt || "",
+          endsAt: season.endsAt || "",
+        }
+      : nextItems[idx].season,
+    standings: standings,
+    memberCount: standings.length,
+  };
+  state.leagueDirectory.items = nextItems;
+  if (String(state.familyLeague.leagueCode || "").toUpperCase() === code) {
+    updateLeagueRankSignals(nextItems, true);
+  }
+}
+
 async function refreshChallengeDashboard(force = false) {
   if (!accountSignedIn()) {
     state.challengeDashboard = null;
     state.challengeDashboardAt = 0;
+    state.challengeDashboardPromise = null;
     renderChallengeDashboardPanels();
     return null;
+  }
+  if (state.challengeDashboardPromise && typeof state.challengeDashboardPromise.then === "function") {
+    return state.challengeDashboardPromise;
   }
   if (!force && Date.now() - Number(state.challengeDashboardAt || 0) < 30 * 1000) {
     return state.challengeDashboard;
   }
-  const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/challenges/dashboard`, null, state.account.token);
-  state.challengeDashboard = data || null;
-  state.challengeDashboardAt = Date.now();
-  renderChallengeDashboardPanels();
-  renderLifetimePointsPill();
-  return state.challengeDashboard;
+  const task = (async () => {
+    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/challenges/dashboard`, null, state.account.token);
+    state.challengeDashboard = data || null;
+    state.challengeDashboardAt = Date.now();
+    mergeChallengeSeasonIntoLeagueDirectory(state.challengeDashboard);
+    renderChallengeDashboardPanels();
+    renderLifetimePointsPill();
+    renderFamilyLeaguePanel();
+    return state.challengeDashboard;
+  })();
+  state.challengeDashboardPromise = task;
+  try {
+    return await task;
+  } finally {
+    state.challengeDashboardPromise = null;
+  }
 }
 
 async function syncCloudStateNow() {
@@ -8066,6 +8140,7 @@ async function initAccountSession() {
     resetAccountScopedLocalState();
     state.challengeDashboard = null;
     state.challengeDashboardAt = 0;
+    state.challengeDashboardPromise = null;
     await safeLoad(() => refreshLeagueDirectory(), null);
     setAccountStatus("Logged out. Existing features still work locally.");
     resumePendingLeagueInvitePrompt();
@@ -8075,12 +8150,13 @@ async function initAccountSession() {
   setAccountPhase("RESTORING_SESSION");
   renderAccountUI();
   try {
-    const me = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/me`, null, state.account.token);
-    state.account.user = hydrateUserAvatarState(me.user || null);
+    const result = await runPostAuthBootstrap("Session restored");
+    const partialWarning = Boolean(result?.partialWarning);
     if (!state.account.user) throw new Error("Session expired");
-    setAccountPhase("AUTHENTICATED");
-    await runPostAuthBootstrap("Session restored");
     setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
+    if (partialWarning) {
+      setAccountStatus(`Cloud save active for ${state.account.user.name}. Some sections are still loading; retry in a moment.`);
+    }
     resumePendingLeagueInvitePrompt();
   } catch (err) {
     state.account.token = "";
@@ -8092,6 +8168,7 @@ async function initAccountSession() {
     refreshVisibleFixturePredictionBadges();
     state.challengeDashboard = null;
     state.challengeDashboardAt = 0;
+    state.challengeDashboardPromise = null;
     setAccountStatus(`Logged out. ${err.message}`, true);
     resumePendingLeagueInvitePrompt();
   }
@@ -8296,6 +8373,8 @@ async function logoutAccount() {
   resetAccountScopedLocalState();
   state.challengeDashboard = null;
   state.challengeDashboardAt = 0;
+  state.challengeDashboardPromise = null;
+  state.leagueDirectory.promise = null;
   state.leagueDirectory.items = [];
   renderAccountUI();
   renderFamilyLeaguePanel();
@@ -8320,11 +8399,28 @@ async function fetchLeagueDayFixtures(leagueId, dateIso) {
   }
 
   const inflight = (async () => {
-    const fromCache = await safeLoad(async () => {
-      const payload = await apiGetV1(`ezra/fixtures?l=${encodeURIComponent(leagueId)}&d=${encodeURIComponent(dateIso)}`);
-      return safeArray(payload, "events");
-    }, null);
+    const payload = await safeLoad(
+      () => apiGetV1(`ezra/fixtures?l=${encodeURIComponent(leagueId)}&d=${encodeURIComponent(dateIso)}`),
+      null
+    );
+    const fromCache = safeArray(payload, "events");
     if (Array.isArray(fromCache)) {
+      const isWarming = Boolean(payload?.warming);
+      const leagueCode = leagueIdToLeagueCode(leagueId);
+      if (isWarming) {
+        // Keep stale data while server warms this date to avoid blank fixtures flashes.
+        const stale = getDateFixtureCache(dateIso);
+        if (leagueCode && stale && Array.isArray(stale[leagueCode]) && stale[leagueCode].length) {
+          state.fixtureFetchBackoffUntil[key] = 0;
+          setTimeout(() => {
+            safeLoad(() => refreshSelectedDateFixtures(dateIso), null);
+          }, 1400);
+          return stale[leagueCode];
+        }
+        // Warm response with no stale rows: quick retry once before entering long backoff.
+        state.fixtureFetchBackoffUntil[key] = Date.now() + 1400;
+        return [];
+      }
       state.fixtureFetchBackoffUntil[key] = 0;
       state.networkRecovery.fixturesRetryCount = 0;
       state.networkRecovery.fixturesLastError = "";
@@ -11289,10 +11385,11 @@ async function fullRefresh() {
     }
     ensurePlayerPopContinuity();
     if (accountSignedIn() && !state.account.bootstrapInFlight) {
-      if (Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000) {
-        safeLoad(() => refreshLeagueDirectory(), null);
-      }
-      safeLoad(() => refreshChallengeDashboard(false), null);
+      const shouldRefreshLeagues = Date.now() - Number(state.lastLeagueDirectoryAt || 0) > 60 * 1000;
+      await Promise.all([
+        shouldRefreshLeagues ? safeLoad(() => refreshLeagueDirectory(false), null) : Promise.resolve(true),
+        safeLoad(() => refreshChallengeDashboard(false), null),
+      ]);
     }
 
     state.lastRefresh = new Date();

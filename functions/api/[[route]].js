@@ -1367,8 +1367,37 @@ async function listLeaguesForUser(db, userId) {
   return rows?.results || [];
 }
 
+async function ensureLeagueScoresSettled(db, code, key, options = {}) {
+  if (!code) return { settled: false, reason: "no_code" };
+  const force = Boolean(options.force);
+  const minIntervalMs = Math.max(0, Number(options.minIntervalMs ?? LEAGUE_SETTLE_MIN_INTERVAL_MS));
+  const now = Date.now();
+  const tsKey = `league_settle_at:${code}`;
+  const lockKey = `league_settle_lock:${code}`;
+
+  if (!force) {
+    const lastSettledAt = await getIngestStateNumber(db, tsKey, 0);
+    if (lastSettledAt > 0 && now - lastSettledAt < minIntervalMs) {
+      return { settled: false, reason: "fresh", lastSettledAt };
+    }
+    const lockUntil = await getIngestStateNumber(db, lockKey, 0);
+    if (lockUntil > now) {
+      return { settled: false, reason: "locked", lockUntil };
+    }
+  }
+
+  await setIngestStateNumber(db, lockKey, now + LEAGUE_SETTLE_LOCK_MS);
+  try {
+    await syncLeagueScoresFromStates(db, code, key);
+    await setIngestStateNumber(db, tsKey, now);
+    return { settled: true, settledAt: now };
+  } finally {
+    await setIngestStateNumber(db, lockKey, 0);
+  }
+}
+
 async function leagueStandings(db, code, key) {
-  await syncLeagueScoresFromStates(db, code, key);
+  await ensureLeagueScoresSettled(db, code, key);
   const season = currentSevenDaySeasonWindow();
   const rows = await db
     .prepare(`
@@ -2456,17 +2485,20 @@ async function handleLeagueJoinInvite(db, request, env) {
   return json({ ok: true, code, alreadyMember: Boolean(alreadyMember), referralTracked: Boolean(inviterUserId) }, 200);
 }
 
-async function handleLeagueList(db, request, key) {
-  const { session } = await accountAuth(db, request);
-  if (!session) return json({ error: "Unauthorized" }, 401);
-  await ensureDefaultLeagueForUser(db, session.user_id);
-  const leagues = await listLeaguesForUser(db, session.user_id);
+async function buildLeagueDirectoryForUser(db, userId, key) {
+  await ensureDefaultLeagueForUser(db, userId);
+  const leagues = await listLeaguesForUser(db, userId);
   const season = currentSevenDaySeasonWindow();
+  const primaryCode = normalizeLeagueCode(leagues?.[0]?.code || "");
+  if (primaryCode) {
+    await ensureLeagueScoresSettled(db, primaryCode, key);
+  }
   const detailed = await Promise.all(
     leagues.map(async (league) => {
       let standings = [];
       try {
-        standings = await leagueStandings(db, league.code, key);
+        const code = normalizeLeagueCode(league.code);
+        standings = code && code === primaryCode ? await leagueStandings(db, code, key) : await leagueStandingsFallback(db, code);
       } catch {
         standings = await leagueStandingsFallback(db, league.code);
       }
@@ -2474,7 +2506,7 @@ async function handleLeagueList(db, request, key) {
         code: league.code,
         name: normalizeLeagueName(league.name, `League ${league.code}`),
         ownerUserId: league.owner_user_id,
-        isOwner: String(league.owner_user_id || "") === String(session.user_id || ""),
+        isOwner: String(league.owner_user_id || "") === String(userId || ""),
         memberCount: Number(league.member_count || 0),
         season: {
           seasonId: season.seasonId,
@@ -2485,12 +2517,17 @@ async function handleLeagueList(db, request, key) {
       };
     })
   );
+  return detailed;
+}
+
+async function handleLeagueList(db, request, key) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const detailed = await buildLeagueDirectoryForUser(db, session.user_id, key);
   return json({ leagues: detailed }, 200);
 }
 
-async function handleChallengeDashboard(db, request, key) {
-  const { session } = await accountAuth(db, request);
-  if (!session) return json({ error: "Unauthorized" }, 401);
+async function buildChallengeDashboardForUser(db, session, key) {
   await ensureAchievementCatalog(db);
   const prefs = await getUserPreference(db, session.user_id);
   const progress = await db
@@ -2538,7 +2575,7 @@ async function handleChallengeDashboard(db, request, key) {
   let season = null;
   let seasonStandings = [];
   if (currentLeagueCode) {
-    await syncLeagueScoresFromStates(db, currentLeagueCode, key);
+    await ensureLeagueScoresSettled(db, currentLeagueCode, key);
     season = currentSevenDaySeasonWindow();
     await ensureLeagueSeason(db, currentLeagueCode, season);
     const standingsRows = await db
@@ -2572,30 +2609,65 @@ async function handleChallengeDashboard(db, request, key) {
     }));
   }
 
+  return {
+    user: { id: session.user_id, name: session.name, avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id) },
+    preferences: prefs,
+    progress: {
+      currentStreak: Number(progress?.current_streak || 0),
+      bestStreak: Number(progress?.best_streak || 0),
+      lastQuestDate: progress?.last_quest_date || "",
+      comboCount: Number(progress?.combo_count || 0),
+      bestCombo: Number(progress?.best_combo || 0),
+      updatedAt: progress?.updated_at || null,
+    },
+    achievements: achievements?.results || [],
+    teamMastery: mastery?.results || [],
+    lifetimePoints: Math.max(0, Number(lifetime?.points || 0)),
+    currentSeason: season
+      ? {
+          leagueCode: currentLeagueCode,
+          seasonId: season.seasonId,
+          startsAt: season.startsAt,
+          endsAt: season.endsAt,
+          standings: seasonStandings,
+        }
+      : null,
+  };
+}
+
+async function handleChallengeDashboard(db, request, key) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const dashboard = await buildChallengeDashboardForUser(db, session, key);
+  return json(dashboard, 200);
+}
+
+async function handleAccountBootstrap(db, request, key) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+
+  const [stateRow, dashboard, leagues] = await Promise.all([
+    db
+      .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+      .bind(session.user_id)
+      .first(),
+    buildChallengeDashboardForUser(db, session, key),
+    buildLeagueDirectoryForUser(db, session.user_id, key),
+  ]);
   return json(
     {
-      user: { id: session.user_id, name: session.name, avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id) },
-      preferences: prefs,
-      progress: {
-        currentStreak: Number(progress?.current_streak || 0),
-        bestStreak: Number(progress?.best_streak || 0),
-        lastQuestDate: progress?.last_quest_date || "",
-        comboCount: Number(progress?.combo_count || 0),
-        bestCombo: Number(progress?.best_combo || 0),
-        updatedAt: progress?.updated_at || null,
+      user: {
+        id: session.user_id,
+        name: session.name,
+        email: String(session.email || ""),
+        hasRecoveryEmail: Boolean(session.email),
+        emailVerifiedAt: session.email_verified_at || null,
+        avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id),
       },
-      achievements: achievements?.results || [],
-      teamMastery: mastery?.results || [],
-      lifetimePoints: Math.max(0, Number(lifetime?.points || 0)),
-      currentSeason: season
-        ? {
-            leagueCode: currentLeagueCode,
-            seasonId: season.seasonId,
-            startsAt: season.startsAt,
-            endsAt: season.endsAt,
-            standings: seasonStandings,
-          }
-        : null,
+      state: safeParseJsonText(stateRow?.state_json || "{}"),
+      stateUpdatedAt: stateRow?.updated_at || null,
+      dashboard,
+      leagues,
     },
     200
   );
@@ -2892,7 +2964,7 @@ async function handleCronSettle(db, request, key, env) {
   const rows = await db.prepare("SELECT code FROM ezra_leagues").all();
   const codes = (rows?.results || []).map((row) => normalizeLeagueCode(row?.code)).filter(Boolean);
   for (const code of codes) {
-    await syncLeagueScoresFromStates(db, code, key);
+    await ensureLeagueScoresSettled(db, code, key, { force: true, minIntervalMs: 0 });
   }
   return json(
     {
@@ -2957,6 +3029,9 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "me" && request.method === "GET") {
       return handleAccountMe(db, request);
+    }
+    if (route === "bootstrap" && request.method === "GET") {
+      return handleAccountBootstrap(db, request, key);
     }
     if (route === "me" && (request.method === "PATCH" || request.method === "PUT")) {
       return handleAccountUpdateMe(db, request, env);
@@ -3109,6 +3184,8 @@ const TABLE_REFRESH_MATCHDAY_MS = 2 * 60 * 1000;
 const TABLE_REFRESH_IDLE_MS = 15 * 60 * 1000;
 const FIXTURE_HISTORY_DAYS = 92;
 const FIXTURE_FUTURE_DAYS = 183;
+const LEAGUE_SETTLE_MIN_INTERVAL_MS = 60 * 1000;
+const LEAGUE_SETTLE_LOCK_MS = 45 * 1000;
 const LIVE_SNAPSHOT_REFRESH_MS = 60 * 1000;
 const LIVE_STREAM_POLL_MS = 5000;
 const LIVE_STREAM_MAX_MS = 55 * 1000;
