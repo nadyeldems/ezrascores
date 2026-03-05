@@ -2038,6 +2038,7 @@ const state = {
     syncing: false,
     bootstrapInFlight: false,
     bootstrapPromise: null,
+    bootstrapRetryTimer: null,
     lastRenderedAvatarHash: "",
     lastRenderedSignedIn: false,
   },
@@ -4172,7 +4173,7 @@ async function refreshLeagueDirectory(force = false) {
   if (state.leagueDirectory.promise && typeof state.leagueDirectory.promise.then === "function") {
     return state.leagueDirectory.promise;
   }
-  if (!force && accountSignedIn() && state.leagueDirectory.items.length && Date.now() - Number(state.lastLeagueDirectoryAt || 0) < 30_000) {
+  if (!force && accountSignedIn() && state.leagueDirectory.items.length && Date.now() - Number(state.lastLeagueDirectoryAt || 0) < 5_000) {
     return true;
   }
 
@@ -7896,9 +7897,41 @@ async function apiRequest(method, path, body = null, token = "") {
       ? `Cloudflare error ${res.status}. Check Pages Functions logs for the latest exception.`
       : raw.slice(0, 220);
     const detail = payload?.detail ? ` (${String(payload.detail).slice(0, 220)})` : "";
-    throw new Error((clean || `Request failed (${res.status})`) + detail);
+    const error = new Error((clean || `Request failed (${res.status})`) + detail);
+    error.status = res.status;
+    error.path = path;
+    throw error;
   }
   return payload;
+}
+
+function isSessionAuthError(err) {
+  const status = Number(err?.status || 0);
+  if (status === 401 || status === 403) return true;
+  const text = String(err?.message || "").toLowerCase();
+  return (
+    text.includes("session expired") ||
+    text.includes("invalid token") ||
+    text.includes("token expired") ||
+    text.includes("not authorized")
+  );
+}
+
+function clearAccountBootstrapRetryTimer() {
+  if (!state.account?.bootstrapRetryTimer) return;
+  clearTimeout(state.account.bootstrapRetryTimer);
+  state.account.bootstrapRetryTimer = null;
+}
+
+function scheduleAccountBootstrapRetry(delayMs = 3000) {
+  if (!state.account?.token) return;
+  if (state.account.bootstrapInFlight) return;
+  if (state.account.bootstrapRetryTimer) return;
+  state.account.bootstrapRetryTimer = setTimeout(async () => {
+    state.account.bootstrapRetryTimer = null;
+    if (!state.account?.token) return;
+    await safeLoad(() => initAccountSession(), null);
+  }, Math.max(1200, Number(delayMs) || 3000));
 }
 
 function buildCloudStatePayload() {
@@ -7932,6 +7965,7 @@ function resetAccountScopedLocalState() {
     clearTimeout(state.account.leagueRefreshTimer);
     state.account.leagueRefreshTimer = null;
   }
+  clearAccountBootstrapRetryTimer();
   persistLocalMetaState();
 }
 
@@ -7999,6 +8033,10 @@ async function runPostAuthBootstrap(contextLabel = "auth") {
   const promise = (async () => {
     state.account.bootstrapInFlight = true;
     setAccountPhase("SYNCING_PROFILE");
+    state.challengeDashboard = null;
+    state.challengeDashboardAt = 0;
+    state.challengeDashboardPromise = null;
+    renderLifetimePointsPill();
     renderAccountUI();
     let partialWarning = false;
     try {
@@ -8105,7 +8143,7 @@ async function refreshChallengeDashboard(force = false) {
   if (state.challengeDashboardPromise && typeof state.challengeDashboardPromise.then === "function") {
     return state.challengeDashboardPromise;
   }
-  if (!force && Date.now() - Number(state.challengeDashboardAt || 0) < 30 * 1000) {
+  if (!force && Date.now() - Number(state.challengeDashboardAt || 0) < 5_000) {
     return state.challengeDashboard;
   }
   const task = (async () => {
@@ -8156,6 +8194,7 @@ async function initAccountSession() {
   if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.checked = Boolean(state.account.keepLoggedIn);
   if (el.accountKeepLoggedInSignedIn) el.accountKeepLoggedInSignedIn.checked = Boolean(state.account.keepLoggedIn);
   if (!state.account.token) {
+    clearAccountBootstrapRetryTimer();
     setAccountPhase("SIGNED_OUT");
     resetAccountScopedLocalState();
     state.challengeDashboard = null;
@@ -8170,6 +8209,7 @@ async function initAccountSession() {
   setAccountPhase("RESTORING_SESSION");
   renderAccountUI();
   try {
+    clearAccountBootstrapRetryTimer();
     const result = await runPostAuthBootstrap("Session restored");
     const partialWarning = Boolean(result?.partialWarning);
     if (!state.account.user) throw new Error("Session expired");
@@ -8179,18 +8219,26 @@ async function initAccountSession() {
     }
     resumePendingLeagueInvitePrompt();
   } catch (err) {
-    state.account.token = "";
-    state.account.user = null;
-    setAccountPhase("SIGNED_OUT");
-    clearStoredAccountToken();
+    if (isSessionAuthError(err)) {
+      state.account.token = "";
+      state.account.user = null;
+      clearAccountBootstrapRetryTimer();
+      setAccountPhase("SIGNED_OUT");
+      clearStoredAccountToken();
+      renderAccountUI();
+      renderFamilyLeaguePanel();
+      refreshVisibleFixturePredictionBadges();
+      state.challengeDashboard = null;
+      state.challengeDashboardAt = 0;
+      state.challengeDashboardPromise = null;
+      setAccountStatus(`Logged out. ${err.message}`, true);
+      resumePendingLeagueInvitePrompt();
+      return;
+    }
+    setAccountPhase("RESTORING_SESSION");
     renderAccountUI();
-    renderFamilyLeaguePanel();
-    refreshVisibleFixturePredictionBadges();
-    state.challengeDashboard = null;
-    state.challengeDashboardAt = 0;
-    state.challengeDashboardPromise = null;
-    setAccountStatus(`Logged out. ${err.message}`, true);
-    resumePendingLeagueInvitePrompt();
+    setAccountStatus("Reconnecting account data from server...");
+    scheduleAccountBootstrapRetry(3000);
   }
 }
 
@@ -8389,6 +8437,7 @@ async function logoutAccount() {
     clearTimeout(state.account.leagueRefreshTimer);
     state.account.leagueRefreshTimer = null;
   }
+  clearAccountBootstrapRetryTimer();
   clearStoredAccountToken();
   resetAccountScopedLocalState();
   state.challengeDashboard = null;
