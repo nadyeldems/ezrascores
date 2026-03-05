@@ -2504,6 +2504,55 @@ body[data-motion="minimal"] .avatar-hero-img {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+#fun-zone-panel.play-focus .fun-card {
+  display: none;
+}
+
+#fun-zone-panel.play-focus #avatar-builder-card,
+#fun-zone-panel.play-focus #dream-team-card,
+#fun-zone-panel.play-focus #pop-quiz-panel,
+#fun-zone-panel.play-focus #club-quiz-panel {
+  display: block;
+}
+
+#fun-zone-panel.play-focus .fun-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+#fun-zone-panel.play-focus #avatar-builder-card {
+  grid-column: 1 / -1;
+}
+
+#fun-zone-panel.play-focus .avatar-hero-preview {
+  display: none;
+}
+
+#fun-zone-panel.play-focus .avatar-editor {
+  gap: 0.45rem;
+}
+
+#fun-zone-panel.play-focus .account-avatar-preview {
+  width: 4.2rem;
+  height: 5.6rem;
+}
+
+#fun-zone-panel.play-focus .avatar-presets-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  max-height: 15.5rem;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+#fun-zone-panel.play-focus .avatar-preset-card {
+  min-height: 6.65rem;
+  padding: 0.28rem;
+}
+
+#fun-zone-panel.play-focus .avatar-preset-card img {
+  max-width: 3.8rem;
+}
+
 #family-league-panel.compact-home .family-controls {
   display: none;
 }
@@ -3347,6 +3396,10 @@ body[data-motion="minimal"] .avatar-hero-img {
     grid-template-columns: 1fr;
   }
 
+  #fun-zone-panel.play-focus .fun-grid {
+    grid-template-columns: 1fr;
+  }
+
   .avatar-editor-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3360,6 +3413,13 @@ body[data-motion="minimal"] .avatar-hero-img {
   .avatar-hero-preview {
     min-height: 12.8rem;
     padding: 0.75rem;
+  }
+
+  #fun-zone-panel.play-focus .avatar-presets-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .account-avatar-preview {

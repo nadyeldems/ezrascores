@@ -2027,7 +2027,8 @@ async function handleAccountMe(db, request) {
         avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id),
       },
     },
-    200
+    200,
+    { "Cache-Control": "no-store" }
   );
 }
 
@@ -2524,7 +2525,7 @@ async function handleLeagueList(db, request, key) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
   const detailed = await buildLeagueDirectoryForUser(db, session.user_id, key);
-  return json({ leagues: detailed }, 200);
+  return json({ leagues: detailed }, 200, { "Cache-Control": "no-store" });
 }
 
 async function buildChallengeDashboardForUser(db, session, key) {
@@ -2574,8 +2575,9 @@ async function buildChallengeDashboardForUser(db, session, key) {
   const currentLeagueCode = normalizeLeagueCode(leagues?.[0]?.code || "");
   let season = null;
   let seasonStandings = [];
+  let settleStatus = null;
   if (currentLeagueCode) {
-    await ensureLeagueScoresSettled(db, currentLeagueCode, key);
+    settleStatus = await ensureLeagueScoresSettled(db, currentLeagueCode, key);
     season = currentSevenDaySeasonWindow();
     await ensureLeagueSeason(db, currentLeagueCode, season);
     const standingsRows = await db
@@ -2629,6 +2631,7 @@ async function buildChallengeDashboardForUser(db, session, key) {
           seasonId: season.seasonId,
           startsAt: season.startsAt,
           endsAt: season.endsAt,
+          settleStatus,
           standings: seasonStandings,
         }
       : null,
@@ -2639,7 +2642,7 @@ async function handleChallengeDashboard(db, request, key) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
   const dashboard = await buildChallengeDashboardForUser(db, session, key);
-  return json(dashboard, 200);
+  return json(dashboard, 200, { "Cache-Control": "no-store" });
 }
 
 async function handleAccountBootstrap(db, request, key) {
@@ -2669,7 +2672,8 @@ async function handleAccountBootstrap(db, request, key) {
       dashboard,
       leagues,
     },
-    200
+    200,
+    { "Cache-Control": "no-store" }
   );
 }
 

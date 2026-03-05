@@ -2017,6 +2017,7 @@ const state = {
   challengeDashboard: null,
   challengeDashboardAt: 0,
   challengeDashboardPromise: null,
+  challengeForceSyncTimer: null,
   notificationsOpen: false,
   notifications: parseStoredJson("ezra_notifications", defaultNotificationsState()),
   lastQuestNotificationDate: localStorage.getItem("ezra_last_quest_notification_date") || currentUtcDateKey(),
@@ -2485,14 +2486,18 @@ function renderLifetimePointsPill() {
     el.lifetimePointsPill.textContent = "Total points: --";
     return;
   }
+  const settlePending = state.challengeDashboard?.currentSeason?.settleStatus?.settled === false;
+  if (settlePending) {
+    el.lifetimePointsPill.textContent = "Total points: Syncing...";
+    return;
+  }
   const dashPoints = Number(state.challengeDashboard?.lifetimePoints);
   if (Number.isFinite(dashPoints)) {
     localStorage.setItem("ezra_last_lifetime_points", String(Math.max(0, dashPoints)));
     el.lifetimePointsPill.textContent = `Total points: ${Math.max(0, dashPoints)}`;
     return;
   }
-  const fallback = Number(localStorage.getItem("ezra_last_lifetime_points") || "");
-  el.lifetimePointsPill.textContent = Number.isFinite(fallback) ? `Total points: ${Math.max(0, fallback)}` : "Total points: --";
+  el.lifetimePointsPill.textContent = "Total points: Syncing...";
 }
 
 function maybeShowFreeAvatarUnlockToast() {
@@ -7919,6 +7924,10 @@ function resetAccountScopedLocalState() {
   state.missions = defaultMissionState();
   state.familyLeague = defaultFamilyLeagueState();
   state.leagueRankByCode = {};
+  if (state.challengeForceSyncTimer) {
+    clearTimeout(state.challengeForceSyncTimer);
+    state.challengeForceSyncTimer = null;
+  }
   if (state.account?.leagueRefreshTimer) {
     clearTimeout(state.account.leagueRefreshTimer);
     state.account.leagueRefreshTimer = null;
@@ -8009,6 +8018,17 @@ async function runPostAuthBootstrap(contextLabel = "auth") {
         updateLeagueRankSignals(state.leagueDirectory.items, true);
         renderChallengeDashboardPanels();
         renderLifetimePointsPill();
+        const settlePending = state.challengeDashboard?.currentSeason?.settleStatus?.settled === false;
+        if (settlePending) {
+          if (state.challengeForceSyncTimer) {
+            clearTimeout(state.challengeForceSyncTimer);
+          }
+          state.challengeForceSyncTimer = setTimeout(() => {
+            state.challengeForceSyncTimer = null;
+            safeLoad(() => refreshChallengeDashboard(true), null);
+            safeLoad(() => refreshLeagueDirectory(true), null);
+          }, 4500);
+        }
       } else {
         const cloud = await safeLoad(() => loadCloudState(), null);
         if (cloud === null) partialWarning = true;
@@ -8374,6 +8394,10 @@ async function logoutAccount() {
   state.challengeDashboard = null;
   state.challengeDashboardAt = 0;
   state.challengeDashboardPromise = null;
+  if (state.challengeForceSyncTimer) {
+    clearTimeout(state.challengeForceSyncTimer);
+    state.challengeForceSyncTimer = null;
+  }
   state.leagueDirectory.promise = null;
   state.leagueDirectory.items = [];
   renderAccountUI();
@@ -9959,6 +9983,10 @@ function leagueCodeFromLeagueId(leagueId) {
   return LEAGUE_CODES.find((code) => String(LEAGUES[code]?.id || "") === wanted) || "";
 }
 
+function leagueIdToLeagueCode(leagueId) {
+  return leagueCodeFromLeagueId(leagueId);
+}
+
 function upsertEvents(target, updates) {
   if (!Array.isArray(target) || !Array.isArray(updates) || !updates.length) return target || [];
   const byKey = new Map((target || []).map((event) => [fixtureKey(event), event]));
@@ -10148,6 +10176,7 @@ function renderMobileSectionLayout() {
     if (el.squadBody) el.squadBody.classList.toggle("hidden", !squadTab);
   }
   fun.classList.toggle("home-focus", home);
+  fun.classList.toggle("play-focus", play);
 }
 
 function showRewardToast(message, tone = "success") {
@@ -11075,16 +11104,11 @@ function renderRecoverableError(sectionEl, kind = "fixtures") {
   const retries = isFixture
     ? Number(state.networkRecovery.fixturesRetryCount || 0)
     : Number(state.networkRecovery.tablesRetryCount || 0);
-  const errorMsg = String(
-    isFixture ? state.networkRecovery.fixturesLastError || "" : state.networkRecovery.tablesLastError || ""
-  ).trim();
   sectionEl.innerHTML = "";
   const box = document.createElement("div");
   box.className = "error actionable";
   const title = isFixture ? "Loading fixtures from server..." : "Syncing league table...";
-  const sub = isFixture
-    ? `Attempt ${Math.max(1, retries)}${errorMsg ? ` • ${escapeHtml(errorMsg)}` : ""}`
-    : `Attempt ${Math.max(1, retries)}${errorMsg ? ` • ${escapeHtml(errorMsg)}` : ""}`;
+  const sub = `Attempt ${Math.max(1, retries)}`;
   const hint = isFixture
     ? "You can keep browsing while this retries."
     : "Table will auto-update as soon as sync completes.";
