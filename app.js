@@ -58,8 +58,12 @@ const STORED_PLAYER_SCOPE = localStorage.getItem("ezra_player_pop_scope");
 const STORED_ACCOUNT_TOKEN_SESSION = sessionStorage.getItem("ezra_account_token_session") || "";
 const STORED_ACCOUNT_TOKEN_LOCAL = localStorage.getItem("ezra_account_token") || "";
 const STORED_KEEP_LOGGED_IN = localStorage.getItem("ezra_keep_logged_in") === "1";
-const STORED_ACCOUNT_TOKEN = STORED_ACCOUNT_TOKEN_SESSION || STORED_ACCOUNT_TOKEN_LOCAL || "";
-const EFFECTIVE_KEEP_LOGGED_IN = STORED_ACCOUNT_TOKEN_SESSION ? false : STORED_KEEP_LOGGED_IN;
+const STORED_ACCOUNT_TOKEN =
+  (STORED_KEEP_LOGGED_IN && STORED_ACCOUNT_TOKEN_LOCAL) ||
+  STORED_ACCOUNT_TOKEN_SESSION ||
+  STORED_ACCOUNT_TOKEN_LOCAL ||
+  "";
+const EFFECTIVE_KEEP_LOGGED_IN = STORED_KEEP_LOGGED_IN || Boolean(STORED_ACCOUNT_TOKEN_LOCAL && !STORED_ACCOUNT_TOKEN_SESSION);
 const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite", null);
 const STORED_LAST_REFRESH_ISO = localStorage.getItem("ezra_last_refresh_iso") || "";
 let STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
@@ -8365,6 +8369,10 @@ async function initAccountSession() {
   state.account.keepLoggedIn = resolveKeepLoggedInFromStorage();
   if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.checked = Boolean(state.account.keepLoggedIn);
   if (el.accountKeepLoggedInSignedIn) el.accountKeepLoggedInSignedIn.checked = Boolean(state.account.keepLoggedIn);
+  if (state.account.keepLoggedIn && sessionStorage.getItem("ezra_account_token_session")) {
+    // Keep-login mode should not keep a competing session token around.
+    sessionStorage.removeItem("ezra_account_token_session");
+  }
   if (state.account.keepLoggedIn && state.account.token && !localStorage.getItem("ezra_account_token")) {
     // Repair old sessions that were accidentally kept in sessionStorage only.
     storeAccountToken(state.account.token, true);
