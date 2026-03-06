@@ -2057,6 +2057,8 @@ const state = {
     bootstrapInFlight: false,
     bootstrapPromise: null,
     bootstrapRetryTimer: null,
+    restoreAuthFailures: 0,
+    restoreAuthFirstAt: 0,
     lastRenderedAvatarHash: "",
     lastRenderedSignedIn: false,
   },
@@ -8399,6 +8401,8 @@ async function initAccountSession() {
       const result = await runPostAuthBootstrap("Session restored");
       const partialWarning = Boolean(result?.partialWarning);
       if (!state.account.user) throw new Error("Session expired");
+      state.account.restoreAuthFailures = 0;
+      state.account.restoreAuthFirstAt = 0;
       setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
       if (partialWarning) {
         setAccountStatus(`Cloud save active for ${state.account.user.name}. Some sections are still loading; retry in a moment.`);
@@ -8417,6 +8421,22 @@ async function initAccountSession() {
   }
 
   if (isSessionAuthError(restoreError)) {
+    const now = Date.now();
+    if (!Number(state.account.restoreAuthFirstAt || 0)) {
+      state.account.restoreAuthFirstAt = now;
+      state.account.restoreAuthFailures = 1;
+    } else {
+      state.account.restoreAuthFailures = Number(state.account.restoreAuthFailures || 0) + 1;
+    }
+    const withinWindow = now - Number(state.account.restoreAuthFirstAt || 0) < 60_000;
+    const tooManyFailures = withinWindow && Number(state.account.restoreAuthFailures || 0) >= 5;
+    if (!tooManyFailures) {
+      setAccountPhase("RESTORING_SESSION");
+      renderAccountUI();
+      setAccountStatus("Reconnecting your account session...");
+      scheduleAccountBootstrapRetry(1800);
+      return;
+    }
     state.account.token = "";
     state.account.user = null;
     clearAccountBootstrapRetryTimer();
@@ -8428,6 +8448,8 @@ async function initAccountSession() {
     state.challengeDashboard = null;
     state.challengeDashboardAt = 0;
     state.challengeDashboardPromise = null;
+    state.account.restoreAuthFailures = 0;
+    state.account.restoreAuthFirstAt = 0;
     setAccountStatus(`Logged out. ${restoreError?.message || "Session expired"}`, true);
     resumePendingLeagueInvitePrompt();
     return;
@@ -8635,6 +8657,8 @@ async function logoutAccount() {
     state.account.leagueRefreshTimer = null;
   }
   clearAccountBootstrapRetryTimer();
+  state.account.restoreAuthFailures = 0;
+  state.account.restoreAuthFirstAt = 0;
   clearStoredAccountToken();
   resetAccountScopedLocalState();
   state.challengeDashboard = null;
