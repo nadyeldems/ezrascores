@@ -8387,7 +8387,11 @@ async function initAccountSession() {
     state.challengeDashboardAt = 0;
     state.challengeDashboardPromise = null;
     await safeLoad(() => refreshLeagueDirectory(), null);
-    setAccountStatus("Logged out. Existing features still work locally.");
+    if (state.account.keepLoggedIn) {
+      setAccountStatus("No active saved session found on this URL yet. Sign in once to reconnect cloud save.");
+    } else {
+      setAccountStatus("Logged out. Existing features still work locally.");
+    }
     resumePendingLeagueInvitePrompt();
     renderFamilyLeaguePanel();
     return;
@@ -8437,21 +8441,11 @@ async function initAccountSession() {
       scheduleAccountBootstrapRetry(1800);
       return;
     }
-    state.account.token = "";
-    state.account.user = null;
-    clearAccountBootstrapRetryTimer();
-    setAccountPhase("SIGNED_OUT");
-    clearStoredAccountToken();
+    // Do not force sign-out on boot; keep token and continue recovery loop.
+    setAccountPhase("RESTORING_SESSION");
     renderAccountUI();
-    renderFamilyLeaguePanel();
-    refreshVisibleFixturePredictionBadges();
-    state.challengeDashboard = null;
-    state.challengeDashboardAt = 0;
-    state.challengeDashboardPromise = null;
-    state.account.restoreAuthFailures = 0;
-    state.account.restoreAuthFirstAt = 0;
-    setAccountStatus(`Logged out. ${restoreError?.message || "Session expired"}`, true);
-    resumePendingLeagueInvitePrompt();
+    setAccountStatus("Still reconnecting account session. You can also tap Sign In to refresh credentials.");
+    scheduleAccountBootstrapRetry(3500);
     return;
   }
 
