@@ -552,6 +552,31 @@ async function ensureAccountSchema(db) {
       )
     `,
     `
+      CREATE TABLE IF NOT EXISTS ezra_user_follows (
+        follower_user_id TEXT NOT NULL,
+        followed_user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (follower_user_id, followed_user_id),
+        FOREIGN KEY (follower_user_id) REFERENCES ezra_users(id),
+        FOREIGN KEY (followed_user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_user_follows_followed ON ezra_user_follows(followed_user_id)`,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_social_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        league_code TEXT,
+        user_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload_json TEXT,
+        dedupe_key TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_social_events_user ON ezra_social_events(user_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_social_events_league ON ezra_social_events(league_code, created_at DESC)`,
+    `
       CREATE TABLE IF NOT EXISTS ezra_auth_codes (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -1255,6 +1280,26 @@ async function grantAchievement(db, userId, code) {
     .run();
 }
 
+async function emitSocialEvent(db, { leagueCode = "", userId = "", eventType = "", payload = {}, dedupeKey = "" } = {}) {
+  const code = normalizeLeagueCode(leagueCode || "");
+  const actor = String(userId || "").trim();
+  const type = String(eventType || "").trim().slice(0, 64);
+  const key = String(dedupeKey || "").trim().slice(0, 160);
+  if (!actor || !type || !key) return false;
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `
+      INSERT OR IGNORE INTO ezra_social_events
+        (league_code, user_id, event_type, payload_json, dedupe_key, created_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+      `
+    )
+    .bind(code || null, actor, type, JSON.stringify(payload || {}), key, nowIso)
+    .run();
+  return true;
+}
+
 async function awardSeasonTitleIfEligible(db, leagueCode, seasonId) {
   if (!leagueCode || !seasonId) return null;
   const existing = await db
@@ -1537,6 +1582,22 @@ async function syncLeagueScoresFromStates(db, code, key) {
           seasonPoints += awarded;
         }
         if (base === 2) totalExact += 1;
+        if (base === 2) {
+          await emitSocialEvent(db, {
+            leagueCode: code,
+            userId,
+            eventType: "perfect_scoreline",
+            dedupeKey: `perfect:${code}:${userId}:${pick.eventId}`,
+            payload: {
+              eventId: String(pick.eventId || ""),
+              homeTeam: String(event?.strHomeTeam || ""),
+              awayTeam: String(event?.strAwayTeam || ""),
+              finalHome: result.home,
+              finalAway: result.away,
+              awarded,
+            },
+          });
+        }
         const existing = mastery.get(teamId) || {
           teamId,
           teamName,
@@ -1635,6 +1696,38 @@ async function syncLeagueScoresFromStates(db, code, key) {
       await replacePointLedgerForUser(db, userId, code, ledger);
     })
   );
+
+  const leaderRow = await db
+    .prepare(
+      `
+      SELECT user_id, points
+      FROM ezra_league_season_points
+      WHERE league_code = ?1 AND season_id = ?2
+      ORDER BY points DESC, user_id ASC
+      LIMIT 1
+      `
+    )
+    .bind(code, season.seasonId)
+    .first();
+  const leaderUserId = String(leaderRow?.user_id || "");
+  if (leaderUserId) {
+    const prevLeaderKey = `league_leader:${code}:${season.seasonId}`;
+    const prevLeader = String(await getIngestStateText(db, prevLeaderKey, "") || "");
+    if (prevLeader && prevLeader !== leaderUserId) {
+      await emitSocialEvent(db, {
+        leagueCode: code,
+        userId: leaderUserId,
+        eventType: "climbed_to_1",
+        dedupeKey: `leader:${code}:${season.seasonId}:${leaderUserId}`,
+        payload: {
+          seasonId: season.seasonId,
+          points: Math.max(0, Number(leaderRow?.points || 0)),
+          previousLeaderUserId: prevLeader,
+        },
+      });
+    }
+    await setIngestStateText(db, prevLeaderKey, leaderUserId);
+  }
 
   const winnerUserId = await awardSeasonTitleIfEligible(db, code, season.seasonId);
   if (winnerUserId) {
@@ -2916,6 +3009,171 @@ async function handleLeagueMemberView(db, request, key) {
   );
 }
 
+async function handleSocialFollow(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const followedUserId = String(body?.followedUserId || body?.targetUserId || "").trim();
+  if (!followedUserId) return json({ error: "Missing followed user id." }, 400);
+  if (followedUserId === String(session.user_id || "")) {
+    return json({ error: "You cannot follow yourself." }, 400);
+  }
+  const target = await db.prepare("SELECT id, name FROM ezra_users WHERE id = ?1 LIMIT 1").bind(followedUserId).first();
+  if (!target?.id) return json({ error: "User not found." }, 404);
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `
+      INSERT OR IGNORE INTO ezra_user_follows (follower_user_id, followed_user_id, created_at)
+      VALUES (?1, ?2, ?3)
+      `
+    )
+    .bind(String(session.user_id || ""), followedUserId, nowIso)
+    .run();
+  return json({ ok: true, followedUserId, followedName: target.name || "User" }, 200);
+}
+
+async function handleSocialFeed(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const url = new URL(request.url);
+  const limit = Math.max(5, Math.min(30, Number(url.searchParams.get("limit") || 12)));
+  const code = normalizeLeagueCode(url.searchParams.get("code"));
+  const userId = String(session.user_id || "");
+
+  const follows = await db
+    .prepare("SELECT followed_user_id FROM ezra_user_follows WHERE follower_user_id = ?1")
+    .bind(userId)
+    .all();
+  const followedIds = (follows?.results || []).map((row) => String(row?.followed_user_id || "")).filter(Boolean);
+  const targetIds = Array.from(new Set([userId, ...followedIds]));
+  if (!targetIds.length) return json({ events: [] }, 200);
+  const placeholders = targetIds.map((_, i) => `?${i + 1}`).join(", ");
+  const bindings = [...targetIds];
+  let whereCode = "";
+  if (code) {
+    whereCode = ` AND se.league_code = ?${bindings.length + 1}`;
+    bindings.push(code);
+  }
+  const rows = await db
+    .prepare(
+      `
+      SELECT se.id, se.league_code, se.user_id, se.event_type, se.payload_json, se.created_at, u.name
+      FROM ezra_social_events se
+      JOIN ezra_users u ON u.id = se.user_id
+      WHERE se.user_id IN (${placeholders}) ${whereCode}
+      ORDER BY se.created_at DESC, se.id DESC
+      LIMIT ${limit}
+      `
+    )
+    .bind(...bindings)
+    .all();
+
+  const events = (rows?.results || []).map((row) => {
+    const payload = safeParseJsonText(row?.payload_json || "{}");
+    let message = "New update";
+    if (row.event_type === "perfect_scoreline") {
+      const hs = Number(payload?.finalHome);
+      const as = Number(payload?.finalAway);
+      const fixture = `${String(payload?.homeTeam || "Home")} ${Number.isFinite(hs) ? hs : "-"}-${Number.isFinite(as) ? as : "-"} ${String(payload?.awayTeam || "Away")}`;
+      message = `${String(row?.name || "Player")} got a perfect scoreline • ${fixture}`;
+    } else if (row.event_type === "climbed_to_1") {
+      message = `${String(row?.name || "Player")} climbed to #1`;
+    }
+    return {
+      id: Number(row?.id || 0),
+      leagueCode: normalizeLeagueCode(row?.league_code),
+      userId: String(row?.user_id || ""),
+      userName: String(row?.name || "Player"),
+      type: String(row?.event_type || ""),
+      message,
+      payload,
+      createdAt: String(row?.created_at || ""),
+    };
+  });
+  return json({ events }, 200, { "Cache-Control": "no-store" });
+}
+
+async function handleSocialRivalry(db, request, key) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const url = new URL(request.url);
+  const requestedCode = normalizeLeagueCode(url.searchParams.get("code"));
+  let code = requestedCode;
+  if (!code) {
+    const leagues = await listLeaguesForUser(db, session.user_id);
+    code = normalizeLeagueCode(leagues?.[0]?.code || "");
+  }
+  if (!code) return json({ rivalry: null }, 200);
+  await ensureLeagueScoresSettled(db, code, key);
+  const season = currentSevenDaySeasonWindow();
+  await ensureLeagueSeason(db, code, season);
+
+  const standingsRows = await db
+    .prepare(
+      `
+      SELECT u.id AS user_id, u.name, COALESCE(sp.points, 0) AS points
+      FROM ezra_league_members lm
+      JOIN ezra_users u ON u.id = lm.user_id
+      LEFT JOIN ezra_league_season_points sp
+        ON sp.user_id = lm.user_id
+       AND sp.league_code = lm.league_code
+       AND sp.season_id = ?2
+      WHERE lm.league_code = ?1
+      ORDER BY points DESC, u.name COLLATE NOCASE ASC
+      `
+    )
+    .bind(code, season.seasonId)
+    .all();
+  const rows = standingsRows?.results || [];
+  const meIdx = rows.findIndex((row) => String(row?.user_id || "") === String(session.user_id || ""));
+  if (meIdx < 0) return json({ rivalry: null }, 200);
+  const ahead = meIdx > 0 ? rows[meIdx - 1] : null;
+  const behind = meIdx < rows.length - 1 ? rows[meIdx + 1] : null;
+  const mePoints = Math.max(0, Number(rows[meIdx]?.points || 0));
+
+  const milestones = await db
+    .prepare(
+      `
+      SELECT p.best_streak,
+             (SELECT COUNT(*) FROM ezra_league_season_titles t WHERE t.league_code = ?1 AND t.user_id = ?2) AS titles_won,
+             (SELECT COALESCE(SUM(exact_correct), 0) FROM ezra_user_team_mastery m WHERE m.user_id = ?2) AS exact_picks
+      FROM ezra_user_progress p
+      WHERE p.user_id = ?2
+      LIMIT 1
+      `
+    )
+    .bind(code, session.user_id)
+    .first();
+
+  const rivalry = {
+    leagueCode: code,
+    me: { points: mePoints, rank: meIdx + 1, name: String(rows[meIdx]?.name || "You") },
+    ahead: ahead
+      ? {
+          userId: String(ahead.user_id || ""),
+          name: String(ahead.name || "Player"),
+          points: Math.max(0, Number(ahead.points || 0)),
+          gap: Math.max(0, Number(ahead.points || 0) - mePoints),
+        }
+      : null,
+    behind: behind
+      ? {
+          userId: String(behind.user_id || ""),
+          name: String(behind.name || "Player"),
+          points: Math.max(0, Number(behind.points || 0)),
+          gap: Math.max(0, mePoints - Number(behind.points || 0)),
+        }
+      : null,
+    milestones: {
+      bestStreak: Math.max(0, Number(milestones?.best_streak || 0)),
+      titlesWon: Math.max(0, Number(milestones?.titles_won || 0)),
+      exactPicks: Math.max(0, Number(milestones?.exact_picks || 0)),
+    },
+  };
+  return json({ rivalry }, 200, { "Cache-Control": "no-store" });
+}
+
 async function handlePublicLeagueStandings(db, request, key) {
   const url = new URL(request.url);
   const code = normalizeLeagueCode(url.searchParams.get("code"));
@@ -3093,6 +3351,15 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "league/member" && request.method === "GET") {
       return handleLeagueMemberView(db, request, key);
+    }
+    if (route === "follow" && request.method === "POST") {
+      return handleSocialFollow(db, request);
+    }
+    if (route === "feed" && request.method === "GET") {
+      return handleSocialFeed(db, request);
+    }
+    if (route === "rivalry" && request.method === "GET") {
+      return handleSocialRivalry(db, request, key);
     }
     if (route === "league/standings" && request.method === "GET") {
       return handlePublicLeagueStandings(db, request, key);

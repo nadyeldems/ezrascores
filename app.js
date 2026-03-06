@@ -2011,6 +2011,8 @@ const state = {
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
+  socialFeed: { items: [], loading: false, error: "", at: 0 },
+  rivalry: { data: null, loading: false, error: "", at: 0 },
   leagueDirectory: { items: [], loading: false, promise: null },
   leagueRankByCode: {},
   lastLeagueDirectoryAt: 0,
@@ -2256,6 +2258,8 @@ const el = {
   familyCodeLabel: document.getElementById("family-code-label"),
   familySeasonCountdown: document.getElementById("family-season-countdown"),
   familyMembers: document.getElementById("family-members"),
+  socialFeedList: document.getElementById("social-feed-list"),
+  rivalryContent: document.getElementById("rivalry-content"),
   funZoneBody: document.getElementById("fun-zone-body"),
   mobileTabsPanel: document.getElementById("mobile-tabs-panel"),
   mobileTabButtons: [...document.querySelectorAll(".mobile-tab-btn")],
@@ -4251,6 +4255,7 @@ async function refreshLeagueDirectory(force = false) {
       state.familyLeague.currentLeagueIndex = nextIdx;
       updateLeagueRankSignals(nextItems, Boolean(prevItems.length));
       state.lastLeagueDirectoryAt = Date.now();
+      await refreshSocialLayer(true);
     } catch (err) {
       state.leagueDirectory.items = prevItems;
       state.familyLeague.joinedLeagueCodes = prevCodes;
@@ -4272,8 +4277,11 @@ async function refreshLeagueDirectory(force = false) {
   }
 }
 
-function cycleLeague(delta) {
+async function cycleLeague(delta) {
   ensureFamilyLeagueState();
+  if (accountSignedIn() && (!Array.isArray(state.leagueDirectory.items) || state.leagueDirectory.items.length < 2)) {
+    await safeLoad(() => refreshLeagueDirectory(true), null);
+  }
   const directoryCodes = Array.isArray(state.leagueDirectory.items)
     ? state.leagueDirectory.items.map((league) => String(league?.code || "").toUpperCase()).filter(Boolean)
     : [];
@@ -4285,6 +4293,7 @@ function cycleLeague(delta) {
   state.familyLeague.leagueCode = codes[nextIdx];
   persistLocalMetaState();
   renderFamilyLeaguePanel();
+  await refreshSocialLayer(true);
 }
 
 function currentSelectedLeagueRecord() {
@@ -4881,15 +4890,30 @@ function renderFamilyLeaguePanel() {
         ? state.account.user?.avatar || member.avatar
         : member.avatar;
     const avatarHtml = avatarBadgeMarkup(avatarSource, member.name || "User", "league-member-avatar");
+    const showFollow = accountSignedIn() && !isSignedInMember;
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title mission-title-with-avatar">${avatarHtml}<span>#${rank} ${escapeHtml(member.name || "User")}${titleBadge}</span></div>
         <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""}${compactHomeMode ? "" : " • Tap to view profile"}</div>
       </div>
       <div class="account-actions">
+        ${showFollow ? `<button class="btn btn-inline league-follow-btn" type="button" data-follow-user-id="${escapeHtml(String(member.user_id || ""))}" data-follow-name="${escapeHtml(member.name || "User")}">Follow</button>` : ""}
         <span class="family-points">${Number(member.points || 0)}</span>
       </div>
     `;
+    row.querySelector(".league-follow-btn")?.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const followedUserId = String(member.user_id || "");
+      if (!followedUserId) return;
+      try {
+        await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/follow`, { followedUserId }, state.account.token);
+        setAccountStatus(`Now following ${member.name || "user"}.`);
+        await refreshSocialLayer(true);
+      } catch (err) {
+        setAccountStatus(`Follow failed: ${err.message || "try again."}`, true);
+      }
+    });
     row.addEventListener("click", () => {
       openLeagueMemberView(String(member.user_id || ""), member.name || "User");
     });
@@ -4900,6 +4924,105 @@ function renderFamilyLeaguePanel() {
     });
     el.familyMembers.appendChild(row);
   });
+}
+
+function renderSocialPanels() {
+  if (el.socialFeedList) {
+    if (!accountSignedIn()) {
+      el.socialFeedList.innerHTML = `<div class="empty">Sign in to see your social feed.</div>`;
+    } else if (state.socialFeed.loading && !state.socialFeed.items.length) {
+      el.socialFeedList.innerHTML = `<div class="empty">Loading social feed...</div>`;
+    } else if (state.socialFeed.error) {
+      el.socialFeedList.innerHTML = `<div class="empty">${escapeHtml(state.socialFeed.error)}</div>`;
+    } else if (!state.socialFeed.items.length) {
+      el.socialFeedList.innerHTML = `<div class="empty">No social events yet.</div>`;
+    } else {
+      el.socialFeedList.innerHTML = state.socialFeed.items
+        .slice(0, 10)
+        .map((item) => {
+          const when = item?.createdAt
+            ? new Date(item.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+            : "--:--";
+          return `<div class="mission-item"><div class="mission-text"><div class="mission-title">${escapeHtml(item.message || "League update")}</div><div class="mission-sub">${escapeHtml(when)}</div></div></div>`;
+        })
+        .join("");
+    }
+  }
+
+  if (el.rivalryContent) {
+    const rivalry = state.rivalry.data;
+    if (!accountSignedIn()) {
+      el.rivalryContent.innerHTML = `<p class="muted">Sign in to track rival gaps and milestones.</p>`;
+      return;
+    }
+    if (state.rivalry.loading && !rivalry) {
+      el.rivalryContent.innerHTML = `<div class="challenge-skeleton"><span class="skeleton-line w-70"></span><span class="skeleton-line w-45"></span></div>`;
+      return;
+    }
+    if (state.rivalry.error) {
+      el.rivalryContent.innerHTML = `<p class="muted">${escapeHtml(state.rivalry.error)}</p>`;
+      return;
+    }
+    if (!rivalry) {
+      el.rivalryContent.innerHTML = `<p class="muted">Join a league to unlock rivalry insights.</p>`;
+      return;
+    }
+    const aheadText = rivalry.ahead
+      ? `You are ${Number(rivalry.ahead.gap || 0)} pts behind ${escapeHtml(rivalry.ahead.name || "leader")}.`
+      : "You are currently top of your league.";
+    const behindText = rivalry.behind
+      ? `${escapeHtml(rivalry.behind.name || "Rival")} is ${Number(rivalry.behind.gap || 0)} pts behind you.`
+      : "No one below you yet.";
+    const milestones = rivalry.milestones || {};
+    el.rivalryContent.innerHTML = `
+      <p class="challenge-footnote">${aheadText}</p>
+      <p class="challenge-footnote">${behindText}</p>
+      <ul class="challenge-list">
+        <li><span>Best streak</span><span>${Number(milestones.bestStreak || 0)}d</span></li>
+        <li><span>Titles won</span><span>${Number(milestones.titlesWon || 0)} 🏆</span></li>
+        <li><span>Exact picks</span><span>${Number(milestones.exactPicks || 0)}</span></li>
+      </ul>
+    `;
+  }
+}
+
+async function refreshSocialLayer(force = false) {
+  if (!accountSignedIn()) {
+    state.socialFeed = { items: [], loading: false, error: "", at: 0 };
+    state.rivalry = { data: null, loading: false, error: "", at: 0 };
+    renderSocialPanels();
+    return false;
+  }
+  if (!force && Date.now() - Number(state.socialFeed.at || 0) < 7_000 && Date.now() - Number(state.rivalry.at || 0) < 7_000) {
+    return true;
+  }
+  const currentLeague = currentSelectedLeagueRecord();
+  const code = normalizeLeagueCodeClient(currentLeague?.code || state.familyLeague?.leagueCode || "");
+  state.socialFeed.loading = true;
+  state.rivalry.loading = true;
+  state.socialFeed.error = "";
+  state.rivalry.error = "";
+  renderSocialPanels();
+  try {
+    const query = code ? `?code=${encodeURIComponent(code)}` : "";
+    const [feed, rivalry] = await Promise.all([
+      apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/feed${query}`, null, state.account.token),
+      apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/rivalry${query}`, null, state.account.token),
+    ]);
+    state.socialFeed.items = Array.isArray(feed?.events) ? feed.events : [];
+    state.socialFeed.at = Date.now();
+    state.rivalry.data = rivalry?.rivalry || null;
+    state.rivalry.at = Date.now();
+  } catch (err) {
+    const msg = err?.message || "Social update unavailable right now.";
+    state.socialFeed.error = msg;
+    state.rivalry.error = msg;
+  } finally {
+    state.socialFeed.loading = false;
+    state.rivalry.loading = false;
+    renderSocialPanels();
+  }
+  return true;
 }
 
 function formatDashboardDate(value) {
@@ -5149,6 +5272,8 @@ function renderFunZone() {
   renderClubQuizPanel();
   renderStoryCardsPanel();
   renderFamilyLeaguePanel();
+  renderSocialPanels();
+  void refreshSocialLayer(false);
   renderChallengeDashboardPanels();
   renderHigherLowerPanel();
 }
@@ -11882,14 +12007,14 @@ function attachEvents() {
   }
 
   if (el.familyPrevLeagueBtn) {
-    el.familyPrevLeagueBtn.addEventListener("click", () => {
-      cycleLeague(-1);
+    el.familyPrevLeagueBtn.addEventListener("click", async () => {
+      await cycleLeague(-1);
     });
   }
 
   if (el.familyNextLeagueBtn) {
-    el.familyNextLeagueBtn.addEventListener("click", () => {
-      cycleLeague(1);
+    el.familyNextLeagueBtn.addEventListener("click", async () => {
+      await cycleLeague(1);
     });
   }
 
