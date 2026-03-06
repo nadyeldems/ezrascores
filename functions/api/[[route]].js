@@ -3033,11 +3033,35 @@ async function handleSocialFollow(db, request) {
   return json({ ok: true, followedUserId, followedName: target.name || "User" }, 200);
 }
 
+async function handleSocialUnfollow(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const followedUserId = String(body?.followedUserId || body?.targetUserId || "").trim();
+  if (!followedUserId) return json({ error: "Missing followed user id." }, 400);
+  if (followedUserId === String(session.user_id || "")) {
+    return json({ error: "You cannot unfollow yourself." }, 400);
+  }
+  await db
+    .prepare(
+      `
+      DELETE FROM ezra_user_follows
+      WHERE follower_user_id = ?1
+        AND followed_user_id = ?2
+      `
+    )
+    .bind(String(session.user_id || ""), followedUserId)
+    .run();
+  return json({ ok: true, followedUserId }, 200);
+}
+
 async function handleSocialFeed(db, request) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
   const url = new URL(request.url);
   const limit = Math.max(5, Math.min(30, Number(url.searchParams.get("limit") || 12)));
+  const scopeRaw = String(url.searchParams.get("scope") || "all").trim().toLowerCase();
+  const scope = scopeRaw === "following" || scopeRaw === "league" ? scopeRaw : "all";
   const code = normalizeLeagueCode(url.searchParams.get("code"));
   const userId = String(session.user_id || "");
 
@@ -3046,8 +3070,16 @@ async function handleSocialFeed(db, request) {
     .bind(userId)
     .all();
   const followedIds = (follows?.results || []).map((row) => String(row?.followed_user_id || "")).filter(Boolean);
-  const targetIds = Array.from(new Set([userId, ...followedIds]));
-  if (!targetIds.length) return json({ events: [] }, 200);
+  let targetIds = Array.from(new Set([userId, ...followedIds]));
+  if (scope === "following") {
+    targetIds = followedIds;
+  } else if (scope === "league") {
+    const members = code
+      ? await db.prepare("SELECT user_id FROM ezra_league_members WHERE league_code = ?1").bind(code).all()
+      : { results: [] };
+    targetIds = (members?.results || []).map((row) => String(row?.user_id || "")).filter(Boolean);
+  }
+  if (!targetIds.length) return json({ events: [], followingUserIds: followedIds }, 200);
   const placeholders = targetIds.map((_, i) => `?${i + 1}`).join(", ");
   const bindings = [...targetIds];
   let whereCode = "";
@@ -3091,7 +3123,7 @@ async function handleSocialFeed(db, request) {
       createdAt: String(row?.created_at || ""),
     };
   });
-  return json({ events }, 200, { "Cache-Control": "no-store" });
+  return json({ events, followingUserIds: followedIds }, 200, { "Cache-Control": "no-store" });
 }
 
 async function handleSocialRivalry(db, request, key) {
@@ -3354,6 +3386,9 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "follow" && request.method === "POST") {
       return handleSocialFollow(db, request);
+    }
+    if (route === "unfollow" && request.method === "POST") {
+      return handleSocialUnfollow(db, request);
     }
     if (route === "feed" && request.method === "GET") {
       return handleSocialFeed(db, request);

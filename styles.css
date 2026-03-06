@@ -3660,6 +3660,13 @@ body[data-theme="club"] .btn:hover {
   font-weight: 700;
 }
 
+.social-feed-tab.active {
+  border-color: var(--amber);
+  color: #ffd9a2;
+  background: linear-gradient(180deg, rgba(255, 154, 31, 0.16), rgba(255, 154, 31, 0.07));
+  box-shadow: 0 0 0 1px rgba(255, 154, 31, 0.25) inset;
+}
+
 .favorite-banner {
   --fav-rgb: 255, 154, 31;
   --fav-border: var(--line);

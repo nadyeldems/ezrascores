@@ -2011,7 +2011,7 @@ const state = {
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
-  socialFeed: { items: [], loading: false, error: "", at: 0 },
+  socialFeed: { items: [], followingIds: [], filter: "all", loading: false, error: "", at: 0 },
   rivalry: { data: null, loading: false, error: "", at: 0 },
   leagueDirectory: { items: [], loading: false, promise: null },
   leagueRankByCode: {},
@@ -2258,6 +2258,7 @@ const el = {
   familyCodeLabel: document.getElementById("family-code-label"),
   familySeasonCountdown: document.getElementById("family-season-countdown"),
   familyMembers: document.getElementById("family-members"),
+  socialFeedTabs: [...document.querySelectorAll(".social-feed-tab")],
   socialFeedList: document.getElementById("social-feed-list"),
   rivalryContent: document.getElementById("rivalry-content"),
   funZoneBody: document.getElementById("fun-zone-body"),
@@ -4711,7 +4712,7 @@ function renderLeagueMemberView() {
   scheduleAvatar3DUpgrade();
 }
 
-async function openLeagueMemberView(userId, displayName) {
+async function openLeagueMemberView(userId, displayName, options = {}) {
   const currentLeague = currentSelectedLeagueRecord();
   const code = String(currentLeague?.code || state.familyLeague.leagueCode || "").toUpperCase();
   if (!accountSignedIn() || !code || !userId) return;
@@ -4724,7 +4725,7 @@ async function openLeagueMemberView(userId, displayName) {
   state.leagueMemberView.open = true;
   state.leagueMemberView.loading = true;
   state.leagueMemberView.error = "";
-  state.leagueMemberView.compare = false;
+  state.leagueMemberView.compare = Boolean(options?.compare);
   state.leagueMemberView.showPreviousRound = false;
   state.leagueMemberView.data = { user: { name: displayName || "User" }, predictions: [], dreamTeam: null };
   renderLeagueMemberView();
@@ -4891,42 +4892,68 @@ function renderFamilyLeaguePanel() {
         : member.avatar;
     const avatarHtml = avatarBadgeMarkup(avatarSource, member.name || "User", "league-member-avatar");
     const showFollow = accountSignedIn() && !isSignedInMember;
+    const memberUserId = String(member.user_id || "");
+    const followingSet = new Set((state.socialFeed.followingIds || []).map((id) => String(id)));
+    const isFollowing = followingSet.has(memberUserId);
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title mission-title-with-avatar">${avatarHtml}<span>#${rank} ${escapeHtml(member.name || "User")}${titleBadge}</span></div>
         <div class="mission-sub">Points: ${Number(member.points || 0)}${isSignedInMember ? " • You" : ""}${compactHomeMode ? "" : " • Tap to view profile"}</div>
       </div>
       <div class="account-actions">
-        ${showFollow ? `<button class="btn btn-inline league-follow-btn" type="button" data-follow-user-id="${escapeHtml(String(member.user_id || ""))}" data-follow-name="${escapeHtml(member.name || "User")}">Follow</button>` : ""}
+        ${
+          showFollow
+            ? `<button class="btn btn-inline league-follow-btn" type="button" data-follow-user-id="${escapeHtml(memberUserId)}" data-follow-name="${escapeHtml(member.name || "User")}" data-following="${isFollowing ? "1" : "0"}">${isFollowing ? "Unfollow" : "Follow"}</button>`
+            : ""
+        }
+        ${!isSignedInMember ? `<button class="btn btn-inline league-compare-btn" type="button">Compare</button>` : ""}
         <span class="family-points">${Number(member.points || 0)}</span>
       </div>
     `;
     row.querySelector(".league-follow-btn")?.addEventListener("click", async (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const followedUserId = String(member.user_id || "");
+      const followedUserId = memberUserId;
       if (!followedUserId) return;
+      const btn = event.currentTarget;
+      const following = String(btn?.dataset?.following || "0") === "1";
       try {
-        await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/follow`, { followedUserId }, state.account.token);
-        setAccountStatus(`Now following ${member.name || "user"}.`);
+        const endpoint = following ? "unfollow" : "follow";
+        await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/${endpoint}`, { followedUserId }, state.account.token);
+        setAccountStatus(`${following ? "Unfollowed" : "Now following"} ${member.name || "user"}.`);
+        state.socialFeed.at = 0;
         await refreshSocialLayer(true);
+        renderFamilyLeaguePanel();
       } catch (err) {
-        setAccountStatus(`Follow failed: ${err.message || "try again."}`, true);
+        setAccountStatus(`${following ? "Unfollow" : "Follow"} failed: ${err.message || "try again."}`, true);
       }
     });
+    row.querySelector(".league-compare-btn")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openLeagueMemberView(memberUserId, member.name || "User", { compare: true });
+    });
     row.addEventListener("click", () => {
-      openLeagueMemberView(String(member.user_id || ""), member.name || "User");
+      openLeagueMemberView(memberUserId, member.name || "User");
     });
     row.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      openLeagueMemberView(String(member.user_id || ""), member.name || "User");
+      openLeagueMemberView(memberUserId, member.name || "User");
     });
     el.familyMembers.appendChild(row);
   });
 }
 
 function renderSocialPanels() {
+  if (el.socialFeedTabs?.length) {
+    const active = String(state.socialFeed.filter || "all");
+    el.socialFeedTabs.forEach((btn) => {
+      const scope = String(btn?.dataset?.feedScope || "all");
+      btn.classList.toggle("active", scope === active);
+      btn.setAttribute("aria-pressed", scope === active ? "true" : "false");
+    });
+  }
   if (el.socialFeedList) {
     if (!accountSignedIn()) {
       el.socialFeedList.innerHTML = `<div class="empty">Sign in to see your social feed.</div>`;
@@ -4988,7 +5015,7 @@ function renderSocialPanels() {
 
 async function refreshSocialLayer(force = false) {
   if (!accountSignedIn()) {
-    state.socialFeed = { items: [], loading: false, error: "", at: 0 };
+    state.socialFeed = { items: [], followingIds: [], filter: "all", loading: false, error: "", at: 0 };
     state.rivalry = { data: null, loading: false, error: "", at: 0 };
     renderSocialPanels();
     return false;
@@ -5004,12 +5031,18 @@ async function refreshSocialLayer(force = false) {
   state.rivalry.error = "";
   renderSocialPanels();
   try {
-    const query = code ? `?code=${encodeURIComponent(code)}` : "";
+    const params = new URLSearchParams();
+    if (code) params.set("code", code);
+    params.set("scope", String(state.socialFeed.filter || "all"));
+    const query = `?${params.toString()}`;
     const [feed, rivalry] = await Promise.all([
       apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/feed${query}`, null, state.account.token),
       apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/rivalry${query}`, null, state.account.token),
     ]);
     state.socialFeed.items = Array.isArray(feed?.events) ? feed.events : [];
+    state.socialFeed.followingIds = Array.isArray(feed?.followingUserIds)
+      ? feed.followingUserIds.map((id) => String(id))
+      : [];
     state.socialFeed.at = Date.now();
     state.rivalry.data = rivalry?.rivalry || null;
     state.rivalry.at = Date.now();
@@ -12015,6 +12048,20 @@ function attachEvents() {
   if (el.familyNextLeagueBtn) {
     el.familyNextLeagueBtn.addEventListener("click", async () => {
       await cycleLeague(1);
+    });
+  }
+
+  if (el.socialFeedTabs?.length) {
+    el.socialFeedTabs.forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const next = String(btn?.dataset?.feedScope || "all").trim().toLowerCase();
+        if (!["all", "following", "league"].includes(next)) return;
+        if (next === state.socialFeed.filter) return;
+        state.socialFeed.filter = next;
+        state.socialFeed.at = 0;
+        renderSocialPanels();
+        await refreshSocialLayer(true);
+      });
     });
   }
 
