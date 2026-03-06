@@ -8392,38 +8392,51 @@ async function initAccountSession() {
   }
   setAccountPhase("RESTORING_SESSION");
   renderAccountUI();
-  try {
-    clearAccountBootstrapRetryTimer();
-    const result = await runPostAuthBootstrap("Session restored");
-    const partialWarning = Boolean(result?.partialWarning);
-    if (!state.account.user) throw new Error("Session expired");
-    setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
-    if (partialWarning) {
-      setAccountStatus(`Cloud save active for ${state.account.user.name}. Some sections are still loading; retry in a moment.`);
-    }
-    resumePendingLeagueInvitePrompt();
-  } catch (err) {
-    if (isSessionAuthError(err)) {
-      state.account.token = "";
-      state.account.user = null;
-      clearAccountBootstrapRetryTimer();
-      setAccountPhase("SIGNED_OUT");
-      clearStoredAccountToken();
-      renderAccountUI();
-      renderFamilyLeaguePanel();
-      refreshVisibleFixturePredictionBadges();
-      state.challengeDashboard = null;
-      state.challengeDashboardAt = 0;
-      state.challengeDashboardPromise = null;
-      setAccountStatus(`Logged out. ${err.message}`, true);
+  clearAccountBootstrapRetryTimer();
+  let restoreError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const result = await runPostAuthBootstrap("Session restored");
+      const partialWarning = Boolean(result?.partialWarning);
+      if (!state.account.user) throw new Error("Session expired");
+      setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
+      if (partialWarning) {
+        setAccountStatus(`Cloud save active for ${state.account.user.name}. Some sections are still loading; retry in a moment.`);
+      }
       resumePendingLeagueInvitePrompt();
       return;
+    } catch (err) {
+      restoreError = err;
+      if (!isSessionAuthError(err)) break;
+      if (attempt < 2) {
+        // Avoid false logout on transient auth/replica lag during boot.
+        await new Promise((resolve) => setTimeout(resolve, 650));
+        continue;
+      }
     }
-    setAccountPhase("RESTORING_SESSION");
-    renderAccountUI();
-    setAccountStatus("Reconnecting account data from server...");
-    scheduleAccountBootstrapRetry(3000);
   }
+
+  if (isSessionAuthError(restoreError)) {
+    state.account.token = "";
+    state.account.user = null;
+    clearAccountBootstrapRetryTimer();
+    setAccountPhase("SIGNED_OUT");
+    clearStoredAccountToken();
+    renderAccountUI();
+    renderFamilyLeaguePanel();
+    refreshVisibleFixturePredictionBadges();
+    state.challengeDashboard = null;
+    state.challengeDashboardAt = 0;
+    state.challengeDashboardPromise = null;
+    setAccountStatus(`Logged out. ${restoreError?.message || "Session expired"}`, true);
+    resumePendingLeagueInvitePrompt();
+    return;
+  }
+
+  setAccountPhase("RESTORING_SESSION");
+  renderAccountUI();
+  setAccountStatus("Reconnecting account data from server...");
+  scheduleAccountBootstrapRetry(3000);
 }
 
 async function registerAccount() {
