@@ -566,6 +566,7 @@ body.account-modal-open::before {
   inset: 0;
   background: rgba(0, 0, 0, 0.62);
   z-index: 980;
+  pointer-events: none;
 }
 
 body.account-modal-open .account-menu {

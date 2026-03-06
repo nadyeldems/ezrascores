@@ -2664,9 +2664,11 @@ function updateAccountUiState() {
 }
 
 function updateAccountControlsState() {
-  const busy = accountAnyPending() || Boolean(state.account.bootstrapInFlight);
-  const avatarBusy = Boolean(state.account.pending?.save_avatar);
   const signedIn = accountSignedIn();
+  const pending = accountAnyPending();
+  const bootstrapBusy = Boolean(state.account.bootstrapInFlight);
+  const busy = pending || (signedIn && bootstrapBusy);
+  const avatarBusy = Boolean(state.account.pending?.save_avatar);
   if (el.accountRegisterBtn) el.accountRegisterBtn.disabled = busy || signedIn;
   if (el.accountLoginBtn) el.accountLoginBtn.disabled = busy || signedIn;
   if (el.accountForgotBtn) el.accountForgotBtn.disabled = busy || signedIn;
@@ -8134,17 +8136,6 @@ function clearAccountBootstrapRetryTimer() {
   state.account.bootstrapRetryTimer = null;
 }
 
-function scheduleAccountBootstrapRetry(delayMs = 3000) {
-  if (!state.account?.token) return;
-  if (state.account.bootstrapInFlight) return;
-  if (state.account.bootstrapRetryTimer) return;
-  state.account.bootstrapRetryTimer = setTimeout(async () => {
-    state.account.bootstrapRetryTimer = null;
-    if (!state.account?.token) return;
-    await safeLoad(() => initAccountSession(), null);
-  }, Math.max(1200, Number(delayMs) || 3000));
-}
-
 function buildCloudStatePayload() {
   return {
     favoriteTeamId: state.favoriteTeamId || "",
@@ -8253,17 +8244,17 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
     let partialWarning = false;
     try {
       resetAccountScopedLocalState();
-      const bootPayload = await safeLoad(async () => {
-        try {
-          return await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, state.account.token);
-        } catch (err) {
-          // Stale bearer token can exist while HttpOnly cookie session is still valid.
-          if (isSessionAuthError(err) && state.account.token) {
-            return apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, "");
-          }
+      let bootPayload = null;
+      try {
+        bootPayload = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, state.account.token);
+      } catch (err) {
+        // Stale bearer token can exist while HttpOnly cookie session is still valid.
+        if (isSessionAuthError(err) && state.account.token) {
+          bootPayload = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, "");
+        } else {
           throw err;
         }
-      }, null);
+      }
       if (bootPayload && typeof bootPayload === "object") {
         if (bootPayload.token) {
           const bootToken = String(bootPayload.token || "");
@@ -8427,7 +8418,30 @@ async function initAccountSession() {
     // Repair old sessions that were accidentally kept in sessionStorage only.
     storeAccountToken(state.account.token, true);
   }
+  const finalizeSignedOut = async (message) => {
+    clearAccountBootstrapRetryTimer();
+    state.account.bootstrapInFlight = false;
+    state.account.bootstrapPromise = null;
+    state.account.pending = {};
+    state.account.activeAction = "";
+    state.account.token = "";
+    state.account.user = null;
+    clearStoredAccountToken();
+    setAccountPhase("SIGNED_OUT");
+    resetAccountScopedLocalState();
+    state.challengeDashboard = null;
+    state.challengeDashboardAt = 0;
+    state.challengeDashboardPromise = null;
+    await safeLoad(() => refreshLeagueDirectory(), null);
+    setAccountStatus(message);
+    resumePendingLeagueInvitePrompt();
+    renderFamilyLeaguePanel();
+  };
   if (!state.account.token) {
+    if (!state.account.keepLoggedIn) {
+      await finalizeSignedOut("Logged out. Existing features still work locally.");
+      return;
+    }
     setAccountPhase("RESTORING_SESSION");
     renderAccountUI();
     const restoredViaCookie = await safeLoad(
@@ -8442,22 +8456,7 @@ async function initAccountSession() {
       renderFamilyLeaguePanel();
       return;
     }
-    clearAccountBootstrapRetryTimer();
-    state.account.bootstrapInFlight = false;
-    state.account.bootstrapPromise = null;
-    setAccountPhase("SIGNED_OUT");
-    resetAccountScopedLocalState();
-    state.challengeDashboard = null;
-    state.challengeDashboardAt = 0;
-    state.challengeDashboardPromise = null;
-    await safeLoad(() => refreshLeagueDirectory(), null);
-    if (state.account.keepLoggedIn) {
-      setAccountStatus("No active saved session found on this URL yet. Sign in once to reconnect cloud save.");
-    } else {
-      setAccountStatus("Logged out. Existing features still work locally.");
-    }
-    resumePendingLeagueInvitePrompt();
-    renderFamilyLeaguePanel();
+    await finalizeSignedOut("No active saved session found on this URL yet. Sign in once to reconnect cloud save.");
     return;
   }
   setAccountPhase("RESTORING_SESSION");
@@ -8480,43 +8479,16 @@ async function initAccountSession() {
     } catch (err) {
       restoreError = err;
       if (!isSessionAuthError(err)) break;
-      if (attempt < 2) {
-        // Avoid false logout on transient auth/replica lag during boot.
-        await new Promise((resolve) => setTimeout(resolve, 650));
-        continue;
-      }
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 650));
     }
   }
 
   if (isSessionAuthError(restoreError)) {
-    const now = Date.now();
-    if (!Number(state.account.restoreAuthFirstAt || 0)) {
-      state.account.restoreAuthFirstAt = now;
-      state.account.restoreAuthFailures = 1;
-    } else {
-      state.account.restoreAuthFailures = Number(state.account.restoreAuthFailures || 0) + 1;
-    }
-    const withinWindow = now - Number(state.account.restoreAuthFirstAt || 0) < 60_000;
-    const tooManyFailures = withinWindow && Number(state.account.restoreAuthFailures || 0) >= 5;
-    if (!tooManyFailures) {
-      setAccountPhase("RESTORING_SESSION");
-      renderAccountUI();
-      setAccountStatus("Reconnecting your account session...");
-      scheduleAccountBootstrapRetry(1800);
-      return;
-    }
-    // Do not force sign-out on boot; keep token and continue recovery loop.
-    setAccountPhase("RESTORING_SESSION");
-    renderAccountUI();
-    setAccountStatus("Still reconnecting account session. You can also tap Sign In to refresh credentials.");
-    scheduleAccountBootstrapRetry(3500);
+    await finalizeSignedOut("Session expired. Please sign in again.");
     return;
   }
 
-  setAccountPhase("RESTORING_SESSION");
-  renderAccountUI();
-  setAccountStatus("Reconnecting account data from server...");
-  scheduleAccountBootstrapRetry(3000);
+  await finalizeSignedOut("Unable to restore session right now. Please sign in again.");
 }
 
 async function registerAccount() {

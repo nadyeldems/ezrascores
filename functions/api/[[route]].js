@@ -1507,6 +1507,16 @@ async function ensureLeagueScoresSettled(db, code, key, options = {}) {
   }
 }
 
+async function getLeagueSettleStatus(db, code) {
+  const tsKey = `league_settle_at:${code}`;
+  const lastSettledAt = await getIngestStateNumber(db, tsKey, 0);
+  return {
+    settled: Number(lastSettledAt) > 0,
+    settledAt: Number(lastSettledAt || 0),
+    ageMs: Number(lastSettledAt) > 0 ? Math.max(0, Date.now() - Number(lastSettledAt)) : null,
+  };
+}
+
 async function leagueStandings(db, code, key) {
   await ensureLeagueScoresSettled(db, code, key);
   const season = currentSevenDaySeasonWindow();
@@ -2667,19 +2677,11 @@ async function buildLeagueDirectoryForUser(db, userId, key) {
   await ensureDefaultLeagueForUser(db, userId);
   const leagues = await listLeaguesForUser(db, userId);
   const season = currentSevenDaySeasonWindow();
-  const primaryCode = normalizeLeagueCode(leagues?.[0]?.code || "");
-  if (primaryCode) {
-    await ensureLeagueScoresSettled(db, primaryCode, key);
-  }
   const detailed = await Promise.all(
     leagues.map(async (league) => {
-      let standings = [];
-      try {
-        const code = normalizeLeagueCode(league.code);
-        standings = code && code === primaryCode ? await leagueStandings(db, code, key) : await leagueStandingsFallback(db, code);
-      } catch {
-        standings = await leagueStandingsFallback(db, league.code);
-      }
+      const code = normalizeLeagueCode(league.code);
+      let standings = await leagueStandingsFallback(db, code);
+      const settleStatus = code ? await getLeagueSettleStatus(db, code) : { settled: false, settledAt: 0, ageMs: null };
       return {
         code: league.code,
         name: normalizeLeagueName(league.name, `League ${league.code}`),
@@ -2691,6 +2693,7 @@ async function buildLeagueDirectoryForUser(db, userId, key) {
           startsAt: season.startsAt,
           endsAt: season.endsAt,
         },
+        settleStatus,
         standings,
       };
     })
@@ -2752,9 +2755,9 @@ async function buildChallengeDashboardForUser(db, session, key) {
   const currentLeagueCode = normalizeLeagueCode(leagues?.[0]?.code || "");
   let season = null;
   let seasonStandings = [];
-  let settleStatus = null;
+  let settleStatus = { settled: false, settledAt: 0, ageMs: null };
   if (currentLeagueCode) {
-    settleStatus = await ensureLeagueScoresSettled(db, currentLeagueCode, key);
+    settleStatus = await getLeagueSettleStatus(db, currentLeagueCode);
     season = currentSevenDaySeasonWindow();
     await ensureLeagueSeason(db, currentLeagueCode, season);
     const standingsRows = await db
@@ -3222,7 +3225,6 @@ async function handleSocialRivalry(db, request, key) {
     code = normalizeLeagueCode(leagues?.[0]?.code || "");
   }
   if (!code) return json({ rivalry: null }, 200);
-  await ensureLeagueScoresSettled(db, code, key);
   const season = currentSevenDaySeasonWindow();
   await ensureLeagueSeason(db, code, season);
 
@@ -3302,12 +3304,8 @@ async function handlePublicLeagueStandings(db, request, key) {
   if (!league) return json({ error: "League code not found." }, 404);
   const season = currentSevenDaySeasonWindow();
   await ensureLeagueSeason(db, code, season);
-  let standings = [];
-  try {
-    standings = await leagueStandings(db, code, key);
-  } catch {
-    standings = await leagueStandingsFallback(db, code);
-  }
+  const standings = await leagueStandingsFallback(db, code);
+  const settleStatus = await getLeagueSettleStatus(db, code);
   return json(
     {
       league: {
@@ -3322,6 +3320,7 @@ async function handlePublicLeagueStandings(db, request, key) {
         startsAt: season.startsAt,
         endsAt: season.endsAt,
       },
+      settleStatus,
       standings,
     },
     200
