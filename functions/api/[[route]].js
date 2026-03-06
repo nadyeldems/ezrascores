@@ -1873,6 +1873,18 @@ async function accountAuth(db, request) {
     const cookieSession = await getSessionWithUser(db, cookie);
     if (cookieSession) return { token: cookie, session: cookieSession };
   }
+  // Guard against brief read-after-write lag on distributed reads.
+  if (bearer || cookie) {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    if (bearer) {
+      const retryBearer = await getSessionWithUser(db, bearer);
+      if (retryBearer) return { token: bearer, session: retryBearer };
+    }
+    if (cookie) {
+      const retryCookie = await getSessionWithUser(db, cookie);
+      if (retryCookie) return { token: cookie, session: retryCookie };
+    }
+  }
   return { token: bearer || cookie || "", session: null };
 }
 

@@ -8462,33 +8462,39 @@ async function initAccountSession() {
   setAccountPhase("RESTORING_SESSION");
   renderAccountUI();
   clearAccountBootstrapRetryTimer();
-  let restoreError = null;
+  let mePayload = null;
+  let meError = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const result = await runPostAuthBootstrap("Session restored");
-      const partialWarning = Boolean(result?.partialWarning);
-      if (!state.account.user) throw new Error("Session expired");
-      state.account.restoreAuthFailures = 0;
-      state.account.restoreAuthFirstAt = 0;
-      setAccountStatus(`Cloud save active for ${state.account.user.name}.`);
-      if (partialWarning) {
-        setAccountStatus(`Cloud save active for ${state.account.user.name}. Some sections are still loading; retry in a moment.`);
-      }
-      resumePendingLeagueInvitePrompt();
-      return;
+      mePayload = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/me`, null, state.account.token);
+      break;
     } catch (err) {
-      restoreError = err;
-      if (!isSessionAuthError(err)) break;
-      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 650));
+      meError = err;
+      if (!isSessionAuthError(err) || attempt >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 650));
     }
   }
-
-  if (isSessionAuthError(restoreError)) {
-    await finalizeSignedOut("Session expired. Please sign in again.");
+  if (!mePayload?.user) {
+    if (isSessionAuthError(meError)) {
+      await finalizeSignedOut("Session expired. Please sign in again.");
+      return;
+    }
+    await finalizeSignedOut("Unable to restore session right now. Please sign in again.");
     return;
   }
-
-  await finalizeSignedOut("Unable to restore session right now. Please sign in again.");
+  state.account.user = hydrateUserAvatarState(mePayload.user || null);
+  setAccountPhase("READY");
+  renderAccountUI();
+  setAccountStatus(`Cloud save active for ${state.account.user?.name || "user"}.`);
+  resumePendingLeagueInvitePrompt();
+  renderFamilyLeaguePanel();
+  safeLoad(async () => {
+    const result = await runPostAuthBootstrap("Session restored");
+    const partialWarning = Boolean(result?.partialWarning);
+    if (partialWarning) {
+      setAccountStatus(`Cloud save active for ${state.account.user?.name || "user"}. Some sections are still loading; retry in a moment.`);
+    }
+  }, null);
 }
 
 async function registerAccount() {
@@ -12440,8 +12446,13 @@ function attachEvents() {
     if (el.settingsMenu && !el.settingsMenu.contains(e.target)) {
       setSettingsMenuOpen(false);
     }
-    if (el.accountMenu && !el.accountMenu.contains(e.target)) {
-      setAccountMenuOpen(false);
+    if (state.accountMenuOpen) {
+      const insideAccount =
+        Boolean(el.accountPanel && el.accountPanel.contains(e.target)) ||
+        Boolean(el.accountToggleBtn && el.accountToggleBtn.contains(e.target));
+      if (!insideAccount) {
+        setAccountMenuOpen(false);
+      }
     }
     if (el.notificationsMenu && !el.notificationsMenu.contains(e.target)) {
       setNotificationsOpen(false);
