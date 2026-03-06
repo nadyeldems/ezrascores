@@ -629,6 +629,20 @@ async function ensureAccountSchema(db) {
     `,
     `CREATE INDEX IF NOT EXISTS idx_ezra_user_follows_followed ON ezra_user_follows(followed_user_id)`,
     `
+      CREATE TABLE IF NOT EXISTS ezra_follow_requests (
+        follower_user_id TEXT NOT NULL,
+        followed_user_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (follower_user_id, followed_user_id),
+        FOREIGN KEY (follower_user_id) REFERENCES ezra_users(id),
+        FOREIGN KEY (followed_user_id) REFERENCES ezra_users(id)
+      )
+    `,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_follow_requests_followed ON ezra_follow_requests(followed_user_id, status, updated_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_ezra_follow_requests_follower ON ezra_follow_requests(follower_user_id, status, updated_at DESC)`,
+    `
       CREATE TABLE IF NOT EXISTS ezra_social_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         league_code TEXT,
@@ -3120,17 +3134,54 @@ async function handleSocialFollow(db, request) {
   }
   const target = await db.prepare("SELECT id, name FROM ezra_users WHERE id = ?1 LIMIT 1").bind(followedUserId).first();
   if (!target?.id) return json({ error: "User not found." }, 404);
+  const alreadyFollowing = await db
+    .prepare(
+      `
+      SELECT 1
+      FROM ezra_user_follows
+      WHERE follower_user_id = ?1
+        AND followed_user_id = ?2
+      LIMIT 1
+      `
+    )
+    .bind(String(session.user_id || ""), followedUserId)
+    .first();
+  if (alreadyFollowing) {
+    return json(
+      {
+        ok: true,
+        status: "accepted",
+        followedUserId,
+        followedName: target.name || "User",
+        message: "Already following.",
+      },
+      200
+    );
+  }
   const nowIso = new Date().toISOString();
   await db
     .prepare(
       `
-      INSERT OR IGNORE INTO ezra_user_follows (follower_user_id, followed_user_id, created_at)
-      VALUES (?1, ?2, ?3)
+      INSERT INTO ezra_follow_requests
+        (follower_user_id, followed_user_id, status, created_at, updated_at)
+      VALUES (?1, ?2, 'pending', ?3, ?3)
+      ON CONFLICT(follower_user_id, followed_user_id) DO UPDATE SET
+        status = 'pending',
+        updated_at = excluded.updated_at
       `
     )
     .bind(String(session.user_id || ""), followedUserId, nowIso)
     .run();
-  return json({ ok: true, followedUserId, followedName: target.name || "User" }, 200);
+  return json(
+    {
+      ok: true,
+      status: "pending",
+      followedUserId,
+      followedName: target.name || "User",
+      message: "Follow request sent.",
+    },
+    200
+  );
 }
 
 async function handleSocialUnfollow(db, request) {
@@ -3152,7 +3203,135 @@ async function handleSocialUnfollow(db, request) {
     )
     .bind(String(session.user_id || ""), followedUserId)
     .run();
+  await db
+    .prepare(
+      `
+      DELETE FROM ezra_follow_requests
+      WHERE follower_user_id = ?1
+        AND followed_user_id = ?2
+      `
+    )
+    .bind(String(session.user_id || ""), followedUserId)
+    .run();
   return json({ ok: true, followedUserId }, 200);
+}
+
+async function handleSocialFollowRequests(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const me = String(session.user_id || "");
+  const incomingRows = await db
+    .prepare(
+      `
+      SELECT fr.follower_user_id AS user_id,
+             u.name AS user_name,
+             fr.created_at,
+             fr.updated_at
+      FROM ezra_follow_requests fr
+      JOIN ezra_users u ON u.id = fr.follower_user_id
+      WHERE fr.followed_user_id = ?1
+        AND fr.status = 'pending'
+      ORDER BY fr.updated_at DESC, fr.created_at DESC
+      LIMIT 50
+      `
+    )
+    .bind(me)
+    .all();
+  const outgoingRows = await db
+    .prepare(
+      `
+      SELECT fr.followed_user_id AS user_id,
+             u.name AS user_name,
+             fr.created_at,
+             fr.updated_at
+      FROM ezra_follow_requests fr
+      JOIN ezra_users u ON u.id = fr.followed_user_id
+      WHERE fr.follower_user_id = ?1
+        AND fr.status = 'pending'
+      ORDER BY fr.updated_at DESC, fr.created_at DESC
+      LIMIT 50
+      `
+    )
+    .bind(me)
+    .all();
+  const incoming = (incomingRows?.results || []).map((row) => ({
+    userId: String(row?.user_id || ""),
+    userName: String(row?.user_name || "User"),
+    createdAt: String(row?.created_at || ""),
+    updatedAt: String(row?.updated_at || ""),
+  }));
+  const outgoing = (outgoingRows?.results || []).map((row) => ({
+    userId: String(row?.user_id || ""),
+    userName: String(row?.user_name || "User"),
+    createdAt: String(row?.created_at || ""),
+    updatedAt: String(row?.updated_at || ""),
+  }));
+  return json({ incoming, outgoing }, 200, { "Cache-Control": "no-store" });
+}
+
+async function handleSocialFollowRespond(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const body = await parseJson(request);
+  const followerUserId = String(body?.followerUserId || "").trim();
+  const accept = Boolean(body?.accept);
+  if (!followerUserId) return json({ error: "Missing follower user id." }, 400);
+  const me = String(session.user_id || "");
+  if (followerUserId === me) return json({ error: "Invalid follow response target." }, 400);
+  const pending = await db
+    .prepare(
+      `
+      SELECT follower_user_id, followed_user_id
+      FROM ezra_follow_requests
+      WHERE follower_user_id = ?1
+        AND followed_user_id = ?2
+        AND status = 'pending'
+      LIMIT 1
+      `
+    )
+    .bind(followerUserId, me)
+    .first();
+  if (!pending) {
+    return json({ error: "No pending request found." }, 404);
+  }
+  const nowIso = new Date().toISOString();
+  if (accept) {
+    await db
+      .prepare(
+        `
+        INSERT OR IGNORE INTO ezra_user_follows (follower_user_id, followed_user_id, created_at)
+        VALUES (?1, ?2, ?3)
+        `
+      )
+      .bind(followerUserId, me, nowIso)
+      .run();
+    await db
+      .prepare(
+        `
+        UPDATE ezra_follow_requests
+        SET status = 'accepted',
+            updated_at = ?3
+        WHERE follower_user_id = ?1
+          AND followed_user_id = ?2
+        `
+      )
+      .bind(followerUserId, me, nowIso)
+      .run();
+    return json({ ok: true, status: "accepted", followerUserId }, 200);
+  }
+  await db
+    .prepare(
+      `
+      UPDATE ezra_follow_requests
+      SET status = 'declined',
+          updated_at = ?3
+      WHERE follower_user_id = ?1
+        AND followed_user_id = ?2
+      `
+    )
+    .bind(followerUserId, me, nowIso)
+    .run();
+  return json({ ok: true, status: "declined", followerUserId }, 200);
 }
 
 async function handleSocialFeed(db, request) {
@@ -3485,6 +3664,12 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "unfollow" && request.method === "POST") {
       return handleSocialUnfollow(db, request);
+    }
+    if (route === "follow/requests" && request.method === "GET") {
+      return handleSocialFollowRequests(db, request);
+    }
+    if (route === "follow/respond" && request.method === "POST") {
+      return handleSocialFollowRespond(db, request);
     }
     if (route === "feed" && request.method === "GET") {
       return handleSocialFeed(db, request);

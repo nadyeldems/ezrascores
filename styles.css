@@ -3763,6 +3763,19 @@ body[data-theme="club"] .btn:hover {
   box-shadow: 0 0 0 1px rgba(255, 154, 31, 0.25) inset;
 }
 
+#social-follow-requests .mission-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+#social-follow-requests .account-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .favorite-banner {
   --fav-rgb: 255, 154, 31;
   --fav-border: var(--line);

@@ -2027,7 +2027,16 @@ const state = {
   missionFx: { questId: "", until: 0, timer: null },
   squadGoalFx: { playerKey: "", until: 0, timer: null },
   leagueMemberView: { open: false, loading: false, error: "", data: null, compare: false, showPreviousRound: false },
-  socialFeed: { items: [], followingIds: [], filter: "all", loading: false, error: "", at: 0 },
+  socialFeed: {
+    items: [],
+    followingIds: [],
+    pendingIncoming: [],
+    pendingOutgoingIds: [],
+    filter: "all",
+    loading: false,
+    error: "",
+    at: 0,
+  },
   rivalry: { data: null, loading: false, error: "", at: 0 },
   leagueDirectory: { items: [], loading: false, promise: null },
   leagueRankByCode: {},
@@ -2280,6 +2289,7 @@ const el = {
   familySeasonCountdown: document.getElementById("family-season-countdown"),
   familyMembers: document.getElementById("family-members"),
   socialFeedTabs: [...document.querySelectorAll(".social-feed-tab")],
+  socialFollowRequests: document.getElementById("social-follow-requests"),
   socialFeedList: document.getElementById("social-feed-list"),
   rivalryContent: document.getElementById("rivalry-content"),
   funZoneBody: document.getElementById("fun-zone-body"),
@@ -4946,7 +4956,10 @@ function renderFamilyLeaguePanel() {
     const showFollow = accountSignedIn() && !isSignedInMember;
     const memberUserId = String(member.user_id || "");
     const followingSet = new Set((state.socialFeed.followingIds || []).map((id) => String(id)));
+    const pendingOutgoingSet = new Set((state.socialFeed.pendingOutgoingIds || []).map((id) => String(id)));
     const isFollowing = followingSet.has(memberUserId);
+    const isRequested = pendingOutgoingSet.has(memberUserId);
+    const followLabel = isFollowing ? "Unfollow" : isRequested ? "Requested" : "Follow";
     row.innerHTML = `
       <div class="mission-text">
         <div class="mission-title mission-title-with-avatar">${avatarHtml}<span>#${rank} ${escapeHtml(member.name || "User")}${titleBadge}</span></div>
@@ -4955,7 +4968,7 @@ function renderFamilyLeaguePanel() {
       <div class="account-actions">
         ${
           showFollow
-            ? `<button class="btn btn-inline league-follow-btn" type="button" data-follow-user-id="${escapeHtml(memberUserId)}" data-follow-name="${escapeHtml(member.name || "User")}" data-following="${isFollowing ? "1" : "0"}">${isFollowing ? "Unfollow" : "Follow"}</button>`
+            ? `<button class="btn btn-inline league-follow-btn" type="button" data-follow-user-id="${escapeHtml(memberUserId)}" data-follow-name="${escapeHtml(member.name || "User")}" data-following="${isFollowing ? "1" : "0"}" data-requested="${isRequested ? "1" : "0"}" ${!isFollowing && isRequested ? "disabled" : ""}>${followLabel}</button>`
             : ""
         }
         ${!isSignedInMember ? `<button class="btn btn-inline league-compare-btn" type="button">Compare</button>` : ""}
@@ -4969,10 +4982,16 @@ function renderFamilyLeaguePanel() {
       if (!followedUserId) return;
       const btn = event.currentTarget;
       const following = String(btn?.dataset?.following || "0") === "1";
+      const requested = String(btn?.dataset?.requested || "0") === "1";
+      if (requested && !following) return;
       try {
         const endpoint = following ? "unfollow" : "follow";
         await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/${endpoint}`, { followedUserId }, state.account.token);
-        setAccountStatus(`${following ? "Unfollowed" : "Now following"} ${member.name || "user"}.`);
+        if (following) {
+          setAccountStatus(`Unfollowed ${member.name || "user"}.`);
+        } else {
+          setAccountStatus(`Follow request sent to ${member.name || "user"}.`);
+        }
         state.socialFeed.at = 0;
         await refreshSocialLayer(true);
         renderFamilyLeaguePanel();
@@ -5005,6 +5024,84 @@ function renderSocialPanels() {
       btn.classList.toggle("active", scope === active);
       btn.setAttribute("aria-pressed", scope === active ? "true" : "false");
     });
+  }
+  if (el.socialFollowRequests) {
+    if (!accountSignedIn()) {
+      el.socialFollowRequests.innerHTML = "";
+    } else {
+      const incoming = Array.isArray(state.socialFeed.pendingIncoming) ? state.socialFeed.pendingIncoming : [];
+      if (!incoming.length) {
+        el.socialFollowRequests.innerHTML = `<div class="empty">No pending follow requests.</div>`;
+      } else {
+        el.socialFollowRequests.innerHTML = incoming
+          .slice(0, 10)
+          .map(
+            (item) => `
+              <div class="mission-item follow-request-item" data-follow-request-user-id="${escapeHtml(String(item.userId || ""))}">
+                <div class="mission-text">
+                  <div class="mission-title">${escapeHtml(String(item.userName || "User"))} wants to follow you</div>
+                  <div class="mission-sub">Accept to let them see your friend activity stream.</div>
+                </div>
+                <div class="account-actions">
+                  <button class="btn btn-inline follow-accept-btn" type="button">Accept</button>
+                  <button class="btn btn-inline follow-decline-btn" type="button">Decline</button>
+                </div>
+              </div>
+            `
+          )
+          .join("");
+        el.socialFollowRequests.querySelectorAll(".follow-accept-btn").forEach((btn) => {
+          btn.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const parent = event.currentTarget?.closest("[data-follow-request-user-id]");
+            const followerUserId = String(parent?.getAttribute("data-follow-request-user-id") || "");
+            if (!followerUserId) return;
+            void (async () => {
+              try {
+                await apiRequest(
+                  "POST",
+                  `${API_PROXY_BASE}/v1/ezra/account/follow/respond`,
+                  { followerUserId, accept: true },
+                  state.account.token
+                );
+                setAccountStatus("Follow request accepted.");
+                state.socialFeed.at = 0;
+                await refreshSocialLayer(true);
+                renderFamilyLeaguePanel();
+              } catch (err) {
+                setAccountStatus(`Accept failed: ${err.message || "try again."}`, true);
+              }
+            })();
+          });
+        });
+        el.socialFollowRequests.querySelectorAll(".follow-decline-btn").forEach((btn) => {
+          btn.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const parent = event.currentTarget?.closest("[data-follow-request-user-id]");
+            const followerUserId = String(parent?.getAttribute("data-follow-request-user-id") || "");
+            if (!followerUserId) return;
+            void (async () => {
+              try {
+                await apiRequest(
+                  "POST",
+                  `${API_PROXY_BASE}/v1/ezra/account/follow/respond`,
+                  { followerUserId, accept: false },
+                  state.account.token
+                );
+                setAccountStatus("Follow request declined.");
+                state.socialFeed.at = 0;
+                await refreshSocialLayer(true);
+                renderFamilyLeaguePanel();
+              } catch (err) {
+                setAccountStatus(`Decline failed: ${err.message || "try again."}`, true);
+              }
+            })();
+          });
+        });
+      }
+    }
   }
   if (el.socialFeedList) {
     if (!accountSignedIn()) {
@@ -5067,7 +5164,16 @@ function renderSocialPanels() {
 
 async function refreshSocialLayer(force = false) {
   if (!accountSignedIn()) {
-    state.socialFeed = { items: [], followingIds: [], filter: "all", loading: false, error: "", at: 0 };
+    state.socialFeed = {
+      items: [],
+      followingIds: [],
+      pendingIncoming: [],
+      pendingOutgoingIds: [],
+      filter: "all",
+      loading: false,
+      error: "",
+      at: 0,
+    };
     state.rivalry = { data: null, loading: false, error: "", at: 0 };
     renderSocialPanels();
     return false;
@@ -5087,13 +5193,18 @@ async function refreshSocialLayer(force = false) {
     if (code) params.set("code", code);
     params.set("scope", String(state.socialFeed.filter || "all"));
     const query = `?${params.toString()}`;
-    const [feed, rivalry] = await Promise.all([
+    const [feed, rivalry, requests] = await Promise.all([
       apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/feed${query}`, null, state.account.token),
       apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/rivalry${query}`, null, state.account.token),
+      apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/follow/requests`, null, state.account.token),
     ]);
     state.socialFeed.items = Array.isArray(feed?.events) ? feed.events : [];
     state.socialFeed.followingIds = Array.isArray(feed?.followingUserIds)
       ? feed.followingUserIds.map((id) => String(id))
+      : [];
+    state.socialFeed.pendingIncoming = Array.isArray(requests?.incoming) ? requests.incoming : [];
+    state.socialFeed.pendingOutgoingIds = Array.isArray(requests?.outgoing)
+      ? requests.outgoing.map((row) => String(row?.userId || "")).filter(Boolean)
       : [];
     state.socialFeed.at = Date.now();
     state.rivalry.data = rivalry?.rivalry || null;
