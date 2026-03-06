@@ -315,6 +315,72 @@ function getBearerToken(request) {
   return m?.[1]?.trim() || "";
 }
 
+const ACCOUNT_SESSION_COOKIE = "ezra_session";
+
+function parseCookies(request) {
+  const raw = String(request?.headers?.get("Cookie") || "");
+  if (!raw) return {};
+  const out = {};
+  raw.split(";").forEach((pair) => {
+    const idx = pair.indexOf("=");
+    if (idx <= 0) return;
+    const k = pair.slice(0, idx).trim();
+    const v = pair.slice(idx + 1).trim();
+    if (!k) return;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
+  });
+  return out;
+}
+
+function getSessionCookieToken(request) {
+  const cookies = parseCookies(request);
+  return String(cookies[ACCOUNT_SESSION_COOKIE] || "").trim();
+}
+
+function secureCookieAllowed(request) {
+  const proto = String(request?.headers?.get("x-forwarded-proto") || "").toLowerCase();
+  if (proto) return proto === "https";
+  try {
+    const url = new URL(request.url);
+    return url.protocol === "https:";
+  } catch {
+    return true;
+  }
+}
+
+function buildSessionCookie(token, request, maxAgeSeconds = Math.floor(ACCOUNT_SESSION_MS / 1000)) {
+  const safeToken = encodeURIComponent(String(token || ""));
+  const parts = [
+    `${ACCOUNT_SESSION_COOKIE}=${safeToken}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${Math.max(0, Number(maxAgeSeconds || 0))}`,
+  ];
+  if (secureCookieAllowed(request)) {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
+function buildClearSessionCookie(request) {
+  const parts = [
+    `${ACCOUNT_SESSION_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
+  if (secureCookieAllowed(request)) {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
 const ACCOUNT_SESSION_MS = 1000 * 60 * 60 * 24 * 30;
 
 let accountSchemaReady = false;
@@ -1761,6 +1827,7 @@ async function createSession(db, userId) {
 
 async function getSessionWithUser(db, token) {
   if (!token) return null;
+  const now = Date.now();
   const row = await db
     .prepare(`
       SELECT s.token, s.expires_at, u.id AS user_id, u.name, u.email, u.email_verified_at, u.avatar_json
@@ -1772,15 +1839,21 @@ async function getSessionWithUser(db, token) {
     .bind(token)
     .first();
   if (!row) return null;
-  if (Number(row.expires_at) <= Date.now()) {
+  if (Number(row.expires_at) <= now) {
     await db.prepare("DELETE FROM ezra_sessions WHERE token = ?1").bind(token).run();
     return null;
+  }
+  const ttl = Number(row.expires_at) - now;
+  if (ttl < ACCOUNT_SESSION_MS / 2) {
+    const nextExpires = now + ACCOUNT_SESSION_MS;
+    await db.prepare("UPDATE ezra_sessions SET expires_at = ?2 WHERE token = ?1").bind(token, nextExpires).run();
+    row.expires_at = nextExpires;
   }
   return row;
 }
 
 async function accountAuth(db, request) {
-  const token = getBearerToken(request);
+  const token = getBearerToken(request) || getSessionCookieToken(request);
   const session = await getSessionWithUser(db, token);
   return { token, session };
 }
@@ -2071,7 +2144,8 @@ async function handleAccountRegister(db, request) {
         avatar,
       },
     },
-    200
+    200,
+    { "Set-Cookie": buildSessionCookie(token, request) }
   );
 }
 
@@ -2102,7 +2176,8 @@ async function handleAccountLogin(db, request) {
         avatar: parseAvatarConfig(row.avatar_json, row.name || row.id),
       },
     },
-    200
+    200,
+    { "Set-Cookie": buildSessionCookie(token, request) }
   );
 }
 
@@ -2276,7 +2351,8 @@ async function handleAccountRecoveryComplete(db, request) {
         avatar: parseAvatarConfig(user.avatar_json, user.name || user.id),
       },
     },
-    200
+    200,
+    { "Set-Cookie": buildSessionCookie(token, request) }
   );
 }
 
@@ -2298,11 +2374,11 @@ async function handleAccountPutPreferences(db, request) {
 }
 
 async function handleAccountLogout(db, request) {
-  const token = getBearerToken(request);
+  const token = getBearerToken(request) || getSessionCookieToken(request);
   if (token) {
     await db.prepare("DELETE FROM ezra_sessions WHERE token = ?1").bind(token).run();
   }
-  return json({ ok: true }, 200);
+  return json({ ok: true }, 200, { "Set-Cookie": buildClearSessionCookie(request) });
 }
 
 function sanitizeStateInput(input) {
@@ -2739,7 +2815,7 @@ async function handleChallengeDashboard(db, request, key) {
 }
 
 async function handleAccountBootstrap(db, request, key) {
-  const { session } = await accountAuth(db, request);
+  const { token, session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
 
   const [stateRow, dashboard, leagues] = await Promise.all([
@@ -2760,6 +2836,7 @@ async function handleAccountBootstrap(db, request, key) {
         emailVerifiedAt: session.email_verified_at || null,
         avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id),
       },
+      token: token || "",
       state: safeParseJsonText(stateRow?.state_json || "{}"),
       stateUpdatedAt: stateRow?.updated_at || null,
       dashboard,

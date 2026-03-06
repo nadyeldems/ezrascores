@@ -100,6 +100,13 @@
             <div id="account-panel" class="settings-panel hidden">
               <div class="settings-group">
                 <p class="settings-label">Account (optional cloud save)</p>
+                <div id="account-progress" class="account-progress hidden" aria-live="polite">
+                  <div class="account-spinner" aria-hidden="true"></div>
+                  <div class="account-progress-copy">
+                    <p id="account-progress-text">Working...</p>
+                    <div class="account-progress-track" aria-hidden="true"><span id="account-progress-fill"></span></div>
+                  </div>
+                </div>
                 <div id="account-auth-signedout" class="account-auth-box">
                   <input id="account-name-input" class="account-input" type="text" maxlength="32" placeholder="Display name" />
                   <input id="account-pin-input" class="account-input" type="password" maxlength="24" placeholder="PIN / passcode" />

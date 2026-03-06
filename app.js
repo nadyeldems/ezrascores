@@ -2242,6 +2242,9 @@ const el = {
   accountLogoutBtn: document.getElementById("account-logout-btn"),
   accountUserLabel: document.getElementById("account-user-label"),
   accountStatus: document.getElementById("account-status"),
+  accountProgress: document.getElementById("account-progress"),
+  accountProgressText: document.getElementById("account-progress-text"),
+  accountProgressFill: document.getElementById("account-progress-fill"),
   notificationsMenu: document.getElementById("notifications-menu"),
   notificationsToggleBtn: document.getElementById("notifications-toggle-btn"),
   notificationsBadge: document.getElementById("notifications-badge"),
@@ -2426,6 +2429,7 @@ function setAccountMenuOpen(open) {
   if (!el.accountPanel || !el.accountToggleBtn) return;
   el.accountPanel.classList.toggle("hidden", !state.accountMenuOpen);
   el.accountToggleBtn.setAttribute("aria-expanded", String(state.accountMenuOpen));
+  document.body.classList.toggle("account-modal-open", state.accountMenuOpen);
 }
 
 function persistNotificationsState() {
@@ -2911,6 +2915,29 @@ function renderAccountHelper() {
   el.accountHelper.textContent = "Create account or sign in. Add recovery email after account creation for PIN reset.";
 }
 
+function renderAccountProgress() {
+  if (!el.accountProgress || !el.accountProgressText || !el.accountProgressFill) return;
+  const ui = String(state.account?.uiState || "");
+  const map = {
+    RESTORING_SESSION: { text: "Restoring account session...", width: "36%" },
+    SYNCING_PROFILE: { text: "Syncing account data...", width: "68%" },
+    SIGNING_IN: { text: "Signing in...", width: "56%" },
+    REGISTERING: { text: "Creating account...", width: "44%" },
+    RECOVERY_SENDING_CODE: { text: "Sending reset code...", width: "48%" },
+    RECOVERY_RESETTING_PIN: { text: "Resetting PIN...", width: "62%" },
+    SIGNED_IN_BUSY: { text: "Saving account changes...", width: "64%" },
+    SIGNED_IN_SAVING_EMAIL: { text: "Saving recovery email...", width: "64%" },
+  };
+  const current = map[ui] || null;
+  const visible = Boolean(current || state.account?.bootstrapInFlight || accountAnyPending());
+  el.accountProgress.classList.toggle("hidden", !visible);
+  if (!visible) return;
+  const text = current?.text || "Working...";
+  const width = current?.width || "52%";
+  el.accountProgressText.textContent = text;
+  el.accountProgressFill.style.width = width;
+}
+
 function renderAccountUI() {
   if (!el.accountAuthSignedOut || !el.accountAuthSignedIn || !el.accountUserLabel) return;
   const signedIn = accountSignedIn();
@@ -2976,6 +3003,7 @@ function renderAccountUI() {
   renderAvatarUnlockRail();
   renderLifetimePointsPill();
   renderAccountHelper();
+  renderAccountProgress();
   updateFamilyControlsState();
   updateAccountControlsState();
   setAvatarTab(state.avatarTab);
@@ -7969,7 +7997,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = API_FETCH_TIMEOUT
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await fetch(url, { credentials: "include", ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -8046,6 +8074,7 @@ async function apiRequest(method, path, body = null, token = "") {
   try {
     res = await fetchWithTimeout(path, {
       method,
+      credentials: "include",
       headers,
       body: body !== null ? JSON.stringify(body) : undefined,
     });
@@ -8203,8 +8232,9 @@ async function loadCloudState() {
   applyCloudState(data?.state || {}, { strict: true });
 }
 
-async function runPostAuthBootstrap(contextLabel = "auth") {
-  if (!accountSignedIn()) return { ok: false, partialWarning: true };
+async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
+  const allowCookieRestore = Boolean(options?.allowCookieRestore);
+  if (!accountSignedIn() && !allowCookieRestore) return { ok: false, partialWarning: true };
   if (state.account.bootstrapPromise) {
     return state.account.bootstrapPromise;
   }
@@ -8224,6 +8254,13 @@ async function runPostAuthBootstrap(contextLabel = "auth") {
         null
       );
       if (bootPayload && typeof bootPayload === "object") {
+        if (bootPayload.token) {
+          const bootToken = String(bootPayload.token || "");
+          if (bootToken && bootToken !== state.account.token) {
+            state.account.token = bootToken;
+            storeAccountToken(state.account.token, Boolean(state.account.keepLoggedIn));
+          }
+        }
         state.account.user = hydrateUserAvatarState(bootPayload.user || state.account.user);
         applyCloudState(bootPayload.state || {}, { strict: true });
         state.challengeDashboard = bootPayload.dashboard || null;
@@ -8380,6 +8417,20 @@ async function initAccountSession() {
     storeAccountToken(state.account.token, true);
   }
   if (!state.account.token) {
+    setAccountPhase("RESTORING_SESSION");
+    renderAccountUI();
+    const restoredViaCookie = await safeLoad(
+      () => runPostAuthBootstrap("Session restored", { allowCookieRestore: true }),
+      null
+    );
+    if (restoredViaCookie?.ok && state.account?.user?.id) {
+      state.account.restoreAuthFailures = 0;
+      state.account.restoreAuthFirstAt = 0;
+      setAccountStatus(`Cloud save active for ${state.account.user?.name || "user"}.`);
+      resumePendingLeagueInvitePrompt();
+      renderFamilyLeaguePanel();
+      return;
+    }
     clearAccountBootstrapRetryTimer();
     setAccountPhase("SIGNED_OUT");
     resetAccountScopedLocalState();
@@ -12435,6 +12486,10 @@ function attachEvents() {
     }
     if (state.leagueMemberView.open) {
       closeLeagueMemberView();
+      return;
+    }
+    if (state.accountMenuOpen) {
+      setAccountMenuOpen(false);
       return;
     }
     closeFavoritePickerMenu();
