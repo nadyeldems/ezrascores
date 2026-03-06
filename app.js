@@ -2487,18 +2487,20 @@ function renderLifetimePointsPill() {
     el.lifetimePointsPill.textContent = "Total points: --";
     return;
   }
-  const settlePending = state.challengeDashboard?.currentSeason?.settleStatus?.settled === false;
-  if (settlePending) {
-    el.lifetimePointsPill.textContent = "Total points: Syncing...";
-    return;
-  }
   const dashPoints = Number(state.challengeDashboard?.lifetimePoints);
-  if (Number.isFinite(dashPoints)) {
-    localStorage.setItem("ezra_last_lifetime_points", String(Math.max(0, dashPoints)));
-    el.lifetimePointsPill.textContent = `Total points: ${Math.max(0, dashPoints)}`;
+  const userPoints = Number(state.account?.user?.lifetimePoints);
+  const cachedPoints = Number(localStorage.getItem("ezra_last_lifetime_points"));
+  const resolved =
+    Number.isFinite(dashPoints) ? Math.max(0, dashPoints)
+    : Number.isFinite(userPoints) ? Math.max(0, userPoints)
+    : Number.isFinite(cachedPoints) ? Math.max(0, cachedPoints)
+    : null;
+  if (resolved !== null) {
+    localStorage.setItem("ezra_last_lifetime_points", String(resolved));
+    el.lifetimePointsPill.textContent = `Total points: ${resolved}`;
     return;
   }
-  el.lifetimePointsPill.textContent = "Total points: Syncing...";
+  el.lifetimePointsPill.textContent = "Total points: --";
 }
 
 function maybeShowFreeAvatarUnlockToast() {

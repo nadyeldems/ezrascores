@@ -2510,6 +2510,7 @@ body[data-motion="minimal"] .avatar-hero-img {
 
 #fun-zone-panel.play-focus #avatar-builder-card,
 #fun-zone-panel.play-focus #dream-team-card,
+#fun-zone-panel.play-focus #quests-panel,
 #fun-zone-panel.play-focus #pop-quiz-panel,
 #fun-zone-panel.play-focus #club-quiz-panel {
   display: block;
