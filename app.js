@@ -151,18 +151,30 @@ function resolveKeepLoggedInFromStorage() {
   return localStorage.getItem("ezra_keep_logged_in") === "1";
 }
 
-function getKeepLoggedInSelection() {
-  if (el.accountKeepLoggedIn && !el.accountKeepLoggedIn.classList.contains("hidden")) {
-    return Boolean(el.accountKeepLoggedIn.checked);
+function isElementActuallyVisible(node) {
+  if (!node) return false;
+  if (node.closest(".hidden")) return false;
+  if (node instanceof HTMLElement) {
+    return node.offsetParent !== null || getComputedStyle(node).position === "fixed";
   }
-  if (el.accountKeepLoggedInSignedIn && !el.accountKeepLoggedInSignedIn.classList.contains("hidden")) {
+  return true;
+}
+
+function getKeepLoggedInSelection() {
+  // Prefer whichever control is currently visible in the auth UI.
+  if (isElementActuallyVisible(el.accountKeepLoggedInSignedIn)) {
     return Boolean(el.accountKeepLoggedInSignedIn.checked);
+  }
+  if (isElementActuallyVisible(el.accountKeepLoggedIn)) {
+    return Boolean(el.accountKeepLoggedIn.checked);
   }
   return Boolean(state.account.keepLoggedIn);
 }
 
 function setKeepLoggedInPreference(value, persistToken = true) {
   state.account.keepLoggedIn = Boolean(value);
+  if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.checked = state.account.keepLoggedIn;
+  if (el.accountKeepLoggedInSignedIn) el.accountKeepLoggedInSignedIn.checked = state.account.keepLoggedIn;
   localStorage.setItem("ezra_keep_logged_in", state.account.keepLoggedIn ? "1" : "0");
   if (persistToken && accountSignedIn()) {
     storeAccountToken(state.account.token, state.account.keepLoggedIn);
@@ -8353,6 +8365,10 @@ async function initAccountSession() {
   state.account.keepLoggedIn = resolveKeepLoggedInFromStorage();
   if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.checked = Boolean(state.account.keepLoggedIn);
   if (el.accountKeepLoggedInSignedIn) el.accountKeepLoggedInSignedIn.checked = Boolean(state.account.keepLoggedIn);
+  if (state.account.keepLoggedIn && state.account.token && !localStorage.getItem("ezra_account_token")) {
+    // Repair old sessions that were accidentally kept in sessionStorage only.
+    storeAccountToken(state.account.token, true);
+  }
   if (!state.account.token) {
     clearAccountBootstrapRetryTimer();
     setAccountPhase("SIGNED_OUT");
@@ -8410,7 +8426,7 @@ async function registerAccount() {
   state.account.user = hydrateUserAvatarState(data.user || null);
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
-  state.account.keepLoggedIn = getKeepLoggedInSelection();
+  state.account.keepLoggedIn = Boolean(getKeepLoggedInSelection());
   storeAccountToken(state.account.token, state.account.keepLoggedIn);
   const result = await runPostAuthBootstrap("Account created");
   const partialWarning = Boolean(result?.partialWarning);
@@ -8475,7 +8491,7 @@ async function loginAccount() {
   state.account.user = hydrateUserAvatarState(data.user || null);
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
-  state.account.keepLoggedIn = getKeepLoggedInSelection();
+  state.account.keepLoggedIn = Boolean(getKeepLoggedInSelection());
   storeAccountToken(state.account.token, state.account.keepLoggedIn);
   const result = await runPostAuthBootstrap("Signed in");
   const partialWarning = Boolean(result?.partialWarning);
@@ -8518,7 +8534,7 @@ async function completePinRecovery() {
   state.account.user = hydrateUserAvatarState(data.user || null);
   state.account.recoveryOpen = false;
   setAccountPhase("AUTHENTICATED");
-  state.account.keepLoggedIn = getKeepLoggedInSelection();
+  state.account.keepLoggedIn = Boolean(getKeepLoggedInSelection());
   storeAccountToken(state.account.token, state.account.keepLoggedIn);
   if (el.accountPinInput) el.accountPinInput.value = "";
   if (el.accountRecoveryEmailInput) el.accountRecoveryEmailInput.value = "";
