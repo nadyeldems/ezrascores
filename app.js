@@ -8253,10 +8253,17 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
     let partialWarning = false;
     try {
       resetAccountScopedLocalState();
-      const bootPayload = await safeLoad(
-        () => apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, state.account.token),
-        null
-      );
+      const bootPayload = await safeLoad(async () => {
+        try {
+          return await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, state.account.token);
+        } catch (err) {
+          // Stale bearer token can exist while HttpOnly cookie session is still valid.
+          if (isSessionAuthError(err) && state.account.token) {
+            return apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/bootstrap`, null, "");
+          }
+          throw err;
+        }
+      }, null);
       if (bootPayload && typeof bootPayload === "object") {
         if (bootPayload.token) {
           const bootToken = String(bootPayload.token || "");

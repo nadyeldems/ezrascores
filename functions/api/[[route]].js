@@ -1853,9 +1853,17 @@ async function getSessionWithUser(db, token) {
 }
 
 async function accountAuth(db, request) {
-  const token = getBearerToken(request) || getSessionCookieToken(request);
-  const session = await getSessionWithUser(db, token);
-  return { token, session };
+  const bearer = getBearerToken(request);
+  const cookie = getSessionCookieToken(request);
+  if (bearer) {
+    const bearerSession = await getSessionWithUser(db, bearer);
+    if (bearerSession) return { token: bearer, session: bearerSession };
+  }
+  if (cookie) {
+    const cookieSession = await getSessionWithUser(db, cookie);
+    if (cookieSession) return { token: cookie, session: cookieSession };
+  }
+  return { token: bearer || cookie || "", session: null };
 }
 
 const ADMIN_SESSION_MS = 1000 * 60 * 60 * 12;
