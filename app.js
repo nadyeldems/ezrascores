@@ -2918,6 +2918,8 @@ function renderAccountHelper() {
 function renderAccountProgress() {
   if (!el.accountProgress || !el.accountProgressText || !el.accountProgressFill) return;
   const ui = String(state.account?.uiState || "");
+  const signedIn = accountSignedIn();
+  const hasPending = accountAnyPending();
   const map = {
     RESTORING_SESSION: { text: "Restoring account session...", width: "36%" },
     SYNCING_PROFILE: { text: "Syncing account data...", width: "68%" },
@@ -2929,7 +2931,9 @@ function renderAccountProgress() {
     SIGNED_IN_SAVING_EMAIL: { text: "Saving recovery email...", width: "64%" },
   };
   const current = map[ui] || null;
-  const visible = Boolean(current || state.account?.bootstrapInFlight || accountAnyPending());
+  const restoringLike = ui === "RESTORING_SESSION" || ui === "SYNCING_PROFILE";
+  const allowBootstrapVisible = Boolean(state.account?.bootstrapInFlight && (restoringLike || signedIn));
+  const visible = Boolean(current || hasPending || allowBootstrapVisible);
   el.accountProgress.classList.toggle("hidden", !visible);
   if (!visible) return;
   const text = current?.text || "Working...";
@@ -8432,6 +8436,8 @@ async function initAccountSession() {
       return;
     }
     clearAccountBootstrapRetryTimer();
+    state.account.bootstrapInFlight = false;
+    state.account.bootstrapPromise = null;
     setAccountPhase("SIGNED_OUT");
     resetAccountScopedLocalState();
     state.challengeDashboard = null;
@@ -8692,6 +8698,10 @@ async function logoutAccount() {
   state.account.token = "";
   state.account.user = null;
   state.account.recoveryOpen = false;
+  state.account.bootstrapInFlight = false;
+  state.account.bootstrapPromise = null;
+  state.account.pending = {};
+  state.account.activeAction = "";
   setAccountPhase("SIGNED_OUT");
   if (state.account.syncTimer) {
     clearTimeout(state.account.syncTimer);
