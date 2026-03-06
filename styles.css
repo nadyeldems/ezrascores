@@ -568,6 +568,10 @@ body.account-modal-open::before {
   z-index: 980;
 }
 
+body.account-modal-open .account-menu {
+  z-index: 1010;
+}
+
 body.account-modal-open .account-menu .settings-panel {
   position: fixed;
   left: 50%;
@@ -579,6 +583,7 @@ body.account-modal-open .account-menu .settings-panel {
   overflow: auto;
   z-index: 1000;
   box-shadow: 0 0 0 1px rgba(255, 153, 32, 0.22), 0 28px 60px rgba(0, 0, 0, 0.56);
+  pointer-events: auto;
 }
 
 .notifications-menu .settings-panel {
