@@ -1,5 +1,14 @@
 const API_PROXY_BASE = "/api";
 const ONE_MINUTE_MS = 60 * 1000;
+
+// Quest point values — must stay in sync with QUEST_POINTS in functions/api/[[route]].js
+const QUEST_POINTS = {
+  "quest-pop-5": 5,
+  "quest-random-player": 3,
+  "quest-club-quiz-3": 5,
+  "quest-predict-fixture": 8,
+};
+const QUEST_ALL_DONE_BONUS = 10;
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 const LEAGUE_VISIBILITY_REFRESH_MS = ONE_MINUTE_MS;
 const RESULTS_HISTORY_DAYS = 92;
@@ -2038,6 +2047,10 @@ const state = {
     at: 0,
   },
   rivalry: { data: null, loading: false, error: "", at: 0 },
+  dailyFixture: { data: null, loading: false, at: 0 },
+  leagueMarket: { data: {}, loading: false, at: 0 },
+  userSearch: { query: "", results: [], loading: false },
+  leagueArchive: { seasons: [], loading: false, at: 0 },
   leagueDirectory: { items: [], loading: false, promise: null },
   leagueRankByCode: {},
   lastLeagueDirectoryAt: 0,
@@ -2291,9 +2304,14 @@ const el = {
   familyCodeLabel: document.getElementById("family-code-label"),
   familySeasonCountdown: document.getElementById("family-season-countdown"),
   familyMembers: document.getElementById("family-members"),
+  leagueArchiveSection: document.getElementById("league-archive-section"),
+  leagueArchiveToggleBtn: document.getElementById("league-archive-toggle-btn"),
+  leagueArchiveList: document.getElementById("league-archive-list"),
   socialFeedTabs: [...document.querySelectorAll(".social-feed-tab")],
   socialFollowRequests: document.getElementById("social-follow-requests"),
   socialFeedList: document.getElementById("social-feed-list"),
+  userSearchInput: document.getElementById("user-search-input"),
+  userSearchResults: document.getElementById("user-search-results"),
   rivalryContent: document.getElementById("rivalry-content"),
   followRequestsBanner: document.getElementById("follow-requests-banner"),
   followRequestsCount: document.getElementById("follow-requests-count"),
@@ -3410,10 +3428,23 @@ function ensureDailyQuestBonusesForSignedInUser() {
   (daily.completed || []).forEach((questId) => {
     const claimKey = questBonusClaimKeyForUserAndQuest(questId, memberId);
     if (state.familyLeague.questBonusByDate[today][claimKey]) return;
-    if (!addFamilyPoints(5)) return;
+    const pts = Number(QUEST_POINTS[questId] ?? 5);
+    if (!addFamilyPoints(pts)) return;
     state.familyLeague.questBonusByDate[today][claimKey] = true;
     changed = true;
   });
+  // Apply all-done bonus if all quests complete and bonus not yet applied.
+  if (changed) {
+    const questCount = Object.keys(QUEST_POINTS).length;
+    const doneKeys = Object.keys(state.familyLeague.questBonusByDate[today]).filter(
+      (k) => k.startsWith(`${memberId}:`) && !k.endsWith(":__bonus__")
+    );
+    const bonusKey = `${memberId}:__bonus__`;
+    if (doneKeys.length >= questCount && !state.familyLeague.questBonusByDate[today][bonusKey]) {
+      addFamilyPoints(QUEST_ALL_DONE_BONUS);
+      state.familyLeague.questBonusByDate[today][bonusKey] = true;
+    }
+  }
   return changed;
 }
 
@@ -3424,10 +3455,23 @@ function awardQuestBonus(questId) {
   if (!state.familyLeague.questBonusByDate[today] || typeof state.familyLeague.questBonusByDate[today] !== "object") {
     state.familyLeague.questBonusByDate[today] = {};
   }
-  const key = `${currentFamilyMemberId()}:${questId}`;
+  const memberId = currentFamilyMemberId();
+  const key = `${memberId}:${questId}`;
   if (state.familyLeague.questBonusByDate[today][key]) return false;
-  if (!addFamilyPoints(5)) return false;
+  const pts = Number(QUEST_POINTS[questId] ?? 5);
+  if (!addFamilyPoints(pts)) return false;
   state.familyLeague.questBonusByDate[today][key] = true;
+  // Check if all quests now complete → award all-done bonus.
+  const questCount = Object.keys(QUEST_POINTS).length;
+  const doneKeys = Object.keys(state.familyLeague.questBonusByDate[today]).filter(
+    (k) => k.startsWith(`${memberId}:`) && !k.endsWith(":__bonus__")
+  );
+  const bonusKey = `${memberId}:__bonus__`;
+  if (doneKeys.length >= questCount && !state.familyLeague.questBonusByDate[today][bonusKey]) {
+    addFamilyPoints(QUEST_ALL_DONE_BONUS);
+    state.familyLeague.questBonusByDate[today][bonusKey] = true;
+    showRewardToast(`All quests done! +${QUEST_ALL_DONE_BONUS} bonus pts 🎉`);
+  }
   scheduleLeagueStandingsRefresh();
   return true;
 }
@@ -3436,8 +3480,9 @@ function completeQuest(questId) {
   const daily = todayQuestState();
   if (daily.completed.includes(questId)) return false;
   daily.completed.push(questId);
+  const pts = Number(QUEST_POINTS[questId] ?? 5);
   awardQuestBonus(questId);
-  showRewardToast("Quest complete • +5 points");
+  showRewardToast(`Quest complete • +${pts} pts`);
   persistLocalMetaState();
   scheduleCloudStateSync();
   safeLoad(() => flushAccountPointsSync(), null);
@@ -3782,9 +3827,42 @@ function dailyQuestList() {
   const clubDone = isQuestDone("quest-club-quiz-3");
   const clubAnswered = Math.min(3, Number(clubQuiz.answered || 0));
   const clubStarted = Boolean(clubQuiz.started) || clubAnswered > 0;
+  const fixtureDone = isQuestDone("quest-predict-fixture");
+  const dailyFx = state.dailyFixture?.data;
+  const fixtureLabel = dailyFx
+    ? `${dailyFx.homeTeam} vs ${dailyFx.awayTeam}`
+    : "Today's featured fixture";
+  const fixtureDesc = fixtureDone
+    ? "Quest complete. Bonus points awarded."
+    : dailyFx
+    ? `Predict today's featured match: ${fixtureLabel}`
+    : "Loading today's featured fixture...";
   return [
     {
+      id: "quest-predict-fixture",
+      points: QUEST_POINTS["quest-predict-fixture"],
+      title: "Predict Today's Feature Match",
+      description: fixtureDesc,
+      done: fixtureDone,
+      buttonLabel: !fixtureDone && dailyFx ? "Go to Fixture" : null,
+      statusLabel: fixtureDone ? "Complete" : null,
+      onClick: async () => {
+        if (!dailyFx?.eventId) {
+          if (!state.dailyFixture.loading) loadDailyFixture();
+          return;
+        }
+        // Navigate to the fixture. Open predict panel.
+        const event = allKnownEventsById().get(String(dailyFx.eventId || ""));
+        if (event) {
+          openFixtureDetail(event);
+        } else {
+          showRewardToast("Fixture not yet in schedule — check back later.");
+        }
+      },
+    },
+    {
       id: "quest-pop-5",
+      points: QUEST_POINTS["quest-pop-5"],
       title: "Get 5 Pop Quizzes Correct",
       description: popDone ? "Quest complete. Bonus points awarded." : popStarted ? `${popCorrect}/5 correct today` : "Start the pop quiz and get 5 correct.",
       done: popDone,
@@ -3796,6 +3874,7 @@ function dailyQuestList() {
     },
     {
       id: "quest-random-player",
+      points: QUEST_POINTS["quest-random-player"],
       title: "Explore A Random Player",
       description: randomDone
         ? "Quest complete. Bonus points awarded."
@@ -3812,6 +3891,7 @@ function dailyQuestList() {
     },
     {
       id: "quest-club-quiz-3",
+      points: QUEST_POINTS["quest-club-quiz-3"],
       title: "Complete The Club Quiz",
       description: clubDone
         ? "Quest complete. Bonus points awarded."
@@ -3826,6 +3906,266 @@ function dailyQuestList() {
       },
     },
   ];
+}
+
+async function loadDailyFixture(force = false) {
+  if (state.dailyFixture.loading) return;
+  const now = Date.now();
+  if (!force && state.dailyFixture.at && now - state.dailyFixture.at < 5 * 60 * 1000) return;
+  if (!accountSignedIn()) return;
+  state.dailyFixture.loading = true;
+  try {
+    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/daily-fixture`, null, state.account.token);
+    state.dailyFixture.data = data?.fixture || null;
+    state.dailyFixture.at = Date.now();
+  } catch { /* silently ignore */ }
+  state.dailyFixture.loading = false;
+  renderMissionsPanel();
+}
+
+async function loadLeagueMarket(leagueCode, force = false) {
+  const code = String(leagueCode || "").toUpperCase();
+  if (!code || !accountSignedIn()) return;
+  const now = Date.now();
+  if (!force && state.leagueMarket.at && now - state.leagueMarket.at < 2 * 60 * 1000) return;
+  if (state.leagueMarket.loading) return;
+  state.leagueMarket.loading = true;
+  try {
+    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/market?code=${encodeURIComponent(code)}`, null, state.account.token);
+    state.leagueMarket.data = typeof data?.market === "object" ? data.market : {};
+    state.leagueMarket.at = Date.now();
+  } catch { /* silently ignore */ }
+  state.leagueMarket.loading = false;
+}
+
+function renderLeagueMarketBar(eventId) {
+  const id = String(eventId || "").trim();
+  if (!id) return "";
+  const picks = state.leagueMarket.data?.[id];
+  if (!picks || !Array.isArray(picks) || picks.length === 0) return "";
+  // Aggregate into home-win / draw / away-win buckets
+  const buckets = { home: 0, draw: 0, away: 0 };
+  for (const p of picks) {
+    const h = Number(p.home ?? p.h);
+    const a = Number(p.away ?? p.a);
+    if (!Number.isFinite(h) || !Number.isFinite(a)) continue;
+    if (h > a) buckets.home++;
+    else if (h === a) buckets.draw++;
+    else buckets.away++;
+  }
+  const total = buckets.home + buckets.draw + buckets.away;
+  if (total === 0) return "";
+  const pct = (n) => Math.round((n / total) * 100);
+  const homePct = pct(buckets.home);
+  const drawPct = pct(buckets.draw);
+  const awayPct = 100 - homePct - drawPct;
+  return `
+    <div class="market-bar-wrap">
+      <div class="market-bar-label">League picks (${total})</div>
+      <div class="market-bar">
+        <div class="market-bar-seg market-home" style="width:${homePct}%" title="Home ${homePct}%">
+          ${homePct >= 15 ? `${homePct}%` : ""}
+        </div>
+        <div class="market-bar-seg market-draw" style="width:${drawPct}%" title="Draw ${drawPct}%">
+          ${drawPct >= 15 ? `${drawPct}%` : ""}
+        </div>
+        <div class="market-bar-seg market-away" style="width:${awayPct}%" title="Away ${awayPct}%">
+          ${awayPct >= 15 ? `${awayPct}%` : ""}
+        </div>
+      </div>
+      <div class="market-bar-legend">
+        <span class="market-legend-home">Home ${homePct}%</span>
+        <span class="market-legend-draw">Draw ${drawPct}%</span>
+        <span class="market-legend-away">Away ${awayPct}%</span>
+      </div>
+    </div>`;
+}
+
+function checkForNewAchievements(freshAchievements) {
+  if (!Array.isArray(freshAchievements) || !freshAchievements.length) return;
+  const userId = String(state.account.user?.id || "");
+  if (!userId) return;
+  const seenKey = `ezra_seen_achievements_${userId}`;
+  let seenSet;
+  try {
+    seenSet = new Set(JSON.parse(localStorage.getItem(seenKey) || "[]"));
+  } catch {
+    seenSet = new Set();
+  }
+  const newOnes = freshAchievements.filter((a) => {
+    const code = String(a?.achievementCode || a?.code || "");
+    return code && !seenSet.has(code);
+  });
+  for (const a of newOnes.slice(0, 3)) {
+    const code = String(a?.achievementCode || a?.code || "");
+    const name = String(a?.name || code || "Achievement");
+    const icon = String(a?.icon || "🏅");
+    const tier = String(a?.tier || "bronze");
+    setTimeout(() => {
+      showAchievementToast(icon, name, tier);
+    }, newOnes.indexOf(a) * 2200);
+    seenSet.add(code);
+  }
+  try {
+    localStorage.setItem(seenKey, JSON.stringify([...seenSet]));
+  } catch { /* ignore */ }
+}
+
+function showAchievementToast(icon, name, tier) {
+  const existing = document.getElementById("achievement-toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.id = "achievement-toast";
+  toast.className = `achievement-toast achievement-toast-${tier}`;
+  toast.setAttribute("role", "status");
+  toast.innerHTML = `
+    <div class="achievement-toast-inner">
+      <span class="achievement-toast-icon">${icon}</span>
+      <div class="achievement-toast-body">
+        <div class="achievement-toast-title">Achievement Unlocked!</div>
+        <div class="achievement-toast-name">${escapeHtml(name)}</div>
+        <div class="achievement-toast-tier">${escapeHtml(tier.toUpperCase())}</div>
+      </div>
+    </div>`;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => toast.classList.add("achievement-toast-in"));
+  });
+  setTimeout(() => {
+    toast.classList.remove("achievement-toast-in");
+    toast.classList.add("achievement-toast-out");
+    setTimeout(() => toast.remove(), 500);
+  }, 4000);
+}
+
+async function loadLeagueArchive(leagueCode, force = false) {
+  const code = String(leagueCode || "").toUpperCase();
+  if (!code || !accountSignedIn()) return;
+  const now = Date.now();
+  if (!force && state.leagueArchive.at && now - state.leagueArchive.at < 10 * 60 * 1000) return;
+  if (state.leagueArchive.loading) return;
+  state.leagueArchive.loading = true;
+  try {
+    const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/league/archive?code=${encodeURIComponent(code)}`, null, state.account.token);
+    state.leagueArchive.seasons = Array.isArray(data?.seasons) ? data.seasons : [];
+    state.leagueArchive.at = Date.now();
+  } catch { /* silently ignore */ }
+  state.leagueArchive.loading = false;
+  renderLeagueArchive();
+}
+
+function renderLeagueArchive() {
+  const section = el.leagueArchiveSection;
+  const list = el.leagueArchiveList;
+  if (!section || !list) return;
+  const currentLeague = currentSelectedLeagueRecord();
+  const code = normalizeLeagueCodeClient(currentLeague?.code || "");
+  const seasons = state.leagueArchive.seasons;
+  if (!code || !accountSignedIn() || seasons.length === 0) {
+    section.classList.add("hidden");
+    return;
+  }
+  section.classList.remove("hidden");
+  list.innerHTML = seasons
+    .slice(0, 8)
+    .map((s) => {
+      const winner = escapeHtml(String(s.winnerName || s.winner_name || "Unknown"));
+      const pts = Number(s.winnerPoints || s.winner_points || 0);
+      const range = [s.startsAt || s.starts_at, s.endsAt || s.ends_at].filter(Boolean).map((d) => String(d).slice(0, 10)).join(" – ");
+      return `<div class="league-archive-row">
+        <span class="league-archive-trophy">🏆</span>
+        <div class="league-archive-body">
+          <span class="league-archive-winner">${winner}</span>
+          <span class="league-archive-pts">${pts} pts</span>
+        </div>
+        <span class="league-archive-date">${escapeHtml(range || "--")}</span>
+      </div>`;
+    })
+    .join("");
+}
+
+let _userSearchTimer = null;
+async function handleUserSearchInput(query) {
+  const q = String(query || "").trim();
+  state.userSearch.query = q;
+  if (!q || q.length < 2) {
+    state.userSearch.results = [];
+    renderUserSearchResults();
+    return;
+  }
+  clearTimeout(_userSearchTimer);
+  _userSearchTimer = setTimeout(async () => {
+    if (!accountSignedIn()) return;
+    state.userSearch.loading = true;
+    renderUserSearchResults();
+    try {
+      const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/users/search?q=${encodeURIComponent(q)}`, null, state.account.token);
+      state.userSearch.results = Array.isArray(data?.users) ? data.users : [];
+    } catch {
+      state.userSearch.results = [];
+    }
+    state.userSearch.loading = false;
+    renderUserSearchResults();
+  }, 380);
+}
+
+function renderUserSearchResults() {
+  if (!el.userSearchResults) return;
+  const q = state.userSearch.query;
+  if (!q || q.length < 2) {
+    el.userSearchResults.classList.add("hidden");
+    el.userSearchResults.innerHTML = "";
+    return;
+  }
+  el.userSearchResults.classList.remove("hidden");
+  if (state.userSearch.loading) {
+    el.userSearchResults.innerHTML = `<div class="user-search-loading">Searching...</div>`;
+    return;
+  }
+  if (!state.userSearch.results.length) {
+    el.userSearchResults.innerHTML = `<div class="user-search-empty">No players found for "${escapeHtml(q)}"</div>`;
+    return;
+  }
+  const followingSet = new Set((state.socialFeed.followingIds || []).map((id) => String(id)));
+  const pendingOutgoingSet = new Set((state.socialFeed.pendingOutgoingIds || []).map((id) => String(id)));
+  const myId = String(state.account.user?.id || "");
+  el.userSearchResults.innerHTML = state.userSearch.results
+    .slice(0, 12)
+    .map((user) => {
+      const uid = String(user.id || user.user_id || "");
+      const name = escapeHtml(String(user.name || "User"));
+      const avatar = avatarBadgeMarkup(user.avatar || "", user.name || "User", "user-search-avatar");
+      const isSelf = uid === myId;
+      const isFollowing = followingSet.has(uid);
+      const isRequested = pendingOutgoingSet.has(uid);
+      const followLabel = isFollowing ? "Unfollow" : isRequested ? "Requested" : "+ Follow";
+      return `<div class="user-search-row-result" data-user-id="${escapeHtml(uid)}">
+        ${avatar}
+        <span class="user-search-name">${name}</span>
+        ${!isSelf ? `<button class="btn btn-inline user-search-follow-btn ${isFollowing ? "active" : ""}" type="button" data-uid="${escapeHtml(uid)}" data-name="${name}" data-following="${isFollowing ? "1" : "0"}" data-requested="${isRequested ? "1" : "0"}" ${isRequested && !isFollowing ? "disabled" : ""}>${followLabel}</button>` : ""}
+      </div>`;
+    })
+    .join("");
+  el.userSearchResults.querySelectorAll(".user-search-follow-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const uid = String(btn.dataset.uid || "");
+      const name = String(btn.dataset.name || "user");
+      const following = String(btn.dataset.following || "0") === "1";
+      const requested = String(btn.dataset.requested || "0") === "1";
+      if (requested && !following) return;
+      try {
+        const endpoint = following ? "unfollow" : "follow";
+        await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/${endpoint}`, { followedUserId: uid }, state.account.token);
+        setAccountStatus(following ? `Unfollowed ${name}.` : `Follow request sent to ${name}.`);
+        state.socialFeed.at = 0;
+        await refreshSocialLayer(true);
+        renderUserSearchResults();
+      } catch (err) {
+        setAccountStatus(`${following ? "Unfollow" : "Follow"} failed.`, true);
+      }
+    });
+  });
 }
 
 function renderMissionsPanel() {
@@ -3847,26 +4187,33 @@ function renderMissionsPanel() {
     scheduleCloudStateSync();
     scheduleLeagueStandingsRefresh();
   }
+  // Load daily fixture in background if not already loaded.
+  if (accountSignedIn() && !state.dailyFixture.data && !state.dailyFixture.loading) {
+    loadDailyFixture();
+  }
   const quests = dailyQuestList();
   const completedCount = quests.filter((q) => q.done).length;
-  const name = state.account.user?.name ? ` (${state.account.user.name})` : "";
+  const totalQuestPts = quests.reduce((sum, q) => sum + Number(q.points || 5), 0);
+  const allDone = completedCount >= quests.length;
   const dash = state.challengeDashboard;
   const streak = Number(dash?.progress?.currentStreak || 0);
   const seasonPts = Number(dash?.currentSeason?.standings?.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0);
-  const suffix = accountSignedIn() ? ` • Streak ${streak}d • Season ${seasonPts} pts` : "";
-  el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${name}${suffix}`;
+  const bonusBadge = allDone ? ` 🎉 All done! +${QUEST_ALL_DONE_BONUS} bonus` : ` • ${completedCount}/${quests.length} complete`;
+  const suffix = accountSignedIn() ? ` • ${streak}d streak • ${seasonPts} season pts` : "";
+  el.missionsMeta.textContent = `Daily Quests${bonusBadge}${suffix}`;
   el.missionsList.innerHTML = "";
   quests.forEach((quest) => {
     const row = document.createElement("div");
-    row.className = "mission-row";
+    row.className = `mission-row${quest.done ? " mission-done" : ""}`;
     row.dataset.questId = quest.id;
-    const statusText = quest.statusLabel || (quest.done ? "Complete" : "");
+    const pts = Number(quest.points || 5);
+    const statusText = quest.statusLabel || (quest.done ? "✓" : "");
     row.innerHTML = `
       <div class="mission-text">
-        <div class="mission-title">${escapeHtml(quest.title)}</div>
+        <div class="mission-title">${escapeHtml(quest.title)} <span class="quest-pts-badge">+${pts} pts</span></div>
         <div class="mission-sub">${escapeHtml(quest.description)}</div>
       </div>
-      ${quest.buttonLabel && !quest.done ? `<button class="btn" type="button">${escapeHtml(quest.buttonLabel)}</button>` : statusText ? `<span class="family-points">${escapeHtml(statusText)}</span>` : ""}
+      ${quest.buttonLabel && !quest.done ? `<button class="btn btn-sm" type="button">${escapeHtml(quest.buttonLabel)}</button>` : statusText ? `<span class="quest-done-badge">${escapeHtml(statusText)}</span>` : ""}
     `;
     const fxActive = state.missionFx.questId === quest.id && Number(state.missionFx.until || 0) > Date.now();
     if (fxActive) {
@@ -3877,7 +4224,7 @@ function renderMissionsPanel() {
       fx.innerHTML = `
         <span class="goal-stage goal-word">GOAL!</span>
         <span class="goal-stage goal-team-name">QUEST COMPLETE</span>
-        <span class="goal-stage goal-scoreline">+5 PTS</span>
+        <span class="goal-stage goal-scoreline">+${pts} PTS</span>
       `;
       row.appendChild(fx);
     }
@@ -3890,6 +4237,17 @@ function renderMissionsPanel() {
     }
     el.missionsList.appendChild(row);
   });
+  // All-done bonus progress bar
+  if (accountSignedIn() && !allDone) {
+    const progressRow = document.createElement("div");
+    progressRow.className = "quest-bonus-progress";
+    const pct = Math.round((completedCount / quests.length) * 100);
+    progressRow.innerHTML = `
+      <div class="quest-bonus-label">Complete all quests for +${QUEST_ALL_DONE_BONUS} bonus pts</div>
+      <div class="quest-bonus-bar"><div class="quest-bonus-fill" style="width:${pct}%"></div></div>
+    `;
+    el.missionsList.appendChild(progressRow);
+  }
 }
 
 function storyCardData() {
@@ -4772,6 +5130,8 @@ function renderPredictionCardsHtml(memberData, compareEnabled, showPreviousRound
           : compareEnabled
             ? "No pick"
             : "--";
+      const themComment = String(row.them?.pick?.comment || "").trim();
+      const youComment = String(row.you?.pick?.comment || "").trim();
       return `
         <article class="member-pred-card">
           <header>
@@ -4784,6 +5144,7 @@ function renderPredictionCardsHtml(memberData, compareEnabled, showPreviousRound
               <span class="member-pred-label">Them</span>
               <span class="member-pred-score">${escapeHtml(themPick)}</span>
               <span class="member-pred-outcome ${themOutcome.cls}">${themOutcome.text}</span>
+              ${themComment ? `<span class="member-pred-comment">"${escapeHtml(themComment)}"</span>` : ""}
             </div>
             ${
               compareEnabled
@@ -4792,6 +5153,7 @@ function renderPredictionCardsHtml(memberData, compareEnabled, showPreviousRound
                 <span class="member-pred-label">You</span>
                 <span class="member-pred-score">${escapeHtml(youPick)}</span>
                 <span class="member-pred-outcome ${youOutcome.cls}">${youOutcome.text}</span>
+                ${youComment ? `<span class="member-pred-comment">"${escapeHtml(youComment)}"</span>` : ""}
               </div>
             `
                 : ""
@@ -5157,6 +5519,12 @@ function renderFamilyLeaguePanel() {
     });
     el.familyMembers.appendChild(row);
   });
+
+  // Render past seasons archive (and kick off load if needed)
+  renderLeagueArchive();
+  if (code && accountSignedIn() && !state.leagueArchive.loading && !state.leagueArchive.at) {
+    loadLeagueArchive(code).catch(() => {});
+  }
 }
 
 function renderSocialPanels() {
@@ -5266,15 +5634,57 @@ function renderSocialPanels() {
     } else if (state.socialFeed.error) {
       el.socialFeedList.innerHTML = `<div class="empty">${escapeHtml(state.socialFeed.error)}</div>`;
     } else if (!state.socialFeed.items.length) {
-      el.socialFeedList.innerHTML = `<div class="empty">No social events yet.</div>`;
+      el.socialFeedList.innerHTML = `<div class="empty">No social events yet. Play predictions and complete quests to fill your feed.</div>`;
     } else {
       el.socialFeedList.innerHTML = state.socialFeed.items
-        .slice(0, 10)
+        .slice(0, 14)
         .map((item) => {
+          const p = item?.payload || {};
           const when = item?.createdAt
-            ? new Date(item.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
-            : "--:--";
-          return `<div class="mission-item"><div class="mission-text"><div class="mission-title">${escapeHtml(item.message || "League update")}</div><div class="mission-sub">${escapeHtml(when)}</div></div></div>`;
+            ? new Date(item.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
+            : "--";
+          // Icon per event type
+          const iconMap = {
+            perfect_scoreline: "🎯",
+            climbed_to_1: "🚀",
+            streak_milestone: "🔥",
+            combo_milestone: "⚡",
+            achievement_unlocked: String(p.icon || "🏅"),
+            title_won: "👑",
+            new_member: "👋",
+            referral_reward: "🤝",
+          };
+          const icon = iconMap[item.type] || "📣";
+          // Highlight class per type
+          const highlightMap = {
+            perfect_scoreline: "feed-card-perfect",
+            title_won: "feed-card-title",
+            achievement_unlocked: `feed-card-achievement feed-tier-${escapeHtml(p.tier || "bronze")}`,
+            climbed_to_1: "feed-card-leader",
+            streak_milestone: "feed-card-streak",
+          };
+          const cardCls = highlightMap[item.type] || "";
+          // Extra detail line
+          let detail = "";
+          if (item.type === "perfect_scoreline") {
+            const fixLine = `${String(p.homeTeam || "")} ${p.finalHome ?? "?"}-${p.finalAway ?? "?"} ${String(p.awayTeam || "")}`;
+            detail = `<div class="feed-card-detail">${escapeHtml(fixLine)}</div>`;
+          } else if (item.type === "achievement_unlocked") {
+            detail = `<div class="feed-card-detail feed-achievement-tier ${escapeHtml(p.tier || "bronze")}">${escapeHtml(p.tier || "bronze").toUpperCase()}</div>`;
+          } else if (item.type === "streak_milestone") {
+            detail = `<div class="feed-card-detail">${Number(p.streakDays || 0)}-day streak</div>`;
+          } else if (item.type === "combo_milestone") {
+            detail = `<div class="feed-card-detail">${Number(p.comboCount || 0)} in a row</div>`;
+          }
+          return `
+            <div class="social-feed-card ${cardCls}">
+              <span class="feed-card-icon">${icon}</span>
+              <div class="feed-card-body">
+                <div class="feed-card-message">${escapeHtml(item.message || "League update")}</div>
+                ${detail}
+                <div class="feed-card-time">${escapeHtml(when)}</div>
+              </div>
+            </div>`;
         })
         .join("");
     }
@@ -8569,6 +8979,9 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
         updateLeagueRankSignals(state.leagueDirectory.items, true);
         renderChallengeDashboardPanels();
         renderLifetimePointsPill();
+        // Celebrate newly unlocked achievements (compare against seen cache).
+        const freshAchievements = Array.isArray(state.challengeDashboard?.achievements) ? state.challengeDashboard.achievements : [];
+        setTimeout(() => checkForNewAchievements(freshAchievements), 1500);
         const settlePending = state.challengeDashboard?.currentSeason?.settleStatus?.settled === false;
         if (settlePending) {
           if (state.challengeForceSyncTimer) {
@@ -9740,6 +10153,10 @@ function buildPredictionModule(event, stateInfo) {
       </div>
       <button class="btn predict-save-btn" type="button">${memberPick ? "Update Pick" : "Lock Pick"}</button>
     </div>
+    <div class="predict-comment-row">
+      <input type="text" class="predict-comment-input" maxlength="120" placeholder="Add a comment (optional, shown in H2H view)..." value="${escapeHtml(memberPick?.comment || "")}" aria-label="Prediction comment" />
+    </div>
+    <div class="predict-market-bar">${renderLeagueMarketBar(event?.idEvent || event?.eventId || "")}</div>
     <div class="predict-status"></div>
   `;
   const inputs = wrapper.querySelectorAll(".predict-input");
@@ -9813,12 +10230,15 @@ function buildPredictionModule(event, stateInfo) {
     saveBtn.disabled = true;
     saveBtn.textContent = "Saving...";
     const freshRecord = ensurePredictionRecord(event);
+    const commentInput = wrapper.querySelector(".predict-comment-input");
+    const comment = commentInput ? String(commentInput.value || "").trim().slice(0, 120) : "";
     freshRecord.entries[currentId] = {
       home,
       away,
       submittedAt: new Date().toISOString(),
       scored: false,
       awarded: 0,
+      ...(comment ? { comment } : {}),
     };
     persistLocalMetaState();
     scheduleCloudStateSync();
@@ -9830,6 +10250,11 @@ function buildPredictionModule(event, stateInfo) {
     scheduleLeagueStandingsRefresh(400);
     renderFamilyLeaguePanel();
     showRewardToast(`Pick locked: ${home}-${away}`, "success");
+    // Check if this satisfies the daily fixture quest.
+    const dailyFx = state.dailyFixture?.data;
+    if (dailyFx?.eventId && String(event?.idEvent || "") === String(dailyFx.eventId || "")) {
+      completeQuest("quest-predict-fixture");
+    }
     setTimeout(() => {
       saveBtn.disabled = false;
       saveBtn.textContent = "Update Pick";
@@ -9994,6 +10419,12 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
   const highlightsHtml = renderHighlightsBlock(core, resolvedState);
   const hasExtra = Boolean(statsHtml || highlightsHtml);
   detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${highlightsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
+  // Kick off background market data load so the bar appears on next open (or refreshes)
+  const currentLeagueForMarket = currentSelectedLeagueRecord();
+  const marketCode = normalizeLeagueCodeClient(currentLeagueForMarket?.code || state.familyLeague?.leagueCode || "");
+  if (marketCode) {
+    loadLeagueMarket(marketCode).catch(() => {});
+  }
   const predictionModule = buildPredictionModule(core, resolvedState);
   if (predictionModule) {
     detailsEl.appendChild(predictionModule);
@@ -12503,6 +12934,31 @@ function attachEvents() {
         renderSocialPanels();
         await refreshSocialLayer(true);
       });
+    });
+  }
+
+  if (el.userSearchInput) {
+    el.userSearchInput.addEventListener("input", () => {
+      handleUserSearchInput(el.userSearchInput.value);
+    });
+    el.userSearchInput.addEventListener("search", () => {
+      handleUserSearchInput(el.userSearchInput.value);
+    });
+  }
+
+  if (el.leagueArchiveToggleBtn) {
+    el.leagueArchiveToggleBtn.addEventListener("click", () => {
+      const isOpen = el.leagueArchiveList && !el.leagueArchiveList.classList.contains("hidden");
+      if (el.leagueArchiveList) el.leagueArchiveList.classList.toggle("hidden", isOpen);
+      if (el.leagueArchiveToggleBtn) {
+        el.leagueArchiveToggleBtn.textContent = isOpen ? "Past Seasons ▾" : "Past Seasons ▲";
+      }
+      // Load archive data if opening for the first time
+      if (!isOpen) {
+        const currentLeague = currentSelectedLeagueRecord();
+        const code = normalizeLeagueCodeClient(currentLeague?.code || "");
+        if (code) loadLeagueArchive(code).catch(() => {});
+      }
     });
   }
 

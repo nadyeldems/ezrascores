@@ -427,6 +427,10 @@
                 <p id="family-season-countdown" class="family-season-countdown">Season ends in --</p>
               </div>
               <div id="family-members" class="list"></div>
+              <div id="league-archive-section" class="league-archive-section hidden">
+                <button id="league-archive-toggle-btn" class="btn btn-inline league-archive-toggle-btn" type="button">Past Seasons ▾</button>
+                <div id="league-archive-list" class="league-archive-list hidden"></div>
+              </div>
             </article>
             <article class="fun-card" id="social-feed-panel">
               <div class="panel-head compact-head">
@@ -447,6 +451,10 @@
                 <button class="btn btn-inline social-feed-tab" type="button" data-feed-scope="league">League</button>
               </div>
               <div id="social-follow-requests" class="list"></div>
+              <div class="user-search-row">
+                <input id="user-search-input" class="account-input user-search-input" type="search" maxlength="60" placeholder="Search players to follow..." autocomplete="off" />
+              </div>
+              <div id="user-search-results" class="user-search-results hidden"></div>
               <p class="muted">Activity stream</p>
               <div id="social-feed-list" class="list"></div>
             </article>

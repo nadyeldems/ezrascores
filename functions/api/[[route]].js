@@ -958,18 +958,41 @@ function eventLikelyFinal(event, fallbackKickoffIso = "") {
   return elapsedMs > 210 * 60 * 1000;
 }
 
+// Points awarded per quest type. Sync with QUEST_POINTS in app.js.
+const QUEST_POINTS = {
+  "quest-pop-5": 5,
+  "quest-random-player": 3,
+  "quest-club-quiz-3": 5,
+  "quest-predict-fixture": 8,
+};
+const QUEST_ALL_DONE_BONUS = 10;
+// How many quests must be done for the all-done bonus.
+const QUEST_ALL_DONE_COUNT = Object.keys(QUEST_POINTS).length;
+
 function questBonusPointsFromState(state, userId) {
   const byDate = state?.familyLeague?.questBonusByDate;
   if (!byDate || typeof byDate !== "object") return 0;
   const prefix = `acct:${String(userId || "")}:`;
-  let count = 0;
+  let totalPoints = 0;
   for (const value of Object.values(byDate)) {
     if (!value || typeof value !== "object") continue;
+    let doneCountForDay = 0;
     for (const [key, done] of Object.entries(value)) {
-      if (done && key.startsWith(prefix)) count += 1;
+      if (!done || !key.startsWith(prefix)) continue;
+      // key format: acct:{userId}:{questId}
+      const questId = key.slice(prefix.length);
+      if (questId === "__bonus__") continue; // legacy all-done bonus key
+      const pts = Number(QUEST_POINTS[questId] ?? 5);
+      totalPoints += pts;
+      doneCountForDay += 1;
+    }
+    // All-done bonus (tracked via special key to ensure idempotency)
+    const bonusKey = `${prefix}__bonus__`;
+    if (doneCountForDay >= QUEST_ALL_DONE_COUNT && value[bonusKey]) {
+      totalPoints += QUEST_ALL_DONE_BONUS;
     }
   }
-  return count * 5;
+  return totalPoints;
 }
 
 function todayIsoUtc() {
@@ -1613,20 +1636,39 @@ async function upsertUserProgress(db, userId, progress) {
     .run();
 }
 
+// Tiered achievement catalog — bronze/silver/gold tiers signalled by suffix _1/_3/_5 etc.
+const ACHIEVEMENT_CATALOG = [
+  // Streak tiers
+  { code: "streak_3",   name: "On Fire",        description: "Complete quests 3 days in a row.",  icon: "🔥", tier: "bronze" },
+  { code: "streak_7",   name: "Unstoppable",     description: "Complete quests 7 days in a row.",  icon: "🏆", tier: "silver" },
+  { code: "streak_14",  name: "Quest Machine",   description: "Complete quests 14 days in a row.", icon: "💎", tier: "gold" },
+  // Combo tiers
+  { code: "combo_3",  name: "Hot Streak",        description: "Get 3 correct outcomes in a row.",  icon: "⚡", tier: "bronze" },
+  { code: "combo_5",  name: "Prediction Combo",  description: "Get 5 correct outcomes in a row.",  icon: "⚡", tier: "silver" },
+  { code: "combo_10", name: "Oracle",            description: "Get 10 correct outcomes in a row.", icon: "🔮", tier: "gold" },
+  // Exact score tiers
+  { code: "exact_1",  name: "Pinpoint",          description: "Get your first exact score.",       icon: "🎯", tier: "bronze" },
+  { code: "exact_5",  name: "Sharp Eye",         description: "Get 5 exact score predictions.",    icon: "🎯", tier: "silver" },
+  { code: "exact_10", name: "Sniper",            description: "Get 10 exact score predictions.",   icon: "🎯", tier: "gold" },
+  { code: "exact_25", name: "Laser Guided",      description: "Get 25 exact score predictions.",   icon: "💫", tier: "platinum" },
+  // Mastery tiers
+  { code: "mastery_5",  name: "Club Loyalist",   description: "Make 5 predictions for one club.",  icon: "📈", tier: "bronze" },
+  { code: "mastery_25", name: "Team Analyst",    description: "Make 25 predictions for one club.", icon: "📊", tier: "silver" },
+  { code: "mastery_50", name: "Scouting Report", description: "Make 50 predictions for one club.", icon: "🔍", tier: "gold" },
+  // Title tiers
+  { code: "titles_1", name: "Winner",            description: "Win a mini-league weekly title.",   icon: "🥇", tier: "bronze" },
+  { code: "titles_3", name: "Champion",          description: "Win 3 mini-league weekly titles.",  icon: "👑", tier: "silver" },
+  { code: "titles_5", name: "Dynasty",           description: "Win 5 mini-league weekly titles.",  icon: "👑", tier: "gold" },
+  // Referral
+  { code: "referral_1", name: "Recruiter",       description: "Successfully refer a friend.",      icon: "🤝", tier: "bronze" },
+  { code: "referral_3", name: "Team Builder",    description: "Refer 3 friends to the league.",    icon: "🤝", tier: "silver" },
+];
+
 let achievementCatalogReady = false;
 async function ensureAchievementCatalog(db) {
-  // Skip after first successful seed — avoids 6 INSERT OR IGNORE writes per bootstrap.
   if (achievementCatalogReady) return;
   const nowIso = new Date().toISOString();
-  const rows = [
-    { code: "streak_3", name: "On Fire", description: "Complete quests 3 days in a row.", icon: "🔥" },
-    { code: "streak_7", name: "Unstoppable", description: "Complete quests 7 days in a row.", icon: "🏆" },
-    { code: "combo_3", name: "Prediction Combo", description: "Hit 3 correct outcomes in a row.", icon: "⚡" },
-    { code: "exact_10", name: "Sniper", description: "Get 10 exact score predictions.", icon: "🎯" },
-    { code: "mastery_25", name: "Team Analyst", description: "Make 25 predictions for one club.", icon: "📈" },
-    { code: "titles_5", name: "Dynasty", description: "Win 5 mini-league weekly titles.", icon: "👑" },
-  ];
-  for (const row of rows) {
+  for (const row of ACHIEVEMENT_CATALOG) {
     await db
       .prepare("INSERT OR IGNORE INTO ezra_achievements (code, name, description, icon, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
       .bind(row.code, row.name, row.description, row.icon, nowIso)
@@ -1637,10 +1679,33 @@ async function ensureAchievementCatalog(db) {
 
 async function grantAchievement(db, userId, code) {
   const nowIso = new Date().toISOString();
-  await db
+  const result = await db
     .prepare("INSERT OR IGNORE INTO ezra_user_achievements (user_id, achievement_code, earned_at) VALUES (?1, ?2, ?3)")
     .bind(userId, code, nowIso)
     .run();
+  return Boolean(result?.meta?.changes > 0);
+}
+
+// Grant an achievement and — if newly unlocked — emit a social event for the feed.
+async function grantAchievementWithEvent(db, userId, code, leagueCode = "", extraPayload = {}) {
+  const isNew = await grantAchievement(db, userId, code);
+  if (!isNew) return false;
+  const catalogEntry = ACHIEVEMENT_CATALOG.find((a) => a.code === code);
+  await emitSocialEvent(db, {
+    leagueCode,
+    userId,
+    eventType: "achievement_unlocked",
+    dedupeKey: `achievement:${code}:${userId}`,
+    payload: {
+      code,
+      name: catalogEntry?.name || code,
+      icon: catalogEntry?.icon || "🏅",
+      tier: catalogEntry?.tier || "bronze",
+      description: catalogEntry?.description || "",
+      ...extraPayload,
+    },
+  });
+  return true;
 }
 
 async function emitSocialEvent(db, { leagueCode = "", userId = "", eventType = "", payload = {}, dedupeKey = "" } = {}) {
@@ -2088,12 +2153,97 @@ async function syncLeagueScoresFromStates(db, code, key) {
         comboUpdatedAt: new Date().toISOString(),
       });
 
-      if (bestStreak >= 3) await grantAchievement(db, userId, "streak_3");
-      if (bestStreak >= 7) await grantAchievement(db, userId, "streak_7");
-      if (bestCombo >= 3) await grantAchievement(db, userId, "combo_3");
-      if (totalExact >= 10) await grantAchievement(db, userId, "exact_10");
-      if ([...mastery.values()].some((m) => Number(m.predCount || 0) >= 25))
-        await grantAchievement(db, userId, "mastery_25");
+      // Achievement grants — tiered, with social event emission on first unlock.
+      if (bestStreak >= 3)  await grantAchievementWithEvent(db, userId, "streak_3",  code);
+      if (bestStreak >= 7)  await grantAchievementWithEvent(db, userId, "streak_7",  code);
+      if (bestStreak >= 14) await grantAchievementWithEvent(db, userId, "streak_14", code);
+      if (bestCombo >= 3)   await grantAchievementWithEvent(db, userId, "combo_3",   code);
+      if (bestCombo >= 5)   await grantAchievementWithEvent(db, userId, "combo_5",   code);
+      if (bestCombo >= 10)  await grantAchievementWithEvent(db, userId, "combo_10",  code);
+      if (totalExact >= 1)  await grantAchievementWithEvent(db, userId, "exact_1",   code);
+      if (totalExact >= 5)  await grantAchievementWithEvent(db, userId, "exact_5",   code);
+      if (totalExact >= 10) await grantAchievementWithEvent(db, userId, "exact_10",  code);
+      if (totalExact >= 25) await grantAchievementWithEvent(db, userId, "exact_25",  code);
+      const masteryValues = [...mastery.values()];
+      if (masteryValues.some((m) => Number(m.predCount || 0) >= 5))  await grantAchievementWithEvent(db, userId, "mastery_5",  code);
+      if (masteryValues.some((m) => Number(m.predCount || 0) >= 25)) await grantAchievementWithEvent(db, userId, "mastery_25", code);
+      if (masteryValues.some((m) => Number(m.predCount || 0) >= 50)) await grantAchievementWithEvent(db, userId, "mastery_50", code);
+
+      // Combo milestone social event (distinct from achievement — fires whenever streak is reached).
+      if (bestCombo >= 3) {
+        await emitSocialEvent(db, {
+          leagueCode: code,
+          userId,
+          eventType: "combo_milestone",
+          dedupeKey: `combo:${code}:${userId}:${bestCombo}`,
+          payload: { comboCount: bestCombo },
+        });
+      }
+
+      // Streak milestone social event.
+      if (currentStreak >= 3) {
+        await emitSocialEvent(db, {
+          leagueCode: code,
+          userId,
+          eventType: "streak_milestone",
+          dedupeKey: `streak:${code}:${userId}:${currentStreak}`,
+          payload: { streakDays: currentStreak },
+        });
+      }
+
+      // Referral reward — grant once when this user's first prediction is settled.
+      const referralKey = `referral_bonus:${userId}`;
+      const referralAlreadyGranted = await db
+        .prepare("SELECT id FROM ezra_points_ledger WHERE idempotency_key = ?1 LIMIT 1")
+        .bind(referralKey)
+        .first();
+      if (!referralAlreadyGranted && newLedgerEntries.length > 0) {
+        // Check if this user was invited by someone.
+        const inviteRow = await db
+          .prepare("SELECT invited_by_user_id FROM ezra_league_members WHERE user_id = ?1 AND invited_by_user_id IS NOT NULL LIMIT 1")
+          .bind(userId)
+          .first();
+        const referrerId = String(inviteRow?.invited_by_user_id || "").trim();
+        if (referrerId) {
+          // Mark as processed (even if referrer no longer eligible) so we don't check again.
+          await db
+            .prepare("INSERT OR IGNORE INTO ezra_points_ledger (event_id, user_id, league_code, type, points, idempotency_key, season_id, payload_json, created_at) VALUES ('', ?1, '', 'referral_marker', 0, ?2, '', '{}', ?3)")
+            .bind(userId, referralKey, new Date().toISOString())
+            .run();
+          // Grant referrer bonus.
+          const refBonusKey = `referral_reward:${referrerId}:${userId}`;
+          const refAlready = await db
+            .prepare("SELECT id FROM ezra_points_ledger WHERE idempotency_key = ?1 LIMIT 1")
+            .bind(refBonusKey)
+            .first();
+          if (!refAlready) {
+            const refSeason = currentSevenDaySeasonWindow();
+            await db
+              .prepare("INSERT OR IGNORE INTO ezra_points_ledger (event_id, user_id, league_code, type, points, idempotency_key, season_id, payload_json, created_at) VALUES ('', ?1, ?2, 'referral_reward', 5, ?3, ?4, ?5, ?6)")
+              .bind(referrerId, code, refBonusKey, refSeason.seasonId, JSON.stringify({ referredUserId: userId }), new Date().toISOString())
+              .run();
+            // Update referrer lifetime points.
+            const referrerScore = await getUserLifetimePoints(db, referrerId);
+            await upsertUserScore(db, referrerId, referrerScore + 5);
+            // Emit social event for referrer.
+            await emitSocialEvent(db, {
+              leagueCode: code,
+              userId: referrerId,
+              eventType: "referral_reward",
+              dedupeKey: `referral:${referrerId}:${userId}`,
+              payload: { referredUserId: userId, points: 5 },
+            });
+            // Check referral achievement.
+            const refCount = await db
+              .prepare("SELECT COUNT(*) AS c FROM ezra_points_ledger WHERE user_id = ?1 AND type = 'referral_reward'")
+              .bind(referrerId)
+              .first();
+            const refTotal = Math.max(0, Number(refCount?.c || 0));
+            if (refTotal >= 1) await grantAchievementWithEvent(db, referrerId, "referral_1", code);
+            if (refTotal >= 3) await grantAchievementWithEvent(db, referrerId, "referral_3", code);
+          }
+        }
+      }
     })
   );
 
@@ -2142,9 +2292,18 @@ async function syncLeagueScoresFromStates(db, code, key) {
       .bind(code, winnerUserId)
       .first();
     const titlesWon = Math.max(0, Number(titlesRow?.c || 0));
-    if (titlesWon >= 5) {
-      await grantAchievement(db, winnerUserId, "titles_5");
-    }
+    // Emit title_won social event.
+    await emitSocialEvent(db, {
+      leagueCode: code,
+      userId: winnerUserId,
+      eventType: "title_won",
+      dedupeKey: `title:${code}:${season.seasonId}:${winnerUserId}`,
+      payload: { seasonId: season.seasonId, titlesWon },
+    });
+    // Tiered title achievements.
+    if (titlesWon >= 1) await grantAchievementWithEvent(db, winnerUserId, "titles_1", code);
+    if (titlesWon >= 3) await grantAchievementWithEvent(db, winnerUserId, "titles_3", code);
+    if (titlesWon >= 5) await grantAchievementWithEvent(db, winnerUserId, "titles_5", code);
   }
 }
 
@@ -2998,6 +3157,14 @@ async function handleLeagueJoin(db, request) {
         referrerName || null
       )
       .run();
+    // Emit new_member social event so the league feed shows the join.
+    await emitSocialEvent(db, {
+      leagueCode: code,
+      userId: session.user_id,
+      eventType: "new_member",
+      dedupeKey: `new_member:${code}:${session.user_id}`,
+      payload: { leagueCode: code, invitedBy: referrerUserId || null },
+    });
   }
   return json({ ok: true, code, alreadyMember: Boolean(existingMember), referralTracked: Boolean(referrerUserId) }, 200);
 }
@@ -3909,20 +4076,45 @@ async function handleSocialFeed(db, request) {
 
   const events = (rows?.results || []).map((row) => {
     const payload = safeParseJsonText(row?.payload_json || "{}");
+    const name = String(row?.name || "Player");
     let message = "New update";
-    if (row.event_type === "perfect_scoreline") {
-      const hs = Number(payload?.finalHome);
-      const as = Number(payload?.finalAway);
-      const fixture = `${String(payload?.homeTeam || "Home")} ${Number.isFinite(hs) ? hs : "-"}-${Number.isFinite(as) ? as : "-"} ${String(payload?.awayTeam || "Away")}`;
-      message = `${String(row?.name || "Player")} got a perfect scoreline • ${fixture}`;
-    } else if (row.event_type === "climbed_to_1") {
-      message = `${String(row?.name || "Player")} climbed to #1`;
+    switch (row.event_type) {
+      case "perfect_scoreline": {
+        const hs = Number(payload?.finalHome);
+        const as = Number(payload?.finalAway);
+        const fixture = `${String(payload?.homeTeam || "Home")} ${Number.isFinite(hs) ? hs : "?"}-${Number.isFinite(as) ? as : "?"} ${String(payload?.awayTeam || "Away")}`;
+        message = `${name} nailed the exact score • ${fixture}`;
+        break;
+      }
+      case "climbed_to_1":
+        message = `${name} climbed to #1 in the league`;
+        break;
+      case "streak_milestone":
+        message = `${name} is on a ${Number(payload?.streakDays || 0)}-day quest streak 🔥`;
+        break;
+      case "combo_milestone":
+        message = `${name} hit a ${Number(payload?.comboCount || 0)}-prediction combo ⚡`;
+        break;
+      case "achievement_unlocked":
+        message = `${name} unlocked ${String(payload?.icon || "🏅")} ${String(payload?.name || "an achievement")}`;
+        break;
+      case "title_won":
+        message = `${name} won the league title! 👑 (${String(payload?.titlesWon || 1)} total)`;
+        break;
+      case "new_member":
+        message = `${name} joined the league`;
+        break;
+      case "referral_reward":
+        message = `${name} earned a referral bonus 🤝`;
+        break;
+      default:
+        message = `${name} made a move`;
     }
     return {
       id: Number(row?.id || 0),
       leagueCode: normalizeLeagueCode(row?.league_code),
       userId: String(row?.user_id || ""),
-      userName: String(row?.name || "Player"),
+      userName: name,
       type: String(row?.event_type || ""),
       message,
       payload,
@@ -3930,6 +4122,204 @@ async function handleSocialFeed(db, request) {
     };
   });
   return json({ events, followingUserIds: followedIds }, 200, { "Cache-Control": "no-store" });
+}
+
+// Prediction market — aggregate league picks per fixture as % breakdown.
+async function handleLeaguePredictionMarket(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const url = new URL(request.url);
+  const code = normalizeLeagueCode(url.searchParams.get("code"));
+  if (!code) return json({ error: "Missing league code." }, 400);
+  const inLeague = await isLeagueMember(db, code, session.user_id);
+  if (!inLeague) return json({ error: "Not in this league." }, 403);
+
+  const members = await db
+    .prepare("SELECT user_id FROM ezra_league_members WHERE league_code = ?1")
+    .bind(code)
+    .all();
+  const memberIds = (members?.results || []).map((r) => String(r?.user_id || "")).filter(Boolean);
+
+  // Accumulate pick counts per fixture per outcome.
+  const marketMap = new Map(); // eventId → { H: n, D: n, A: n, total: n }
+  await Promise.all(
+    memberIds.map(async (uid) => {
+      const row = await db
+        .prepare("SELECT state_json FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+        .bind(uid)
+        .first();
+      const state = safeParseJsonText(row?.state_json || "{}");
+      const predictions = state?.familyLeague?.predictions;
+      if (!predictions || typeof predictions !== "object") return;
+      const memberKeys = [
+        `acct:${uid}`,
+        uid,
+      ];
+      for (const record of Object.values(predictions)) {
+        if (!record || typeof record !== "object") continue;
+        const eventId = String(record.eventId || "").trim();
+        if (!eventId) continue;
+        const pick = memberKeys.map((k) => record.entries?.[k]).find((v) => v && typeof v === "object");
+        if (!pick) continue;
+        const h = numericScore(pick.home);
+        const a = numericScore(pick.away);
+        if (h === null || a === null) continue;
+        const outcome = predictionResultCode(h, a);
+        if (!marketMap.has(eventId)) marketMap.set(eventId, { H: 0, D: 0, A: 0, total: 0 });
+        const entry = marketMap.get(eventId);
+        entry[outcome] = (entry[outcome] || 0) + 1;
+        entry.total += 1;
+      }
+    })
+  );
+
+  const market = {};
+  for (const [eventId, counts] of marketMap.entries()) {
+    const t = Math.max(1, counts.total);
+    market[eventId] = {
+      home: Math.round((counts.H / t) * 100),
+      draw: Math.round((counts.D / t) * 100),
+      away: Math.round((counts.A / t) * 100),
+      total: counts.total,
+    };
+  }
+  return json({ market }, 200, { "Cache-Control": "no-store" });
+}
+
+// User search by name — returns up to 20 results with follow status.
+async function handleUsersSearch(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const url = new URL(request.url);
+  const q = String(url.searchParams.get("q") || "").trim();
+  if (!q || q.length < 2) return json({ users: [] }, 200);
+
+  const nameKey = q.toLowerCase().replace(/\s+/g, " ");
+  const rows = await db
+    .prepare(
+      `SELECT id, name, avatar_json
+       FROM ezra_users
+       WHERE name_key LIKE ?1
+       LIMIT 20`
+    )
+    .bind(`${nameKey}%`)
+    .all();
+  const results = rows?.results || [];
+
+  // Fetch follow status for each result.
+  const me = String(session.user_id || "");
+  const followRows = await db
+    .prepare("SELECT followed_user_id FROM ezra_user_follows WHERE follower_user_id = ?1")
+    .bind(me)
+    .all();
+  const followingSet = new Set(
+    (followRows?.results || []).map((r) => String(r?.followed_user_id || ""))
+  );
+  const pendingRows = await db
+    .prepare("SELECT followed_user_id FROM ezra_follow_requests WHERE follower_user_id = ?1 AND status = 'pending'")
+    .bind(me)
+    .all();
+  const pendingSet = new Set(
+    (pendingRows?.results || []).map((r) => String(r?.followed_user_id || ""))
+  );
+
+  const users = results
+    .filter((row) => String(row?.id || "") !== me) // exclude self
+    .map((row) => ({
+      id: String(row.id || ""),
+      name: String(row.name || ""),
+      avatar: parseAvatarConfig(row.avatar_json, row.name || row.id),
+      isFollowing: followingSet.has(String(row.id || "")),
+      followPending: pendingSet.has(String(row.id || "")),
+    }));
+
+  return json({ users }, 200, { "Cache-Control": "no-store" });
+}
+
+// Daily featured fixture — same for all users, resets at midnight UTC.
+async function handleDailyFixture(db, request, key) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const todayKey = `daily_quest_fixture_${todayIsoUtc()}`;
+  const cached = await getAppSetting(db, todayKey);
+  if (cached) {
+    try {
+      return json({ fixture: JSON.parse(cached) }, 200, { "Cache-Control": "no-store" });
+    } catch { /* fall through to refresh */ }
+  }
+
+  // Fetch today's fixtures from SportsDB and pick one at random.
+  const sportsKey = String(key || "074910");
+  const todayStr = todayIsoUtc();
+  let chosenFixture = null;
+  const leagueIds = ["4328", "4329", "4335"]; // EPL, Championship, La Liga
+  const shuffle = (arr) => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  for (const leagueId of shuffle(leagueIds)) {
+    try {
+      const url = `https://www.thesportsdb.com/api/v1/json/${sportsKey}/eventsday.php?d=${todayStr}&l=${leagueId}`;
+      const res = await fetchWithTimeout(url, {}, 8000);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const events = Array.isArray(data?.events) ? data.events.filter((e) => !isFinalEvent(e) && !isLiveEvent(e)) : [];
+      if (!events.length) continue;
+      const evt = shuffle(events)[0];
+      chosenFixture = {
+        eventId: String(evt.idEvent || ""),
+        homeTeam: String(evt.strHomeTeam || ""),
+        awayTeam: String(evt.strAwayTeam || ""),
+        kickoff: evt.dateEvent && evt.strTime ? `${evt.dateEvent}T${normalizeTime(evt.strTime)}Z` : "",
+        leagueId,
+      };
+      break;
+    } catch { /* try next league */ }
+  }
+
+  if (chosenFixture) {
+    await setAppSetting(db, todayKey, JSON.stringify(chosenFixture));
+  }
+  return json({ fixture: chosenFixture }, 200, { "Cache-Control": "no-store" });
+}
+
+// League season archive — titles won per season.
+async function handleLeagueSeasonArchive(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const url = new URL(request.url);
+  const code = normalizeLeagueCode(url.searchParams.get("code"));
+  if (!code) return json({ error: "Missing league code." }, 400);
+  const inLeague = await isLeagueMember(db, code, session.user_id);
+  if (!inLeague) return json({ error: "Not in this league." }, 403);
+
+  const rows = await db
+    .prepare(
+      `SELECT t.season_id, t.user_id, t.awarded_at, u.name,
+              COALESCE(sp.points, 0) AS points
+       FROM ezra_league_season_titles t
+       JOIN ezra_users u ON u.id = t.user_id
+       LEFT JOIN ezra_league_season_points sp
+         ON sp.league_code = t.league_code AND sp.season_id = t.season_id AND sp.user_id = t.user_id
+       WHERE t.league_code = ?1
+       ORDER BY t.season_id DESC
+       LIMIT 20`
+    )
+    .bind(code)
+    .all();
+
+  const seasons = (rows?.results || []).map((row) => ({
+    seasonId: String(row.season_id || ""),
+    userId: String(row.user_id || ""),
+    userName: String(row.name || ""),
+    points: Math.max(0, Number(row.points || 0)),
+    awardedAt: String(row.awarded_at || ""),
+  }));
+  return json({ seasons }, 200, { "Cache-Control": "no-store" });
 }
 
 async function handleSocialRivalry(db, request, key) {
@@ -4236,6 +4626,18 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "rivalry" && request.method === "GET") {
       return handleSocialRivalry(db, request, key);
+    }
+    if (route === "league/market" && request.method === "GET") {
+      return handleLeaguePredictionMarket(db, request);
+    }
+    if (route === "league/archive" && request.method === "GET") {
+      return handleLeagueSeasonArchive(db, request);
+    }
+    if (route === "users/search" && request.method === "GET") {
+      return handleUsersSearch(db, request);
+    }
+    if (route === "daily-fixture" && request.method === "GET") {
+      return handleDailyFixture(db, request, key);
     }
     if (route === "league/standings" && request.method === "GET") {
       return handlePublicLeagueStandings(db, request, key);
