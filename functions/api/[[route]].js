@@ -1221,6 +1221,11 @@ async function upsertUserScore(db, userId, points) {
     .run();
 }
 
+async function getUserLifetimePoints(db, userId) {
+  const row = await db.prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1").bind(userId).first();
+  return Math.max(0, Number(row?.points || 0));
+}
+
 async function upsertUserPreference(db, userId, kidsMode = false) {
   const nowIso = new Date().toISOString();
   await db
@@ -2177,6 +2182,7 @@ async function handleAccountRegister(db, request) {
   await ensureDefaultLeagueForUser(db, userId);
 
   const token = await createSession(db, userId);
+  const lifetimePoints = await getUserLifetimePoints(db, userId);
   return json(
     {
       token,
@@ -2186,6 +2192,7 @@ async function handleAccountRegister(db, request) {
         email: emailCheck.clean || "",
         hasRecoveryEmail: Boolean(emailCheck.clean),
         avatar,
+        lifetimePoints,
       },
     },
     200,
@@ -2209,6 +2216,7 @@ async function handleAccountLogin(db, request) {
   if (checkHash !== row.pin_hash) return json({ error: "Invalid PIN." }, 401);
 
   const token = await createSession(db, row.id);
+  const lifetimePoints = await getUserLifetimePoints(db, row.id);
   return json(
     {
       token,
@@ -2218,6 +2226,7 @@ async function handleAccountLogin(db, request) {
         email: String(row.email || ""),
         hasRecoveryEmail: Boolean(row.email),
         avatar: parseAvatarConfig(row.avatar_json, row.name || row.id),
+        lifetimePoints,
       },
     },
     200,
@@ -2228,6 +2237,7 @@ async function handleAccountLogin(db, request) {
 async function handleAccountMe(db, request) {
   const { session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
+  const lifetimePoints = await getUserLifetimePoints(db, session.user_id);
   return json(
     {
       user: {
@@ -2237,6 +2247,7 @@ async function handleAccountMe(db, request) {
         hasRecoveryEmail: Boolean(session.email),
         emailVerifiedAt: session.email_verified_at || null,
         avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id),
+        lifetimePoints,
       },
     },
     200,
@@ -2278,6 +2289,7 @@ async function handleAccountUpdateMe(db, request, env) {
       emailConfirmationSent = false;
     }
   }
+  const lifetimePoints = await getUserLifetimePoints(db, session.user_id);
   return json(
     {
       ok: true,
@@ -2289,6 +2301,7 @@ async function handleAccountUpdateMe(db, request, env) {
         hasRecoveryEmail: true,
         emailVerifiedAt: session.email_verified_at || null,
         avatar,
+        lifetimePoints,
       },
     },
     200
@@ -2383,6 +2396,7 @@ async function handleAccountRecoveryComplete(db, request) {
     .bind(String(user.id), salt, pinHash, nowIso)
     .run();
   const token = await createSession(db, String(user.id));
+  const lifetimePoints = await getUserLifetimePoints(db, String(user.id));
   return json(
     {
       ok: true,
@@ -2393,6 +2407,7 @@ async function handleAccountRecoveryComplete(db, request) {
         email: emailCheck.clean,
         hasRecoveryEmail: true,
         avatar: parseAvatarConfig(user.avatar_json, user.name || user.id),
+        lifetimePoints,
       },
     },
     200,
@@ -2706,7 +2721,12 @@ async function buildLeagueDirectoryForUser(db, userId, key) {
   const detailed = await Promise.all(
     leagues.map(async (league) => {
       const code = normalizeLeagueCode(league.code);
-      let standings = await leagueStandingsFallback(db, code);
+      let standings = [];
+      try {
+        standings = await leagueStandings(db, code, key);
+      } catch {
+        standings = await leagueStandingsFallback(db, code);
+      }
       const settleStatus = code ? await getLeagueSettleStatus(db, code) : { settled: false, settledAt: 0, ageMs: null };
       return {
         code: league.code,
@@ -2854,6 +2874,7 @@ async function handleChallengeDashboard(db, request, key) {
 async function handleAccountBootstrap(db, request, key) {
   const { token, session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
+  const lifetimePoints = await getUserLifetimePoints(db, session.user_id);
 
   const [stateRow, dashboard, leagues] = await Promise.all([
     db
@@ -2872,6 +2893,7 @@ async function handleAccountBootstrap(db, request, key) {
         hasRecoveryEmail: Boolean(session.email),
         emailVerifiedAt: session.email_verified_at || null,
         avatar: parseAvatarConfig(session.avatar_json, session.name || session.user_id),
+        lifetimePoints,
       },
       token: token || "",
       state: safeParseJsonText(stateRow?.state_json || "{}"),
@@ -3495,7 +3517,12 @@ async function handlePublicLeagueStandings(db, request, key) {
   if (!league) return json({ error: "League code not found." }, 404);
   const season = currentSevenDaySeasonWindow();
   await ensureLeagueSeason(db, code, season);
-  const standings = await leagueStandingsFallback(db, code);
+  let standings = [];
+  try {
+    standings = await leagueStandings(db, code, key);
+  } catch {
+    standings = await leagueStandingsFallback(db, code);
+  }
   const settleStatus = await getLeagueSettleStatus(db, code);
   return json(
     {

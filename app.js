@@ -3095,6 +3095,7 @@ function ensureSignedInUserInFamilyLeague() {
   if (changed) {
     persistLocalMetaState();
     scheduleCloudStateSync();
+    safeLoad(() => flushAccountPointsSync(), null);
     scheduleLeagueStandingsRefresh();
   }
   return true;
@@ -3298,6 +3299,7 @@ function completeQuest(questId) {
   showRewardToast("Quest complete • +5 points");
   persistLocalMetaState();
   scheduleCloudStateSync();
+  safeLoad(() => flushAccountPointsSync(), null);
   // Ensure mini-league standings reflect quest points immediately.
   scheduleLeagueStandingsRefresh(200);
   renderMissionsPanel();
@@ -8516,6 +8518,12 @@ function scheduleCloudStateSync(delayMs = 1200) {
   }, delayMs);
 }
 
+async function flushAccountPointsSync() {
+  if (!accountSignedIn()) return;
+  await safeLoad(() => syncCloudStateNow(), null);
+  scheduleLeagueStandingsRefresh(180);
+}
+
 async function initAccountSession() {
   renderAccountUI();
   state.account.keepLoggedIn = resolveKeepLoggedInFromStorage();
@@ -8548,6 +8556,12 @@ async function initAccountSession() {
     resumePendingLeagueInvitePrompt();
     renderFamilyLeaguePanel();
   };
+  const bootstrapWithTimeout = async (contextLabel, options = {}, timeoutMs = 8000) => {
+    return await Promise.race([
+      runPostAuthBootstrap(contextLabel, options),
+      new Promise((resolve) => setTimeout(() => resolve({ ok: false, timedOut: true }), timeoutMs)),
+    ]);
+  };
   if (!state.account.token) {
     if (!state.account.keepLoggedIn) {
       await finalizeSignedOut("Logged out. Existing features still work locally.");
@@ -8556,7 +8570,7 @@ async function initAccountSession() {
     setAccountPhase("RESTORING_SESSION");
     renderAccountUI();
     const restoredViaCookie = await safeLoad(
-      () => runPostAuthBootstrap("Session restored", { allowCookieRestore: true }),
+      () => bootstrapWithTimeout("Session restored", { allowCookieRestore: true }),
       null
     );
     if (restoredViaCookie?.ok && state.account?.user?.id) {
@@ -8587,6 +8601,20 @@ async function initAccountSession() {
   }
   if (!mePayload?.user) {
     if (isSessionAuthError(meError)) {
+      if (state.account.keepLoggedIn) {
+        const restoredViaCookie = await safeLoad(
+          () => bootstrapWithTimeout("Session restored", { allowCookieRestore: true }),
+          null
+        );
+        if (restoredViaCookie?.ok && state.account?.user?.id) {
+          state.account.restoreAuthFailures = 0;
+          state.account.restoreAuthFirstAt = 0;
+          setAccountStatus(`Cloud save active for ${state.account.user?.name || "user"}.`);
+          resumePendingLeagueInvitePrompt();
+          renderFamilyLeaguePanel();
+          return;
+        }
+      }
       await finalizeSignedOut("Session expired. Please sign in again.");
       return;
     }
@@ -9594,6 +9622,7 @@ function buildPredictionModule(event, stateInfo) {
     };
     persistLocalMetaState();
     scheduleCloudStateSync();
+    safeLoad(() => flushAccountPointsSync(), null);
     status.textContent = `Saved ✓ ${home}-${away} for ${activeMember.name}`;
     status.classList.add("success");
     saveBtn.textContent = "Saved";
