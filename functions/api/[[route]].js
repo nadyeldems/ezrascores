@@ -2476,6 +2476,85 @@ async function handleAdminSetScoreFloor(db, env, request) {
   return json({ ok: true, results }, 200);
 }
 
+// Manually grant points to a user — adds to lifetime total AND current season standings.
+async function handleAdminGrantPoints(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+  const body = (await parseJson(request)) || {};
+  const userId = String(body?.userId || "").trim();
+  const points = Math.floor(Number(body?.points || 0));
+  const reason = String(body?.reason || "admin_grant").trim() || "admin_grant";
+
+  if (!userId) return json({ error: "userId is required" }, 400);
+  if (!Number.isFinite(points) || points <= 0) {
+    return json({ error: "points must be a positive integer greater than 0" }, 400);
+  }
+
+  // Verify the user exists.
+  const user = await db
+    .prepare("SELECT id, name FROM ezra_users WHERE id = ?1 LIMIT 1")
+    .bind(userId)
+    .first();
+  if (!user) return json({ error: `User not found: ${userId}` }, 404);
+
+  const nowIso = new Date().toISOString();
+  const idempKey = `admin_grant:${userId}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+  const season = currentSevenDaySeasonWindow();
+
+  // 1. Append an admin_grant ledger entry so the grant is visible in audit history.
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO ezra_points_ledger
+         (event_id, user_id, league_code, type, points, idempotency_key, season_id, payload_json, created_at)
+       VALUES ('', ?1, '', 'admin_grant', ?2, ?3, ?4, ?5, ?6)`
+    )
+    .bind(userId, points, idempKey, season.seasonId, JSON.stringify({ reason }), nowIso)
+    .run();
+
+  // 2. Add to lifetime total. getLedgerSeasonPoints would now include the grant,
+  //    but we compute lifetime directly: current + grant, then MAX-ratchet upsert.
+  const currentLifetime = await getUserLifetimePoints(db, userId);
+  const newLifetime = currentLifetime + points;
+  await upsertUserScore(db, userId, newLifetime);
+
+  // 3. Update current-season standings for every league this user belongs to.
+  //    getLedgerSeasonPoints sums the full ledger for this season (including the
+  //    admin_grant entry just inserted), so the season total is always accurate.
+  const leagueRows = await db
+    .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1")
+    .bind(userId)
+    .all();
+  const leagueCodes = (leagueRows?.results || [])
+    .map((r) => String(r?.league_code || ""))
+    .filter(Boolean);
+
+  let seasonPointsAfterGrant = 0;
+  for (const leagueCode of leagueCodes) {
+    await ensureLeagueSeason(db, leagueCode, season);
+    seasonPointsAfterGrant = await getLedgerSeasonPoints(db, userId, season.seasonId);
+    await upsertLeagueSeasonPoints(db, leagueCode, season.seasonId, userId, seasonPointsAfterGrant);
+  }
+
+  // 4. Raise the score floor to the new lifetime total so a future rescore can
+  //    never zero out or reduce below this admin-granted value.
+  await setUserScoreFloor(db, userId, newLifetime, `admin_grant: ${reason}`);
+
+  return json(
+    {
+      ok: true,
+      userId,
+      username: String(user.name || ""),
+      pointsGranted: points,
+      reason,
+      newLifetimeTotal: newLifetime,
+      currentSeasonPoints: seasonPointsAfterGrant,
+      seasonId: season.seasonId,
+      leaguesUpdated: leagueCodes.length,
+    },
+    200
+  );
+}
+
 async function handleAdminLeagueVisibilityGet(db, env, request) {
   const auth = await adminAuth(request, env);
   if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
@@ -4044,6 +4123,9 @@ async function handleEzraAdminRoute(context, adminPath) {
     }
     if (route === "set-score-floor" && request.method === "POST") {
       return handleAdminSetScoreFloor(db, env, request);
+    }
+    if (route === "grant-points" && request.method === "POST") {
+      return handleAdminGrantPoints(db, env, request);
     }
 
     return json({ error: "Unsupported admin route or method" }, 405);

@@ -66,6 +66,7 @@
                 <th>Username</th>
                 <th>Total Points</th>
                 <th>Last Activity</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="users-tbody"></tbody>
@@ -73,6 +74,56 @@
         </div>
 
         <p id="dash-status" class="status"></p>
+
+        <details class="grant-panel" id="grant-panel">
+          <summary class="grant-summary">
+            <span>Grant Points to a User</span>
+          </summary>
+          <div class="grant-body">
+            <p class="grant-desc">Adds points to a user's lifetime total <em>and</em> their current weekly season standing in every league they belong to. The grant is recorded in the points ledger for audit purposes and is protected by the score floor, so it can never be reversed by a rescore.</p>
+
+            <div class="grant-form-grid">
+              <div class="grant-col">
+                <label class="grant-label">
+                  User
+                  <div class="grant-search-wrap">
+                    <input id="grant-user-input" type="text" placeholder="Type username…" autocomplete="off" aria-label="Search user to grant points" aria-autocomplete="list" aria-controls="grant-user-list" />
+                    <ul id="grant-user-list" class="grant-user-list hidden" role="listbox"></ul>
+                  </div>
+                  <span id="grant-user-selected" class="grant-selected-badge hidden"></span>
+                </label>
+              </div>
+
+              <div class="grant-col">
+                <label class="grant-label">
+                  Points
+                  <input id="grant-points-input" type="number" min="1" max="9999" step="1" placeholder="e.g. 10" />
+                </label>
+              </div>
+
+              <div class="grant-col grant-col--wide">
+                <label class="grant-label">
+                  Reason
+                  <input id="grant-reason-input" type="text" maxlength="120" placeholder="e.g. competition winner, manual correction…" />
+                </label>
+              </div>
+            </div>
+
+            <div id="grant-preview" class="grant-preview hidden" aria-live="polite"></div>
+
+            <div class="grant-actions">
+              <button type="button" id="grant-clear-btn" class="grant-clear-btn">Clear</button>
+              <button type="button" id="grant-btn" class="grant-submit-btn" disabled>Grant Points</button>
+            </div>
+
+            <p id="grant-status" class="status"></p>
+
+            <div id="grant-history" class="grant-history hidden">
+              <h4 class="grant-history-title">Session Grant Log</h4>
+              <ul id="grant-history-list" class="grant-history-list"></ul>
+            </div>
+          </div>
+        </details>
       </section>
     </main>
 
