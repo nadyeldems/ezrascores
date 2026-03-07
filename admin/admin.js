@@ -9,6 +9,7 @@ const el = {
   password: document.getElementById("password"),
   loginBtn: document.getElementById("login-btn"),
   authStatus: document.getElementById("auth-status"),
+  rescoreBtn: document.getElementById("rescore-btn"),
   refreshBtn: document.getElementById("refresh-btn"),
   logoutBtn: document.getElementById("logout-btn"),
   usersCount: document.getElementById("users-count"),
@@ -198,6 +199,24 @@ el.loginForm.addEventListener("submit", async (e) => {
   }
 });
 
+el.rescoreBtn.addEventListener("click", async () => {
+  if (!state.token) return;
+  try {
+    el.rescoreBtn.disabled = true;
+    el.rescoreBtn.textContent = "Rescoring...";
+    setStatus(el.dashStatus, "Running full rescore — this may take a few seconds...");
+    const res = await fetch(`${API}/rescore-all`, { method: "POST", headers: authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Rescore failed (${res.status})`);
+    setStatus(el.dashStatus, `Rescore complete — ${data.leaguesProcessed ?? 0} league(s) settled at ${new Date(data.settledAt || Date.now()).toLocaleTimeString("en-GB")}`, "ok");
+    await refreshDashboard();
+  } catch (err) {
+    setStatus(el.dashStatus, String(err?.message || err), "error");
+  } finally {
+    el.rescoreBtn.disabled = false;
+    el.rescoreBtn.textContent = "Rescore All Users";
+  }
+});
 el.refreshBtn.addEventListener("click", refreshDashboard);
 el.logoutBtn.addEventListener("click", logout);
 el.searchInput.addEventListener("input", renderUsers);
