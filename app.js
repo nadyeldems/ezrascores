@@ -3107,6 +3107,57 @@ function currentFamilyMemberId() {
   return id ? `acct:${id}` : "";
 }
 
+function candidateFamilyMemberKeys() {
+  const keys = new Set();
+  const id = String(state.account?.user?.id || "").trim();
+  const name = String(state.account?.user?.name || "").trim();
+  if (id) {
+    keys.add(`acct:${id}`);
+    keys.add(id);
+  }
+  if (name) {
+    keys.add(`acct:${name}`);
+    keys.add(name);
+  }
+  return [...keys].filter(Boolean);
+}
+
+function resolveMemberPickForRecord(record) {
+  if (!record || typeof record !== "object") return { key: "", pick: null };
+  const entries = record.entries && typeof record.entries === "object" ? record.entries : {};
+  const keys = candidateFamilyMemberKeys();
+  for (const key of keys) {
+    if (entries[key] && typeof entries[key] === "object") {
+      return { key, pick: entries[key] };
+    }
+  }
+  return { key: "", pick: null };
+}
+
+function migratePredictionEntryKeysForCurrentUser() {
+  if (!accountSignedIn()) return false;
+  const canonical = currentFamilyMemberId();
+  if (!canonical) return false;
+  ensureFamilyLeagueState();
+  const keys = candidateFamilyMemberKeys();
+  let changed = false;
+  Object.values(state.familyLeague?.predictions || {}).forEach((record) => {
+    if (!record || typeof record !== "object") return;
+    if (!record.entries || typeof record.entries !== "object") record.entries = {};
+    if (record.entries[canonical] && typeof record.entries[canonical] === "object") return;
+    for (const key of keys) {
+      if (key === canonical) continue;
+      const candidate = record.entries[key];
+      if (candidate && typeof candidate === "object") {
+        record.entries[canonical] = candidate;
+        changed = true;
+        break;
+      }
+    }
+  });
+  return changed;
+}
+
 function persistLocalMetaState() {
   if (accountSignedIn()) return;
   localStorage.setItem("ezra_missions", JSON.stringify(state.missions || defaultMissionState()));
@@ -8378,6 +8429,10 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
         }
         state.account.user = hydrateUserAvatarState(bootPayload.user || state.account.user);
         applyCloudState(bootPayload.state || {}, { strict: true });
+        if (migratePredictionEntryKeysForCurrentUser()) {
+          persistLocalMetaState();
+          scheduleCloudStateSync();
+        }
         state.challengeDashboard = bootPayload.dashboard || null;
         state.challengeDashboardAt = Date.now();
         mergeChallengeSeasonIntoLeagueDirectory(state.challengeDashboard);
@@ -9319,6 +9374,7 @@ function canPredictFixture(event, stateInfo) {
 function settleFamilyPredictions() {
   ensureFamilyLeagueState();
   if (!accountSignedIn()) return false;
+  migratePredictionEntryKeysForCurrentUser();
   const currentId = currentFamilyMemberId();
   const eventsById = allKnownEventsById();
   let changed = false;
@@ -9377,10 +9433,8 @@ function settleFamilyPredictions() {
 function currentUserPredictionForEvent(event) {
   if (!event?.idEvent) return null;
   ensureFamilyLeagueState();
-  const memberId = currentFamilyMemberId();
-  if (!memberId) return null;
   const record = state.familyLeague.predictions?.[event.idEvent];
-  const pick = record?.entries?.[memberId];
+  const pick = resolveMemberPickForRecord(record).pick;
   if (!pick) return null;
   return { record, pick };
 }
@@ -9437,7 +9491,7 @@ function buildPredictionModule(event, stateInfo) {
   const currentId = currentFamilyMemberId();
   const activeMember = accountSignedIn() ? { id: currentId, name: state.account.user?.name || "You" } : null;
   const record = ensurePredictionRecord(event);
-  const memberPick = activeMember && record ? record.entries?.[currentId] : null;
+  const memberPick = activeMember && record ? resolveMemberPickForRecord(record).pick : null;
   const canPredict = canPredictFixture(event, stateInfo) && Boolean(activeMember) && Boolean(record && !record.settled);
   const isCompleted = stateInfo?.key === "final";
   const showReadonly = Boolean(memberPick) && (isCompleted || !canPredict);

@@ -1016,17 +1016,24 @@ function normalizeTeamIdToken(value) {
   return /^fallback:/i.test(raw) ? "" : raw;
 }
 
-function predictionEntriesForUser(state, userId) {
+function predictionEntriesForUser(state, userId, userName = "") {
   const predictions = state?.familyLeague?.predictions;
   if (!predictions || typeof predictions !== "object") return [];
-  const memberKey = `acct:${String(userId || "")}`;
+  const userIdText = String(userId || "").trim();
+  const userNameText = String(userName || state?.account?.user?.name || "").trim();
+  const candidateKeys = [
+    userIdText ? `acct:${userIdText}` : "",
+    userIdText,
+    userNameText ? `acct:${userNameText}` : "",
+    userNameText,
+  ].filter(Boolean);
   const rows = [];
   for (const record of Object.values(predictions)) {
     if (!record || typeof record !== "object") continue;
     const eventId = String(record.eventId || "").trim();
     if (!eventId) continue;
     const entries = record.entries && typeof record.entries === "object" ? record.entries : {};
-    const pick = entries[memberKey] || null;
+    const pick = candidateKeys.map((key) => entries[key]).find((value) => value && typeof value === "object") || null;
     if (!pick || typeof pick !== "object") continue;
     const home = numericScore(pick.home);
     const away = numericScore(pick.away);
@@ -1634,12 +1641,13 @@ async function syncLeagueScoresFromStates(db, code, key) {
 
   await Promise.all(
     ids.map(async (userId) => {
+      const userRow = await db.prepare("SELECT name FROM ezra_users WHERE id = ?1 LIMIT 1").bind(userId).first();
       const row = await db
         .prepare("SELECT state_json FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
         .bind(userId)
         .first();
       const state = safeParseJsonText(row?.state_json || "{}");
-      const predictionRows = predictionEntriesForUser(state, userId);
+      const predictionRows = predictionEntriesForUser(state, userId, String(userRow?.name || ""));
       const ordered = [...predictionRows].sort((a, b) => String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || "")));
       let predictionPoints = 0;
       let seasonPoints = 0;
@@ -3070,15 +3078,24 @@ async function handleLeagueMemberView(db, request, key) {
     .bind(code, session.user_id)
     .first();
   const state = safeParseJsonText(stateRow?.state_json || "{}");
-  const memberId = `acct:${userId}`;
+  const memberKeys = [
+    `acct:${String(userId || "").trim()}`,
+    String(userId || "").trim(),
+    `acct:${String(userRow?.name || "").trim()}`,
+    String(userRow?.name || "").trim(),
+  ].filter(Boolean);
   const allPredictions = state?.familyLeague?.predictions && typeof state.familyLeague.predictions === "object" ? state.familyLeague.predictions : {};
   const resultCache = new Map();
   const predictions = (
     await Promise.all(
       Object.values(allPredictions)
-        .filter((record) => record && typeof record === "object" && record.entries && typeof record.entries === "object" && record.entries[memberId])
+        .filter((record) => {
+          if (!record || typeof record !== "object") return false;
+          if (!record.entries || typeof record.entries !== "object") return false;
+          return memberKeys.some((key) => record.entries[key] && typeof record.entries[key] === "object");
+        })
         .map(async (record) => {
-          const pick = record.entries[memberId] || {};
+          const pick = memberKeys.map((key) => record.entries[key]).find((value) => value && typeof value === "object") || {};
           const pickHome = Number.isFinite(Number(pick.home)) ? Number(pick.home) : null;
           const pickAway = Number.isFinite(Number(pick.away)) ? Number(pick.away) : null;
           const eventId = String(record.eventId || "");
