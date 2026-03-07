@@ -1,0 +1,47 @@
+{
+  "dialogues": {
+    "starttown_sign_welcome": [
+      "Welcome to West Hull - Tidal Quarter.",
+      "Skyspan Crossing to the west. Founders District eastbound."
+    ],
+    "marina_sign": [
+      "Marina Edge Route: Boardwalk slick in rain.",
+      "Keep Fog Lanterns ready at dusk.",
+      "Abyssal Institute exhibits open along the waterfront."
+    ],
+    "founders_sign": [
+      "Founders Lane: cobbles, stories, and strange echoes.",
+      "Greenwood Hollow paths branch north from here."
+    ],
+    "trialhall_sign": [
+      "Arena of Tides Cultural Trial hosted inside."
+    ],
+    "pq_exterior_sign": [
+      "Princes Quay Waterfront Entrance.",
+      "Centre sits over the water basin."
+    ],
+    "pq_topdeck_food": [
+      "Top Deck Food Court ->",
+      "Chip Spice stall and pattie counter open until late."
+    ],
+    "pq_topdeck_cinema": [
+      "Cinema Screens 1-4 upstairs. Keep your cinema stub."
+    ],
+    "pq_interior_water": [
+      "Look over the railing - water below the structure is visible at high tide."
+    ],
+    "pq_interior_meeting": [
+      "Meeting Point: by the central clock, same as always."
+    ],
+    "pq_interior_topdeck": [
+      "Escalators up to Top Deck seating and food terrace."
+    ],
+    "ronnie_intro": [
+      "A local legend squints at you.",
+      "Ronnie Pickering?"
+    ],
+    "ronnie_reply": [
+      "Yeah. Me."
+    ]
+  }
+}

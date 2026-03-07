@@ -1,0 +1,11 @@
+{
+  "name": "hullbound-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 8787",
+    "test": "node tests/validate_data.mjs && node tests/validate_encounters.mjs && node tests/validate_save_schema.mjs",
+    "deploy:pages": "npx wrangler pages deploy . --project-name hullbound-web"
+  }
+}

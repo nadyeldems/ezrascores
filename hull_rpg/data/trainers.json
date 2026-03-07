@@ -1,0 +1,14 @@
+{
+  "trainers": [
+    {
+      "id": "lumi_trial",
+      "name": "Lumi",
+      "title": "Cultural Trial Keeper",
+      "party": [
+        {"creature":"stormhound","level":16,"moves":["grid_lunge","mind_arc","thunder_crown"]},
+        {"creature":"lumi","level":18,"moves":["mind_arc","thunder_crown","beacon_flash"]}
+      ],
+      "reward_item":"founders_key"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+:root {
+  --bg: #0f1f2f;
+  --ink: #f1f5f9;
+  --panel: #1d2b37;
+  --accent: #f2c14d;
+  --danger: #d64545;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  background: radial-gradient(circle at 20% 10%, #21435f, #0a121b 60%);
+}
+.app { max-width: 1140px; margin: 0 auto; padding: 8px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.topbar h1 { margin: 4px 0; font-size: 1.2rem; letter-spacing: 0.02em; }
+.hud { display: flex; gap: 10px; font-size: 0.9rem; }
+.game-wrap { position: relative; }
+#game { width: 100%; height: auto; border: 3px solid #d8e1ea33; border-radius: 8px; image-rendering: pixelated; background: #08131f; }
+.panel {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 3%;
+  background: color-mix(in srgb, var(--panel) 92%, black 8%);
+  border: 2px solid #ffffff33;
+  border-radius: 10px;
+  padding: 10px;
+}
+.hidden { display: none; }
+#dialogue-text, #battle-log { margin: 0 0 8px; white-space: pre-wrap; }
+.choices, .battle-buttons, .menu-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+button {
+  border: 1px solid #ffffff44;
+  background: #223548;
+  color: var(--ink);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+button:hover { background: #2e4860; }
+.hint { margin: 6px 0 0; opacity: 0.8; font-size: 0.85rem; }
+.menu h2 { margin: 0 0 8px; font-size: 1rem; }
+.touch-controls {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  gap: 6px;
+}
+.touch-controls button { width: 44px; height: 44px; opacity: 0.88; }
+
+@media (min-width: 900px) {
+  .touch-controls { opacity: 0.4; }
+}

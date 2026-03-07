@@ -1,0 +1,27 @@
+{
+  "tables": {
+    "Route01_MarinaEdge": [
+      {"creature":"spratlet","weight":25,"min_level":3,"max_level":5},
+      {"creature":"gullbit","weight":20,"min_level":3,"max_level":5},
+      {"creature":"quayshade","weight":10,"min_level":4,"max_level":6},
+      {"creature":"sparkpup","weight":15,"min_level":3,"max_level":5},
+      {"creature":"mosskit","weight":20,"min_level":3,"max_level":5},
+      {"creature":"ferrylit","weight":10,"min_level":4,"max_level":6}
+    ],
+    "Route02_FoundersLane": [
+      {"creature":"mosskit","weight":25,"min_level":5,"max_level":8},
+      {"creature":"brickettle","weight":20,"min_level":6,"max_level":8},
+      {"creature":"sparkpup","weight":20,"min_level":5,"max_level":8},
+      {"creature":"ragwyrm","weight":10,"min_level":7,"max_level":9},
+      {"creature":"dockfin","weight":15,"min_level":6,"max_level":8},
+      {"creature":"gullbit","weight":10,"min_level":5,"max_level":7}
+    ]
+  },
+  "disabled_scenes": [
+    "StartTown_West",
+    "TrialHall_West",
+    "PrincesQuay_Exterior",
+    "PrincesQuay_TopDeck",
+    "PrincesQuay_Interior"
+  ]
+}
