@@ -3907,6 +3907,7 @@ async function handleCronNormalizePredictions(db, request, env) {
 async function handleEzraAdminRoute(context, adminPath) {
   const { request, env } = context;
   const db = env.EZRA_DB;
+  const key = String(env?.SPORTSDB_KEY || "074910");
   if (!db) {
     return json({ error: "Account storage not configured. Add D1 binding EZRA_DB." }, 503);
   }
