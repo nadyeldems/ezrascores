@@ -2066,6 +2066,8 @@ const state = {
     bootstrapInFlight: false,
     bootstrapPromise: null,
     bootstrapRetryTimer: null,
+    restoreAttemptSeq: 0,
+    activeRestoreAttempt: 0,
     restoreAuthFailures: 0,
     restoreAuthFirstAt: 0,
     lastRenderedAvatarHash: "",
@@ -2749,6 +2751,16 @@ function setAccountStatus(text, isError = false) {
   if (!el.accountStatus) return;
   el.accountStatus.textContent = text;
   el.accountStatus.classList.toggle("error", Boolean(isError));
+}
+
+function nextAccountRestoreAttempt() {
+  state.account.restoreAttemptSeq = Number(state.account.restoreAttemptSeq || 0) + 1;
+  state.account.activeRestoreAttempt = state.account.restoreAttemptSeq;
+  return state.account.activeRestoreAttempt;
+}
+
+function isActiveAccountRestoreAttempt(attemptId) {
+  return Number(attemptId || 0) > 0 && Number(state.account.activeRestoreAttempt || 0) === Number(attemptId || 0);
 }
 
 function setAvatarSaveState(mode, message = "") {
@@ -8393,6 +8405,7 @@ async function loadCloudState() {
 
 async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
   const allowCookieRestore = Boolean(options?.allowCookieRestore);
+  const attemptId = Number(options?.attemptId || state.account.activeRestoreAttempt || 0);
   if (!accountSignedIn() && !allowCookieRestore) return { ok: false, partialWarning: true };
   if (state.account.bootstrapPromise) {
     return state.account.bootstrapPromise;
@@ -8407,6 +8420,9 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
     renderAccountUI();
     let partialWarning = false;
     try {
+      if (attemptId && !isActiveAccountRestoreAttempt(attemptId)) {
+        return { ok: false, stale: true, partialWarning: true };
+      }
       resetAccountScopedLocalState();
       let bootPayload = null;
       try {
@@ -8418,6 +8434,9 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
         } else {
           throw err;
         }
+      }
+      if (attemptId && !isActiveAccountRestoreAttempt(attemptId)) {
+        return { ok: false, stale: true, partialWarning: true };
       }
       if (bootPayload && typeof bootPayload === "object") {
         if (bootPayload.token) {
@@ -8483,8 +8502,10 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
       renderAccountUI();
       throw err;
     } finally {
-      state.account.bootstrapInFlight = false;
-      state.account.bootstrapPromise = null;
+      if (!attemptId || isActiveAccountRestoreAttempt(attemptId)) {
+        state.account.bootstrapInFlight = false;
+        state.account.bootstrapPromise = null;
+      }
     }
   })();
   state.account.bootstrapPromise = promise;
@@ -8580,6 +8601,7 @@ async function flushAccountPointsSync() {
 }
 
 async function initAccountSession() {
+  const attemptId = nextAccountRestoreAttempt();
   renderAccountUI();
   state.account.keepLoggedIn = resolveKeepLoggedInFromStorage();
   if (el.accountKeepLoggedIn) el.accountKeepLoggedIn.checked = Boolean(state.account.keepLoggedIn);
@@ -8593,6 +8615,8 @@ async function initAccountSession() {
     storeAccountToken(state.account.token, true);
   }
   const finalizeSignedOut = async (message) => {
+    if (!isActiveAccountRestoreAttempt(attemptId)) return;
+    state.account.activeRestoreAttempt = 0;
     clearAccountBootstrapRetryTimer();
     state.account.bootstrapInFlight = false;
     state.account.bootstrapPromise = null;
@@ -8613,7 +8637,7 @@ async function initAccountSession() {
   };
   const bootstrapWithTimeout = async (contextLabel, options = {}, timeoutMs = 8000) => {
     return await Promise.race([
-      runPostAuthBootstrap(contextLabel, options),
+      runPostAuthBootstrap(contextLabel, { ...options, attemptId }),
       new Promise((resolve) => setTimeout(() => resolve({ ok: false, timedOut: true }), timeoutMs)),
     ]);
   };
@@ -8628,6 +8652,7 @@ async function initAccountSession() {
       () => bootstrapWithTimeout("Session restored", { allowCookieRestore: true }),
       null
     );
+    if (!isActiveAccountRestoreAttempt(attemptId)) return;
     if (restoredViaCookie?.ok && state.account?.user?.id) {
       state.account.restoreAuthFailures = 0;
       state.account.restoreAuthFirstAt = 0;
@@ -8654,6 +8679,7 @@ async function initAccountSession() {
       await new Promise((resolve) => setTimeout(resolve, 650));
     }
   }
+  if (!isActiveAccountRestoreAttempt(attemptId)) return;
   if (!mePayload?.user) {
     if (isSessionAuthError(meError)) {
       if (state.account.keepLoggedIn) {
@@ -8661,6 +8687,7 @@ async function initAccountSession() {
           () => bootstrapWithTimeout("Session restored", { allowCookieRestore: true }),
           null
         );
+        if (!isActiveAccountRestoreAttempt(attemptId)) return;
         if (restoredViaCookie?.ok && state.account?.user?.id) {
           state.account.restoreAuthFailures = 0;
           state.account.restoreAuthFirstAt = 0;
@@ -8683,11 +8710,13 @@ async function initAccountSession() {
   resumePendingLeagueInvitePrompt();
   renderFamilyLeaguePanel();
   safeLoad(async () => {
-    const result = await runPostAuthBootstrap("Session restored");
+    const result = await runPostAuthBootstrap("Session restored", { attemptId });
+    if (!isActiveAccountRestoreAttempt(attemptId)) return null;
     const partialWarning = Boolean(result?.partialWarning);
     if (partialWarning) {
       setAccountStatus(`Cloud save active for ${state.account.user?.name || "user"}. Some sections are still loading; retry in a moment.`);
     }
+    return result;
   }, null);
 }
 
@@ -8871,6 +8900,7 @@ function randomizeAccountAvatar() {
 }
 
 async function logoutAccount() {
+  state.account.activeRestoreAttempt = 0;
   if (state.account.token) {
     await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/logout`, {}, state.account.token).catch(() => null);
   }
@@ -12639,14 +12669,6 @@ function attachEvents() {
   document.addEventListener("click", (e) => {
     if (el.settingsMenu && !el.settingsMenu.contains(e.target)) {
       setSettingsMenuOpen(false);
-    }
-    if (state.accountMenuOpen) {
-      const insideAccount =
-        Boolean(el.accountPanel && el.accountPanel.contains(e.target)) ||
-        Boolean(el.accountToggleBtn && el.accountToggleBtn.contains(e.target));
-      if (!insideAccount) {
-        setAccountMenuOpen(false);
-      }
     }
     if (el.notificationsMenu && !el.notificationsMenu.contains(e.target)) {
       setNotificationsOpen(false);
