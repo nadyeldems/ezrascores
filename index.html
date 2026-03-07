@@ -71,37 +71,66 @@
         <div class="hero-actions">
           <div class="settings-menu" id="settings-menu">
             <button id="settings-toggle-btn" class="btn feature-btn settings-cog-btn" type="button" aria-expanded="false" aria-label="Settings">⚙</button>
-            <div id="settings-panel" class="settings-panel hidden">
+            <div id="settings-panel" class="settings-panel settings-drawer hidden">
+              <div class="settings-drawer-head">
+                <p class="settings-label">Settings</p>
+                <button id="settings-close-btn" class="btn settings-drawer-close" type="button" aria-label="Close settings">✕</button>
+              </div>
               <div class="settings-group">
-                <p class="settings-label">Theme</p>
+                <p class="settings-label settings-section-label">Display</p>
                 <div class="theme-toggle" role="tablist" aria-label="UI theme">
                   <button class="btn theme-btn active" type="button" data-theme="classic">Classic</button>
                   <button class="btn theme-btn" type="button" data-theme="club">Favourite Team</button>
                 </div>
               </div>
               <div class="settings-group">
-                <p class="settings-label">Player Pop</p>
+                <p class="settings-label settings-section-label">Notifications</p>
+                <label class="settings-toggle-row">
+                  <span>Goal alerts</span>
+                  <input type="checkbox" id="notif-pref-goals" class="notif-pref-toggle" data-pref="goals" checked />
+                </label>
+                <label class="settings-toggle-row">
+                  <span>Quest reminders</span>
+                  <input type="checkbox" id="notif-pref-quests" class="notif-pref-toggle" data-pref="quests" checked />
+                </label>
+                <label class="settings-toggle-row">
+                  <span>League updates</span>
+                  <input type="checkbox" id="notif-pref-league" class="notif-pref-toggle" data-pref="league" checked />
+                </label>
+              </div>
+              <div class="settings-group">
+                <p class="settings-label settings-section-label">Player Pop</p>
                 <div class="player-source-toggle" role="tablist" aria-label="Player source">
                   <button class="btn player-source-btn active" type="button" data-player-source="any">Any Team</button>
-                  <button class="btn player-source-btn" type="button" data-player-source="favorite">Favourite Team Only</button>
+                  <button class="btn player-source-btn" type="button" data-player-source="favorite">Favourite Only</button>
                 </div>
               </div>
               <div class="settings-group">
-                <p class="settings-label">Debug</p>
+                <p class="settings-label settings-section-label">Debug</p>
                 <button id="debug-goal-btn" class="btn debug-btn" type="button">Trigger Goal Animation</button>
               </div>
             </div>
+            <div id="settings-save-toast" class="settings-save-toast hidden" aria-live="polite"></div>
           </div>
           <div class="account-menu" id="account-menu">
             <button id="account-toggle-btn" class="btn feature-btn settings-cog-btn account-avatar-btn" type="button" aria-expanded="false" aria-label="Account">
               <img id="account-toggle-avatar" class="account-toggle-avatar hidden" alt="Account avatar" />
               <span id="account-toggle-avatar-fallback" class="account-toggle-avatar-fallback">👤</span>
             </button>
-            <div id="account-panel" class="settings-panel hidden">
+            <div id="account-panel" class="settings-panel account-drawer hidden">
               <div class="settings-group">
-                <div class="panel-head compact-head">
-                  <p class="settings-label">Account (optional cloud save)</p>
-                  <button id="account-close-btn" class="btn" type="button" aria-label="Close account panel">✕</button>
+                <div class="panel-head compact-head account-drawer-head">
+                  <p class="settings-label">Account</p>
+                  <button id="account-close-btn" class="btn account-drawer-close" type="button" aria-label="Close account panel">✕</button>
+                </div>
+                <!-- Identity strip — visible only when signed in -->
+                <div id="account-identity-strip" class="account-identity-strip hidden">
+                  <img id="account-identity-avatar" class="account-identity-avatar hidden" alt="Your avatar" />
+                  <span id="account-identity-avatar-fallback" class="account-identity-avatar-fallback">👤</span>
+                  <div class="account-identity-meta">
+                    <span id="account-identity-name" class="account-identity-name"></span>
+                    <span id="account-identity-pts" class="account-identity-pts"></span>
+                  </div>
                 </div>
                 <div id="account-progress" class="account-progress hidden" aria-live="polite">
                   <div class="account-spinner" aria-hidden="true"></div>
@@ -407,12 +436,16 @@
               <div class="fun-guide hidden">
                 Live league moments: perfect scorelines, rank jumps, and friends you follow.
               </div>
+              <div id="follow-requests-banner" class="follow-requests-banner hidden" role="alert">
+                <span class="follow-req-icon">👥</span>
+                <span id="follow-requests-count" class="follow-req-text">Follow requests</span>
+                <button id="follow-requests-expand-btn" class="btn btn-inline follow-req-expand-btn" type="button">View</button>
+              </div>
               <div id="social-feed-tabs" class="account-actions">
                 <button class="btn btn-inline social-feed-tab active" type="button" data-feed-scope="all">All</button>
                 <button class="btn btn-inline social-feed-tab" type="button" data-feed-scope="following">Following</button>
                 <button class="btn btn-inline social-feed-tab" type="button" data-feed-scope="league">League</button>
               </div>
-              <p class="muted">Follow requests</p>
               <div id="social-follow-requests" class="list"></div>
               <p class="muted">Activity stream</p>
               <div id="social-feed-list" class="list"></div>

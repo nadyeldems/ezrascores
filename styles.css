@@ -556,6 +556,7 @@ body[data-theme="club"] .footer {
   right: 0;
 }
 
+/* ── Account drawer (right-edge slide-in) ── */
 body.account-modal-open {
   overflow: hidden;
 }
@@ -564,27 +565,150 @@ body.account-modal-open::before {
   content: "";
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.62);
+  background: rgba(0, 0, 0, 0.55);
   z-index: 980;
-  pointer-events: none;
+  pointer-events: auto;   /* backdrop catches clicks to close */
+  cursor: pointer;
 }
 
 body.account-modal-open .account-menu {
   z-index: 1010;
 }
 
-body.account-modal-open .account-menu .settings-panel {
+/* Right-edge drawer override: replaces the old centered modal */
+body.account-modal-open .account-menu .settings-panel.account-drawer {
   position: fixed;
-  left: 50%;
-  right: auto;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(560px, calc(100vw - 1.2rem));
-  max-height: min(82vh, 780px);
-  overflow: auto;
+  inset: 0 0 0 auto;      /* flush to right edge */
+  top: 0;
+  right: 0;
+  left: auto;
+  width: min(400px, 100vw);
+  max-height: 100dvh;
+  height: 100dvh;
+  border-radius: 16px 0 0 16px;
+  overflow-y: auto;
   z-index: 1000;
-  box-shadow: 0 0 0 1px rgba(255, 153, 32, 0.22), 0 28px 60px rgba(0, 0, 0, 0.56);
+  box-shadow: -4px 0 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 153, 32, 0.18);
   pointer-events: auto;
+  transform: translateX(0);
+  animation: drawer-slide-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes drawer-slide-in {
+  from { transform: translateX(100%); opacity: 0.7; }
+  to   { transform: translateX(0);   opacity: 1;   }
+}
+
+/* Settings drawer: same right-edge treatment for the settings panel */
+body.settings-drawer-open .settings-menu .settings-panel.settings-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  top: 0;
+  right: 0;
+  left: auto;
+  width: min(360px, 100vw);
+  max-height: 100dvh;
+  height: 100dvh;
+  border-radius: 16px 0 0 16px;
+  overflow-y: auto;
+  z-index: 1000;
+  box-shadow: -4px 0 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 153, 32, 0.18);
+  pointer-events: auto;
+  animation: drawer-slide-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+body.settings-drawer-open {
+  overflow: hidden;
+}
+
+body.settings-drawer-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  z-index: 980;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+body.settings-drawer-open .settings-menu {
+  z-index: 1010;
+}
+
+/* Drawer head bar */
+.account-drawer-head,
+.settings-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.1rem 0 0.6rem;
+  margin-bottom: 0.3rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.account-drawer-close,
+.settings-drawer-close {
+  min-width: 2rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  opacity: 0.7;
+}
+.account-drawer-close:hover,
+.settings-drawer-close:hover { opacity: 1; }
+
+/* Settings section labels */
+.settings-section-label {
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.07em;
+  color: var(--text-soft);
+  margin-bottom: 0.45rem;
+}
+
+/* Settings notification preference toggles */
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.28rem 0;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.settings-toggle-row input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--amber, #ff9820);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Settings save micro-toast */
+.settings-save-toast {
+  position: fixed;
+  bottom: 1.2rem;
+  right: 1.2rem;
+  background: rgba(20, 14, 4, 0.96);
+  border: 1px solid rgba(255, 153, 32, 0.38);
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.88rem;
+  color: var(--amber, #ff9820);
+  z-index: 1200;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+  animation: toast-pop 0.18s ease both;
+}
+.settings-save-toast.hidden { display: none !important; }
+
+@keyframes toast-pop {
+  from { transform: translateY(0.5rem); opacity: 0; }
+  to   { transform: translateY(0);      opacity: 1; }
 }
 
 .notifications-menu .settings-panel {
@@ -621,21 +745,93 @@ body.account-modal-open .account-menu .settings-panel {
 }
 
 .notification-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
   border: 1px solid var(--line-soft);
+  border-left: 3px solid transparent;   /* overridden for unread */
   border-radius: 0.6rem;
   background: rgba(255, 153, 32, 0.05);
-  padding: 0.35rem 0.42rem;
+  padding: 0.38rem 0.48rem 0.38rem 0.42rem;
+  transition: background 0.15s;
+}
+
+/* Unread highlight — cleared when panel is opened */
+.notification-row.unread {
+  border-left-color: var(--amber, #ff9820);
+  background: rgba(255, 153, 32, 0.1);
 }
 
 .notification-row p {
   margin: 0;
-  line-height: 1.1;
+  line-height: 1.15;
+  flex: 1;
+  min-width: 0;
+}
+
+.notif-icon {
+  font-size: 0.95rem;
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+  line-height: 1;
 }
 
 .notification-time {
   color: var(--text-soft);
-  font-size: 0.9rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  margin-top: 0.08rem;
 }
+
+/* Notification clear undo row */
+.notif-undo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.1rem;
+  font-size: 0.88rem;
+  color: var(--text-soft);
+  animation: toast-pop 0.15s ease both;
+}
+
+.notif-undo-btn {
+  font-size: 0.88rem;
+  padding: 0.2rem 0.6rem;
+  min-height: unset;
+  border-color: var(--amber, #ff9820);
+  color: var(--amber, #ff9820);
+}
+
+/* ── Follow requests banner ── */
+.follow-requests-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 153, 32, 0.1);
+  border: 1px solid rgba(255, 153, 32, 0.35);
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.65rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.92rem;
+}
+
+.follow-req-icon { font-size: 1rem; }
+
+.follow-req-text {
+  flex: 1;
+  color: var(--text);
+}
+
+.follow-req-expand-btn {
+  font-size: 0.82rem;
+  padding: 0.2rem 0.55rem;
+  min-height: unset;
+  flex-shrink: 0;
+}
+
+/* Follow requests list (collapsible state via hidden class) */
+#social-follow-requests.collapsed { display: none; }
 
 .lifetime-points-pill {
   margin: 0;
@@ -2093,6 +2289,54 @@ body.league-member-overlay-open::before {
 
 .pool-group .dream-actions-inline {
   justify-content: flex-end;
+}
+
+/* ── Account identity strip (shown when signed in) ── */
+.account-identity-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 0 0.8rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.account-identity-avatar {
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 0.45rem;
+  border: 1px solid rgba(255, 181, 84, 0.75);
+  object-fit: contain;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.3), #0f0703 72%);
+  flex-shrink: 0;
+}
+
+.account-identity-avatar-fallback {
+  font-size: 2rem;
+  width: 3.2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.account-identity-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.account-identity-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-identity-pts {
+  font-size: 0.85rem;
+  color: var(--amber, #ff9820);
 }
 
 .account-auth-box {

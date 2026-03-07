@@ -306,14 +306,16 @@ function selectGrantUser(user) {
 }
 
 function clearGrantUser() {
+  // Only clears the selected-user state and badge — NOT the input value,
+  // because this is called on every keystroke to reset selection while typing.
   state.grant.selectedUser = null;
-  if (el.grantUserInput) el.grantUserInput.value = "";
   if (el.grantUserSelected) el.grantUserSelected.classList.add("hidden");
   updateGrantPreview();
 }
 
 function clearGrantForm() {
   clearGrantUser();
+  if (el.grantUserInput) el.grantUserInput.value = "";   // explicit input clear on full reset
   if (el.grantPointsInput) el.grantPointsInput.value = "";
   if (el.grantReasonInput) el.grantReasonInput.value = "";
   if (el.grantPreview) el.grantPreview.classList.add("hidden");

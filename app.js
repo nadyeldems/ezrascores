@@ -2295,6 +2295,17 @@ const el = {
   socialFollowRequests: document.getElementById("social-follow-requests"),
   socialFeedList: document.getElementById("social-feed-list"),
   rivalryContent: document.getElementById("rivalry-content"),
+  followRequestsBanner: document.getElementById("follow-requests-banner"),
+  followRequestsCount: document.getElementById("follow-requests-count"),
+  followRequestsExpandBtn: document.getElementById("follow-requests-expand-btn"),
+  accountIdentityStrip: document.getElementById("account-identity-strip"),
+  accountIdentityAvatar: document.getElementById("account-identity-avatar"),
+  accountIdentityAvatarFallback: document.getElementById("account-identity-avatar-fallback"),
+  accountIdentityName: document.getElementById("account-identity-name"),
+  accountIdentityPts: document.getElementById("account-identity-pts"),
+  notifPrefToggles: [...document.querySelectorAll(".notif-pref-toggle")],
+  settingsSaveToast: document.getElementById("settings-save-toast"),
+  settingsCloseBtn: document.getElementById("settings-close-btn"),
   funZoneBody: document.getElementById("fun-zone-body"),
   mobileTabsPanel: document.getElementById("mobile-tabs-panel"),
   mobileTabButtons: [...document.querySelectorAll(".mobile-tab-btn")],
@@ -2435,6 +2446,7 @@ function setSettingsMenuOpen(open) {
   if (!el.settingsPanel || !el.settingsToggleBtn) return;
   el.settingsPanel.classList.toggle("hidden", !state.settingsOpen);
   el.settingsToggleBtn.setAttribute("aria-expanded", String(state.settingsOpen));
+  document.body.classList.toggle("settings-drawer-open", state.settingsOpen);
 }
 
 function setAccountMenuOpen(open) {
@@ -2458,6 +2470,8 @@ function ensureNotificationsState() {
   if (typeof state.notifications.lastGoalToken !== "string") state.notifications.lastGoalToken = "";
 }
 
+const NOTIF_ICONS = { goal: "⚽", quest: "🎯", league: "🏆", general: "📣" };
+
 function renderNotificationsPanel() {
   ensureNotificationsState();
   if (!el.notificationsList || !el.notificationsBadge) return;
@@ -2471,14 +2485,15 @@ function renderNotificationsPanel() {
     el.notificationsList.innerHTML = `<p class="muted">No notifications yet.</p>`;
   } else {
     el.notificationsList.innerHTML = items
-      .map(
-        (item) => `
-      <div class="notification-row">
-        <p>${escapeHtml(item.message || "")}</p>
-        <p class="notification-time">${escapeHtml(item.timeLabel || "")}</p>
-      </div>
-    `
-      )
+      .map((item) => {
+        const icon = NOTIF_ICONS[item.category] || NOTIF_ICONS.general;
+        const unreadClass = item.unread ? " unread" : "";
+        return `<div class="notification-row${unreadClass}">
+          <span class="notif-icon" aria-hidden="true">${icon}</span>
+          <p>${escapeHtml(item.message || "")}</p>
+          <p class="notification-time">${escapeHtml(item.timeLabel || "")}</p>
+        </div>`;
+      })
       .join("");
   }
   const unread = Math.max(0, Number(state.notifications?.unread || 0));
@@ -2494,16 +2509,34 @@ function setNotificationsOpen(open) {
     el.notificationsToggleBtn.setAttribute("aria-expanded", String(state.notificationsOpen));
   }
   if (state.notificationsOpen) {
-    if (state.notifications) state.notifications.unread = 0;
+    // Mark all items as read when the panel opens
+    if (state.notifications) {
+      state.notifications.unread = 0;
+      if (Array.isArray(state.notifications.items)) {
+        state.notifications.items.forEach((item) => { item.unread = false; });
+      }
+    }
     persistNotificationsState();
     renderNotificationsPanel();
   }
+}
+
+function getNotifPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem("ezra_notif_prefs") || "{}");
+  } catch { return {}; }
 }
 
 function addNotification(message, meta = {}) {
   ensureNotificationsState();
   const text = String(message || "").trim();
   if (!text) return;
+  // Respect notification preferences — skip suppressed categories
+  const category = String(meta.category || "general");
+  const prefs = getNotifPrefs();
+  const PREF_KEYS = { goal: "goals", quest: "quests", league: "league" };
+  const prefKey = PREF_KEYS[category];
+  if (prefKey && prefs[prefKey] === false) return;
   if (!state.notifications || typeof state.notifications !== "object") {
     state.notifications = defaultNotificationsState();
   }
@@ -2511,7 +2544,8 @@ function addNotification(message, meta = {}) {
   const item = {
     id: `${now.getTime()}:${Math.random().toString(36).slice(2, 8)}`,
     message: text,
-    category: String(meta.category || "general"),
+    category,
+    unread: true,  // will be cleared when the panel is opened
     timeIso: now.toISOString(),
     timeLabel: now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
   };
@@ -2989,6 +3023,30 @@ function renderAccountUI() {
   if (el.avatarBuilderSignedOut) el.avatarBuilderSignedOut.classList.toggle("hidden", signedIn);
   if (el.avatarBuilderSignedIn) el.avatarBuilderSignedIn.classList.toggle("hidden", !signedIn);
   renderAccountAvatarButton(signedIn);
+  // Identity strip — shown only when signed in
+  if (el.accountIdentityStrip) {
+    el.accountIdentityStrip.classList.toggle("hidden", !signedIn);
+    if (signedIn && el.accountIdentityName) {
+      el.accountIdentityName.textContent = state.account.user?.name || "";
+      const pts = Number(state.challengeDashboard?.lifetimePoints ?? state.account.user?.lifetimePoints ?? 0);
+      if (el.accountIdentityPts) {
+        el.accountIdentityPts.textContent = Number.isFinite(pts) ? `${pts} pts` : "";
+      }
+      // Mirror the avatar into the identity strip
+      const avatarSrc = el.accountToggleAvatar?.src;
+      const hasAvatar = el.accountToggleAvatar && !el.accountToggleAvatar.classList.contains("hidden");
+      if (el.accountIdentityAvatar && el.accountIdentityAvatarFallback) {
+        if (hasAvatar && avatarSrc) {
+          el.accountIdentityAvatar.src = avatarSrc;
+          el.accountIdentityAvatar.classList.remove("hidden");
+          el.accountIdentityAvatarFallback.classList.add("hidden");
+        } else {
+          el.accountIdentityAvatar.classList.add("hidden");
+          el.accountIdentityAvatarFallback.classList.remove("hidden");
+        }
+      }
+    }
+  }
   if (signedIn) {
     el.accountUserLabel.textContent = `Signed in as ${state.account.user.name}`;
     if (el.accountEmailManageInput) {
@@ -5110,6 +5168,18 @@ function renderSocialPanels() {
       btn.setAttribute("aria-pressed", scope === active ? "true" : "false");
     });
   }
+  // Follow requests banner — surfaces pending requests above feed tabs
+  if (el.followRequestsBanner) {
+    const incoming = accountSignedIn()
+      ? (Array.isArray(state.socialFeed.pendingIncoming) ? state.socialFeed.pendingIncoming : [])
+      : [];
+    el.followRequestsBanner.classList.toggle("hidden", incoming.length === 0);
+    if (incoming.length > 0 && el.followRequestsCount) {
+      const n = incoming.length;
+      el.followRequestsCount.textContent = `${n} follow request${n !== 1 ? "s" : ""}`;
+    }
+  }
+
   if (el.socialFollowRequests) {
     if (!accountSignedIn()) {
       el.socialFollowRequests.innerHTML = "";
@@ -12576,11 +12646,77 @@ function attachEvents() {
   }
 
   if (el.notificationsClearBtn) {
+    let clearUndoTimer = null;
     el.notificationsClearBtn.addEventListener("click", () => {
+      ensureNotificationsState();
+      const backup = (state.notifications.items || []).slice();
+      const backupUnread = state.notifications.unread || 0;
       state.notifications.items = [];
       state.notifications.unread = 0;
       persistNotificationsState();
-      renderNotificationsPanel();
+      // Show undo row instead of immediately finalising
+      if (clearUndoTimer) clearTimeout(clearUndoTimer);
+      if (el.notificationsList) {
+        el.notificationsList.innerHTML = `
+          <div class="notif-undo-row">
+            <span>Notifications cleared</span>
+            <button class="btn notif-undo-btn" type="button">Undo</button>
+          </div>`;
+        const undoBtn = el.notificationsList.querySelector(".notif-undo-btn");
+        const commit = () => { renderNotificationsPanel(); };
+        const undo = () => {
+          clearTimeout(clearUndoTimer);
+          state.notifications.items = backup;
+          state.notifications.unread = backupUnread;
+          persistNotificationsState();
+          renderNotificationsPanel();
+        };
+        undoBtn?.addEventListener("click", (e) => { e.stopPropagation(); undo(); });
+        clearUndoTimer = setTimeout(commit, 3500);
+      }
+      el.notificationsBadge?.classList.add("hidden");
+    });
+  }
+
+  // Settings close button (drawer)
+  if (el.settingsCloseBtn) {
+    el.settingsCloseBtn.addEventListener("click", () => setSettingsMenuOpen(false));
+  }
+
+  // Notification preferences — persist to localStorage and show micro-toast
+  let settingsToastTimer = null;
+  function showSettingsSaveToast(msg = "Saved") {
+    if (!el.settingsSaveToast) return;
+    if (settingsToastTimer) clearTimeout(settingsToastTimer);
+    el.settingsSaveToast.textContent = msg;
+    el.settingsSaveToast.classList.remove("hidden");
+    settingsToastTimer = setTimeout(() => {
+      el.settingsSaveToast?.classList.add("hidden");
+    }, 1800);
+  }
+
+  el.notifPrefToggles.forEach((toggle) => {
+    const pref = toggle.dataset.pref;
+    // Restore persisted value
+    const prefs = getNotifPrefs();
+    if (pref && Object.prototype.hasOwnProperty.call(prefs, pref)) {
+      toggle.checked = Boolean(prefs[pref]);
+    }
+    toggle.addEventListener("change", () => {
+      const current = getNotifPrefs();
+      current[pref] = toggle.checked;
+      localStorage.setItem("ezra_notif_prefs", JSON.stringify(current));
+      showSettingsSaveToast(toggle.checked ? `${toggle.closest("label")?.querySelector("span")?.textContent || pref} on` : `${toggle.closest("label")?.querySelector("span")?.textContent || pref} off`);
+    });
+  });
+
+  // Follow requests banner expand/collapse
+  if (el.followRequestsExpandBtn) {
+    let reqExpanded = false;
+    el.followRequestsExpandBtn.addEventListener("click", () => {
+      reqExpanded = !reqExpanded;
+      el.socialFollowRequests?.classList.toggle("collapsed", !reqExpanded);
+      el.followRequestsExpandBtn.textContent = reqExpanded ? "Hide" : "View";
     });
   }
 
@@ -12756,6 +12892,14 @@ function attachEvents() {
     }
     if (state.accountMenuOpen) {
       setAccountMenuOpen(false);
+      return;
+    }
+    if (state.settingsOpen) {
+      setSettingsMenuOpen(false);
+      return;
+    }
+    if (state.notificationsOpen) {
+      setNotificationsOpen(false);
       return;
     }
     closeFavoritePickerMenu();
