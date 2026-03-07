@@ -2326,6 +2326,39 @@ async function handleAdminUsersOverview(db, env, request) {
   );
 }
 
+// Force-rescore every league: re-runs normalizer then settles all leagues.
+// Use this to restore points for all users after a key-migration fix.
+async function handleAdminRescoreAll(db, env, request, key) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+
+  // Reset the v2 normalizer done flag so it re-runs for any users it missed.
+  await setAppSetting(db, "prediction_key_normalizer_v2_done", "");
+  const normalizer = await runPredictionKeyNormalizerOnce(db);
+
+  // Force settle all leagues regardless of rate-limit / cooldown.
+  const rows = await db.prepare("SELECT code FROM ezra_leagues").all();
+  const codes = (rows?.results || []).map((r) => normalizeLeagueCode(r?.code)).filter(Boolean);
+  const results = [];
+  for (const code of codes) {
+    const r = await ensureLeagueScoresSettled(db, code, key, { force: true, minIntervalMs: 0 }).catch((err) => ({
+      settled: false,
+      error: String(err?.message || err),
+    }));
+    results.push({ code, ...r });
+  }
+  return json(
+    {
+      ok: true,
+      leaguesProcessed: codes.length,
+      leagues: results,
+      normalizer,
+      settledAt: new Date().toISOString(),
+    },
+    200
+  );
+}
+
 async function handleAdminLeagueVisibilityGet(db, env, request) {
   const auth = await adminAuth(request, env);
   if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
@@ -3077,6 +3110,44 @@ async function handleChallengeDashboard(db, request, key) {
   return json(dashboard, 200, { "Cache-Control": "no-store" });
 }
 
+// Fast single-user score recalculation — called on every bootstrap so the
+// lifetime score in ezra_user_scores is always up-to-date after login,
+// without depending on the cron or normalization detecting a change.
+async function recalcUserLifetimeScoreOnly(db, userId, userName, userState, sportsKey) {
+  const predictionRows = predictionEntriesForUser(userState, userId, userName);
+  const fallbackPoints = extractPointsFromState(userState, userId);
+  if (!predictionRows.length) {
+    if (fallbackPoints > 0) await upsertUserScore(db, userId, fallbackPoints);
+    return fallbackPoints;
+  }
+  const resultCache = new Map();
+  const ordered = [...predictionRows].sort((a, b) =>
+    String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || ""))
+  );
+  let points = 0;
+  let comboCount = 0;
+  for (const pick of ordered) {
+    const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, {
+      kickoffIso: pick.kickoffIso || "",
+    });
+    if (!result.final || result.home === null || result.away === null) continue;
+    const base =
+      pick.home === result.home && pick.away === result.away
+        ? 2
+        : predictionResultCode(pick.home, pick.away) === predictionResultCode(result.home, result.away)
+          ? 1
+          : 0;
+    if (base > 0) comboCount += 1;
+    else comboCount = 0;
+    const awarded = base > 0 ? (comboCount >= 3 ? base + 2 : comboCount === 2 ? base + 1 : base) : 0;
+    points += awarded;
+  }
+  const questBonusPoints = questBonusPointsFromState(userState, userId);
+  const total = Math.max(points + questBonusPoints, fallbackPoints);
+  await upsertUserScore(db, userId, total);
+  return total;
+}
+
 async function handleAccountBootstrap(db, request, key) {
   const { token, session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
@@ -3089,13 +3160,13 @@ async function handleAccountBootstrap(db, request, key) {
   const userState = safeParseJsonText(stateRow?.state_json || "{}");
   const normalizeResult = normalizePredictionEntriesForUserState(userState, session.user_id, String(session.name || ""));
   if (normalizeResult.changed) {
-    // Persist the re-keyed state immediately so the next settlement run and this
-    // bootstrap's score fetch both see predictions under the canonical key.
+    // Persist the re-keyed state immediately so the next settlement run sees
+    // predictions under the canonical key.
     await db
       .prepare("UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1")
       .bind(session.user_id, JSON.stringify(userState), new Date().toISOString())
       .run();
-    // Re-settle scores for every league this user is in so points are correct right now.
+    // Re-settle scores for every league this user is in so league standings update.
     const leagueMemberRows = await db
       .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1")
       .bind(session.user_id)
@@ -3107,6 +3178,11 @@ async function handleAccountBootstrap(db, request, key) {
       await syncLeagueScoresFromStates(db, leagueCode, key).catch(() => {});
     }
   }
+
+  // Always recalculate this user's personal lifetime score directly from their
+  // prediction state. This ensures ezra_user_scores is never stale after login,
+  // regardless of whether normalization changed anything or the cron has run.
+  await recalcUserLifetimeScoreOnly(db, session.user_id, String(session.name || ""), userState, key).catch(() => {});
 
   const [lifetimePoints, dashboard, leagues] = await Promise.all([
     getUserLifetimePoints(db, session.user_id),
@@ -3843,6 +3919,9 @@ async function handleEzraAdminRoute(context, adminPath) {
     }
     if (route === "users" && request.method === "GET") {
       return handleAdminUsersOverview(db, env, request);
+    }
+    if (route === "rescore-all" && request.method === "POST") {
+      return handleAdminRescoreAll(db, env, request, key);
     }
     if (route === "league-visibility" && request.method === "GET") {
       return handleAdminLeagueVisibilityGet(db, env, request);
