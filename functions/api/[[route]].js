@@ -1043,6 +1043,201 @@ function predictionEntriesForUser(state, userId, userName = "") {
   return rows;
 }
 
+function toEpochMs(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function canonicalPredictionMemberKey(userId) {
+  const id = String(userId || "").trim();
+  return id ? `acct:${id}` : "";
+}
+
+function buildLegacyPredictionAliasSet(userId, userName = "") {
+  const id = String(userId || "").trim();
+  const name = String(userName || "").trim();
+  const lowerName = name.toLowerCase();
+  const out = new Set();
+  if (id) {
+    out.add(id);
+    out.add(`acct:${id}`);
+  }
+  if (name) {
+    out.add(name);
+    out.add(`acct:${name}`);
+  }
+  if (lowerName) {
+    out.add(lowerName);
+    out.add(`acct:${lowerName}`);
+  }
+  return out;
+}
+
+function normalizePredictionEntriesForUserState(state, userId, userName = "") {
+  if (!state || typeof state !== "object") return { changed: false, recordsUpdated: 0 };
+  const canonical = canonicalPredictionMemberKey(userId);
+  if (!canonical) return { changed: false, recordsUpdated: 0 };
+  const predictions = state?.familyLeague?.predictions;
+  if (!predictions || typeof predictions !== "object") return { changed: false, recordsUpdated: 0 };
+
+  const aliases = buildLegacyPredictionAliasSet(userId, userName);
+  let changed = false;
+  let recordsUpdated = 0;
+
+  for (const record of Object.values(predictions)) {
+    if (!record || typeof record !== "object") continue;
+    const entries = record.entries && typeof record.entries === "object" ? record.entries : {};
+    if (!record.entries || typeof record.entries !== "object") {
+      record.entries = entries;
+    }
+    const keys = Object.keys(entries);
+    if (!keys.length) continue;
+
+    let canonicalPick = entries[canonical] && typeof entries[canonical] === "object" ? entries[canonical] : null;
+    if (!canonicalPick) {
+      const candidates = keys
+        .filter((key) => aliases.has(String(key || "").trim()))
+        .map((key) => ({ key, value: entries[key] }))
+        .filter((item) => item.value && typeof item.value === "object");
+      if (!candidates.length && keys.length === 1) {
+        const only = entries[keys[0]];
+        if (only && typeof only === "object") {
+          canonicalPick = only;
+        }
+      } else if (candidates.length) {
+        candidates.sort((a, b) => toEpochMs(b.value?.submittedAt) - toEpochMs(a.value?.submittedAt));
+        canonicalPick = candidates[0].value;
+      }
+      if (canonicalPick) {
+        entries[canonical] = canonicalPick;
+        changed = true;
+      }
+    }
+
+    if (!entries[canonical] || typeof entries[canonical] !== "object") {
+      continue;
+    }
+
+    let removedAlias = false;
+    for (const key of keys) {
+      const cleanKey = String(key || "").trim();
+      if (!cleanKey || cleanKey === canonical) continue;
+      if (aliases.has(cleanKey)) {
+        delete entries[key];
+        removedAlias = true;
+      }
+    }
+    if (removedAlias || canonicalPick) {
+      recordsUpdated += 1;
+    }
+  }
+
+  return { changed, recordsUpdated };
+}
+
+async function getAppSetting(db, key) {
+  if (!db || !key) return "";
+  const row = await db
+    .prepare("SELECT value_text FROM ezra_app_settings WHERE key = ?1 LIMIT 1")
+    .bind(String(key))
+    .first();
+  return String(row?.value_text || "");
+}
+
+async function setAppSetting(db, key, value) {
+  if (!db || !key) return;
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(
+      `
+      INSERT INTO ezra_app_settings (key, value_text, updated_at)
+      VALUES (?1, ?2, ?3)
+      ON CONFLICT(key) DO UPDATE SET
+        value_text = excluded.value_text,
+        updated_at = excluded.updated_at
+      `
+    )
+    .bind(String(key), String(value || ""), nowIso)
+    .run();
+}
+
+async function runPredictionKeyNormalizerOnce(db) {
+  const doneKey = "prediction_key_normalizer_v1_done";
+  const runKey = "prediction_key_normalizer_v1_running";
+  const existingDone = await getAppSetting(db, doneKey);
+  if (existingDone) {
+    let parsed = {};
+    try {
+      parsed = JSON.parse(existingDone);
+    } catch {
+      parsed = { raw: existingDone };
+    }
+    return { ok: true, skipped: true, reason: "already_done", meta: parsed };
+  }
+
+  const runningRaw = await getAppSetting(db, runKey);
+  if (runningRaw) {
+    let lock = {};
+    try {
+      lock = JSON.parse(runningRaw);
+    } catch {
+      lock = {};
+    }
+    const lockMs = Number(lock?.ts || 0);
+    if (Number.isFinite(lockMs) && Date.now() - lockMs < 10 * 60 * 1000) {
+      return { ok: true, skipped: true, reason: "already_running" };
+    }
+  }
+  await setAppSetting(db, runKey, JSON.stringify({ ts: Date.now() }));
+
+  try {
+    const rows = await db
+      .prepare(
+        `
+        SELECT ps.user_id, ps.state_json, u.name
+        FROM ezra_profile_states ps
+        JOIN ezra_users u ON u.id = ps.user_id
+        `
+      )
+      .all();
+    const list = rows?.results || [];
+    let usersScanned = 0;
+    let usersChanged = 0;
+    let predictionRecordsUpdated = 0;
+
+    for (const row of list) {
+      usersScanned += 1;
+      const userId = String(row?.user_id || "").trim();
+      if (!userId) continue;
+      const userName = String(row?.name || "").trim();
+      const state = safeParseJsonText(row?.state_json || "{}");
+      const out = normalizePredictionEntriesForUserState(state, userId, userName);
+      if (!out.changed) continue;
+      usersChanged += 1;
+      predictionRecordsUpdated += Number(out.recordsUpdated || 0);
+      await db
+        .prepare("UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1")
+        .bind(userId, JSON.stringify(state), new Date().toISOString())
+        .run();
+    }
+
+    const meta = {
+      at: new Date().toISOString(),
+      usersScanned,
+      usersChanged,
+      predictionRecordsUpdated,
+    };
+    await setAppSetting(db, doneKey, JSON.stringify(meta));
+    await setAppSetting(db, runKey, "");
+    return { ok: true, skipped: false, ...meta };
+  } catch (err) {
+    await setAppSetting(db, runKey, "");
+    throw err;
+  }
+}
+
 function ttlForEventResult(result) {
   // Keep finals reasonably fresh so corrected post-match scores can still reconcile.
   if (result?.final) return 6 * 60 * 60 * 1000;
@@ -3574,6 +3769,7 @@ async function handleCronSettle(db, request, key, env) {
   if (!provided || provided !== expected) {
     return json({ error: "Unauthorized cron trigger." }, 401);
   }
+  const normalizer = await runPredictionKeyNormalizerOnce(db);
   const rows = await db.prepare("SELECT code FROM ezra_leagues").all();
   const codes = (rows?.results || []).map((row) => normalizeLeagueCode(row?.code)).filter(Boolean);
   for (const code of codes) {
@@ -3584,9 +3780,26 @@ async function handleCronSettle(db, request, key, env) {
       ok: true,
       leaguesProcessed: codes.length,
       settledAt: new Date().toISOString(),
+      predictionKeyNormalizer: normalizer,
     },
     200
   );
+}
+
+async function handleCronNormalizePredictions(db, request, env) {
+  const expected = String(env?.EZRA_CRON_SECRET || "").trim();
+  if (!expected) {
+    return json({ error: "Cron secret is not configured. Add EZRA_CRON_SECRET." }, 503);
+  }
+  const url = new URL(request.url);
+  const provided =
+    String(request.headers.get("x-ezra-cron-secret") || "").trim() ||
+    String(url.searchParams.get("secret") || "").trim();
+  if (!provided || provided !== expected) {
+    return json({ error: "Unauthorized cron trigger." }, 401);
+  }
+  const result = await runPredictionKeyNormalizerOnce(db);
+  return json({ ok: true, predictionKeyNormalizer: result, at: new Date().toISOString() }, 200);
 }
 
 async function handleEzraAdminRoute(context, adminPath) {
@@ -3729,6 +3942,9 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     }
     if (route === "cron/settle" && (request.method === "POST" || request.method === "GET")) {
       return handleCronSettle(db, request, key, env);
+    }
+    if (route === "cron/normalize-predictions" && (request.method === "POST" || request.method === "GET")) {
+      return handleCronNormalizePredictions(db, request, env);
     }
     if (route === "cron/fixtures" && (request.method === "POST" || request.method === "GET")) {
       const incoming = String(request.headers.get("x-ezra-cron-secret") || "").trim();
