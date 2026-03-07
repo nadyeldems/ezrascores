@@ -3080,13 +3080,36 @@ async function handleChallengeDashboard(db, request, key) {
 async function handleAccountBootstrap(db, request, key) {
   const { token, session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
-  const lifetimePoints = await getUserLifetimePoints(db, session.user_id);
 
-  const [stateRow, dashboard, leagues] = await Promise.all([
-    db
-      .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+  // Load state first so we can normalise prediction keys inline before scoring.
+  const stateRow = await db
+    .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+    .bind(session.user_id)
+    .first();
+  const userState = safeParseJsonText(stateRow?.state_json || "{}");
+  const normalizeResult = normalizePredictionEntriesForUserState(userState, session.user_id, String(session.name || ""));
+  if (normalizeResult.changed) {
+    // Persist the re-keyed state immediately so the next settlement run and this
+    // bootstrap's score fetch both see predictions under the canonical key.
+    await db
+      .prepare("UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1")
+      .bind(session.user_id, JSON.stringify(userState), new Date().toISOString())
+      .run();
+    // Re-settle scores for every league this user is in so points are correct right now.
+    const leagueMemberRows = await db
+      .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1")
       .bind(session.user_id)
-      .first(),
+      .all();
+    const userLeagueCodes = (leagueMemberRows?.results || [])
+      .map((r) => String(r?.league_code || ""))
+      .filter(Boolean);
+    for (const leagueCode of userLeagueCodes) {
+      await syncLeagueScoresFromStates(db, leagueCode, key).catch(() => {});
+    }
+  }
+
+  const [lifetimePoints, dashboard, leagues] = await Promise.all([
+    getUserLifetimePoints(db, session.user_id),
     buildChallengeDashboardForUser(db, session, key),
     buildLeagueDirectoryForUser(db, session.user_id, key),
   ]);
@@ -3102,7 +3125,7 @@ async function handleAccountBootstrap(db, request, key) {
         lifetimePoints,
       },
       token: token || "",
-      state: safeParseJsonText(stateRow?.state_json || "{}"),
+      state: userState,
       stateUpdatedAt: stateRow?.updated_at || null,
       dashboard,
       leagues,

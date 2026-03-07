@@ -8434,6 +8434,10 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
       if (attemptId && !isActiveAccountRestoreAttempt(attemptId)) {
         return { ok: false, stale: true, partialWarning: true };
       }
+      // Capture pre-login predictions before state reset so they survive sign-in.
+      const preLoginPredictions = Object.keys(state.familyLeague?.predictions || {}).length > 0
+        ? JSON.parse(JSON.stringify(state.familyLeague.predictions))
+        : null;
       resetAccountScopedLocalState();
       let bootPayload = null;
       try {
@@ -8462,6 +8466,21 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
         if (migratePredictionEntryKeysForCurrentUser()) {
           persistLocalMetaState();
           scheduleCloudStateSync();
+        }
+        // Merge any predictions made before sign-in that the server doesn't have yet.
+        if (preLoginPredictions) {
+          ensureFamilyLeagueState();
+          let mergedPreLogin = false;
+          for (const [eventId, record] of Object.entries(preLoginPredictions)) {
+            if (!state.familyLeague.predictions[eventId]) {
+              state.familyLeague.predictions[eventId] = record;
+              mergedPreLogin = true;
+            }
+          }
+          if (mergedPreLogin) {
+            migratePredictionEntryKeysForCurrentUser();
+            scheduleCloudStateSync();
+          }
         }
         state.challengeDashboard = bootPayload.dashboard || null;
         state.challengeDashboardAt = Date.now();
@@ -8806,7 +8825,14 @@ async function loginAccount() {
   setAccountPhase("AUTHENTICATED");
   state.account.keepLoggedIn = Boolean(getKeepLoggedInSelection());
   storeAccountToken(state.account.token, state.account.keepLoggedIn);
-  const result = await runPostAuthBootstrap("Signed in");
+  let result = null;
+  try {
+    result = await runPostAuthBootstrap("Signed in");
+  } catch (_bootstrapErr) {
+    // Login succeeded but bootstrap hit a network hiccup.
+    // Don't propagate as "Sign in failed" — the user IS signed in.
+    result = { ok: false, partialWarning: true };
+  }
   const partialWarning = Boolean(result?.partialWarning);
   renderAccountUI();
   renderFamilyLeaguePanel();
