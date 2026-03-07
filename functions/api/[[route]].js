@@ -1938,8 +1938,14 @@ async function syncLeagueScoresFromStates(db, code, key) {
 
       const fallbackPoints = extractPointsFromState(state, userId);
       const total = Math.max(predictionPoints + questBonusPoints, fallbackPoints);
-      await upsertUserScore(db, userId, total);
-      await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints + questSeasonPoints);
+      // Guard: if no prediction entries were found in this user's state AND the
+      // calculated total is 0, skip the write. This preserves any existing score
+      // (e.g. a manually-restored value) when a user's state has been wiped and
+      // prevents settlement runs from zeroing out legitimate scores.
+      if (predictionRows.length > 0 || total > 0) {
+        await upsertUserScore(db, userId, total);
+        await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints + questSeasonPoints);
+      }
       await replaceTeamMastery(db, userId, [...mastery.values()]);
 
       const questByDate = state?.familyLeague?.questBonusByDate;
