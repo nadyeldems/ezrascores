@@ -678,6 +678,15 @@ async function ensureAccountSchema(db) {
         updated_at TEXT NOT NULL
       )
     `,
+    `
+      CREATE TABLE IF NOT EXISTS ezra_user_score_floor (
+        user_id TEXT PRIMARY KEY,
+        min_points INTEGER NOT NULL DEFAULT 0,
+        set_at TEXT NOT NULL,
+        reason TEXT,
+        FOREIGN KEY (user_id) REFERENCES ezra_users(id)
+      )
+    `,
   ];
   for (const sql of statements) {
     await db.prepare(sql).run();
@@ -740,6 +749,12 @@ async function ensureAccountSchema(db) {
   }
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_ezra_league_members_invited_by ON ezra_league_members(invited_by_user_id)").run();
+  try {
+    await db.prepare("ALTER TABLE ezra_points_ledger ADD COLUMN season_id TEXT NOT NULL DEFAULT ''").run();
+  } catch (err) {
+    const msg = String(err?.message || err || "").toLowerCase();
+    if (!msg.includes("duplicate column")) throw err;
+  }
   accountSchemaReady = true;
 }
 
@@ -1420,7 +1435,7 @@ async function upsertUserScore(db, userId, points) {
     .prepare(`
       INSERT INTO ezra_user_scores (user_id, points, updated_at)
       VALUES (?1, ?2, ?3)
-      ON CONFLICT(user_id) DO UPDATE SET points = excluded.points, updated_at = excluded.updated_at
+      ON CONFLICT(user_id) DO UPDATE SET points = MAX(excluded.points, ezra_user_scores.points), updated_at = excluded.updated_at
     `)
     .bind(userId, safePoints, nowIso)
     .run();
@@ -1429,6 +1444,60 @@ async function upsertUserScore(db, userId, points) {
 async function getUserLifetimePoints(db, userId) {
   const row = await db.prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1").bind(userId).first();
   return Math.max(0, Number(row?.points || 0));
+}
+
+async function getUserScoreFloor(db, userId) {
+  const row = await db.prepare("SELECT min_points FROM ezra_user_score_floor WHERE user_id = ?1 LIMIT 1").bind(userId).first();
+  return Math.max(0, Number(row?.min_points || 0));
+}
+
+async function setUserScoreFloor(db, userId, points, reason = "") {
+  const safe = Math.max(0, Number(points || 0));
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(`
+      INSERT INTO ezra_user_score_floor (user_id, min_points, set_at, reason)
+      VALUES (?1, ?2, ?3, ?4)
+      ON CONFLICT(user_id) DO UPDATE SET
+        min_points = MAX(excluded.min_points, ezra_user_score_floor.min_points),
+        set_at = excluded.set_at,
+        reason = excluded.reason
+    `)
+    .bind(userId, safe, nowIso, String(reason || ""))
+    .run();
+  // Also ratchet the live score so it reflects the floor immediately.
+  await upsertUserScore(db, userId, safe);
+}
+
+async function getLedgerSeasonPoints(db, userId, seasonId) {
+  const row = await db
+    .prepare("SELECT COALESCE(SUM(points), 0) AS total FROM ezra_points_ledger WHERE user_id = ?1 AND season_id = ?2")
+    .bind(userId, String(seasonId || ""))
+    .first();
+  return Math.max(0, Number(row?.total || 0));
+}
+
+async function appendPointsToLedger(db, userId, entries = []) {
+  for (const row of entries) {
+    await db
+      .prepare(`
+        INSERT OR IGNORE INTO ezra_points_ledger
+          (event_id, user_id, league_code, type, points, idempotency_key, season_id, payload_json, created_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+      `)
+      .bind(
+        String(row.eventId || ""),
+        userId,
+        String(row.fixtureLeagueCode || ""),
+        String(row.type || "prediction"),
+        Math.max(0, Number(row.points || 0)),
+        String(row.idempotencyKey || ""),
+        String(row.seasonId || ""),
+        JSON.stringify(row.payload || {}),
+        String(row.createdAt || new Date().toISOString())
+      )
+      .run();
+  }
 }
 
 async function upsertUserPreference(db, userId, kidsMode = false) {
@@ -1632,31 +1701,9 @@ async function awardSeasonTitleIfEligible(db, leagueCode, seasonId) {
 }
 
 async function replacePointLedgerForUser(db, userId, leagueCode, entries = []) {
-  await db
-    .prepare("DELETE FROM ezra_points_ledger WHERE user_id = ?1 AND league_code = ?2 AND (type = 'prediction' OR type = 'quest_bonus')")
-    .bind(userId, leagueCode)
-    .run();
-  for (const row of entries) {
-    await db
-      .prepare(
-        `
-        INSERT OR IGNORE INTO ezra_points_ledger
-          (event_id, user_id, league_code, type, points, idempotency_key, payload_json, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        `
-      )
-      .bind(
-        String(row.eventId || ""),
-        userId,
-        leagueCode,
-        String(row.type || "prediction"),
-        Math.max(0, Number(row.points || 0)),
-        String(row.idempotencyKey || ""),
-        JSON.stringify(row.payload || {}),
-        String(row.createdAt || new Date().toISOString())
-      )
-      .run();
-  }
+  // Legacy wrapper — DO NOT add a DELETE here. The ledger is append-only.
+  // Callers should migrate to appendPointsToLedger directly.
+  await appendPointsToLedger(db, userId, entries);
 }
 
 async function ensureDefaultLeagueForUser(db, userId) {
@@ -1846,44 +1893,58 @@ async function syncLeagueScoresFromStates(db, code, key) {
         .first();
       const state = safeParseJsonText(row?.state_json || "{}");
       const predictionRows = predictionEntriesForUser(state, userId, String(userRow?.name || ""));
-      const ordered = [...predictionRows].sort((a, b) => String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || "")));
-      let predictionPoints = 0;
-      let seasonPoints = 0;
+      const ordered = [...predictionRows].sort((a, b) =>
+        String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || ""))
+      );
+
+      // Combo tracking (ordered by kickoff so streaks are accurate)
       let comboCount = 0;
       let bestCombo = 0;
       let totalExact = 0;
       const mastery = new Map();
-      const ledger = [];
+      const newLedgerEntries = [];
+      let newPointsThisRun = 0;
+
       for (const pick of ordered) {
-        const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, { kickoffIso: pick.kickoffIso || "" });
-        if (!result.final || result.home === null || result.away === null) continue;
+        const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, {
+          kickoffIso: pick.kickoffIso || "",
+        });
+        if (!result.final || result.home === null || result.away === null) {
+          // Match not yet finished — reset combo streak at unresolved point
+          // (don't reset: unresolved picks don't break a streak mid-sequence)
+          continue;
+        }
+
         const eventRow = await db
           .prepare("SELECT payload_json, league_id FROM ezra_fixtures_cache WHERE event_id = ?1 LIMIT 1")
           .bind(String(pick.eventId || ""))
           .first();
         const event = safeParseJsonText(eventRow?.payload_json || "{}");
-        const leagueCode = leagueIdToCode(eventRow?.league_id);
-        const teamId = normalizeTeamIdToken(String(event?.idHomeTeam || "")) || normalizeTeamIdToken(String(event?.idAwayTeam || "")) || "unknown";
+        const fixtureLeagueCode = leagueIdToCode(eventRow?.league_id);
+        const teamId =
+          normalizeTeamIdToken(String(event?.idHomeTeam || "")) ||
+          normalizeTeamIdToken(String(event?.idAwayTeam || "")) ||
+          "unknown";
         const teamName = String(event?.strHomeTeam || "") || String(event?.strAwayTeam || "") || "Unknown";
+
         const base =
           pick.home === result.home && pick.away === result.away
             ? 2
             : predictionResultCode(pick.home, pick.away) === predictionResultCode(result.home, result.away)
               ? 1
               : 0;
+
         if (base > 0) {
           comboCount += 1;
           bestCombo = Math.max(bestCombo, comboCount);
         } else {
           comboCount = 0;
         }
+
         const awarded = safePredictionAward(base, comboCount);
-        predictionPoints += awarded;
-        if (inSeasonByKickoff(pick.kickoffIso, season) && (leagueCode === "EPL" || leagueCode === "CHAMP" || leagueCode === "LALIGA")) {
-          seasonPoints += awarded;
-        }
-        if (base === 2) totalExact += 1;
+
         if (base === 2) {
+          totalExact += 1;
           await emitSocialEvent(db, {
             leagueCode: code,
             userId,
@@ -1899,6 +1960,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
             },
           });
         }
+
         const existing = mastery.get(teamId) || {
           teamId,
           teamName,
@@ -1912,45 +1974,81 @@ async function syncLeagueScoresFromStates(db, code, key) {
         if (base === 2) existing.exactCorrect += 1;
         existing.pointsEarned += awarded;
         mastery.set(teamId, existing);
-        ledger.push({
-          eventId: pick.eventId,
-          type: "prediction",
-          points: awarded,
-          idempotencyKey: `prediction:${code}:${userId}:${pick.eventId}`,
-          createdAt: pick.kickoffIso || new Date().toISOString(),
-          payload: { base, comboCount, exact: base === 2 },
-        });
-      }
 
-      const questBonusPoints = questBonusPointsFromState(state, userId);
-      let questSeasonPoints = 0;
-      const questMap = state?.familyLeague?.questBonusByDate;
-      if (questMap && typeof questMap === "object") {
-        const prefix = `acct:${String(userId || "")}:`;
-        for (const [dateIso, obj] of Object.entries(questMap)) {
-          if (!obj || typeof obj !== "object") continue;
-          if (!inSeasonByKickoff(`${dateIso}T00:00:00Z`, season)) continue;
-          for (const [k, done] of Object.entries(obj)) {
-            if (done && k.startsWith(prefix)) questSeasonPoints += 5;
-          }
+        // Only add to ledger if not already recorded (idempotency_key is per-user per-event).
+        const idempKey = `prediction:${userId}:${pick.eventId}`;
+        const alreadyRecorded = await db
+          .prepare("SELECT id FROM ezra_points_ledger WHERE idempotency_key = ?1 LIMIT 1")
+          .bind(idempKey)
+          .first();
+
+        if (!alreadyRecorded) {
+          newLedgerEntries.push({
+            eventId: pick.eventId,
+            type: "prediction",
+            points: awarded,
+            idempotencyKey: idempKey,
+            fixtureLeagueCode,
+            seasonId: season.seasonId,
+            createdAt: pick.kickoffIso || new Date().toISOString(),
+            payload: { base, comboCount, exact: base === 2 },
+          });
+          newPointsThisRun += awarded;
         }
       }
 
-      const fallbackPoints = extractPointsFromState(state, userId);
-      const total = Math.max(predictionPoints + questBonusPoints, fallbackPoints);
-      // Guard: only write scores and season points when the calculated total is
-      // positive. This prevents settlement runs from zeroing out legitimate
-      // (e.g. manually-restored) scores when a user's state is wiped or when
-      // all their predictions are for matches that haven't yet finished.
-      if (total > 0) {
-        await upsertUserScore(db, userId, total);
-        await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints + questSeasonPoints);
+      // Quest bonus — idempotent per user per day (not per mini-league).
+      const questBonusPoints = questBonusPointsFromState(state, userId);
+      if (questBonusPoints > 0) {
+        const questKey = `quest_bonus:${userId}:${todayIso}`;
+        const questAlreadyRecorded = await db
+          .prepare("SELECT id FROM ezra_points_ledger WHERE idempotency_key = ?1 LIMIT 1")
+          .bind(questKey)
+          .first();
+        if (!questAlreadyRecorded) {
+          newLedgerEntries.push({
+            eventId: "",
+            type: "quest_bonus",
+            points: questBonusPoints,
+            idempotencyKey: questKey,
+            fixtureLeagueCode: "",
+            seasonId: season.seasonId,
+            createdAt: new Date().toISOString(),
+            payload: { questBonusPoints },
+          });
+          newPointsThisRun += questBonusPoints;
+        }
       }
+
+      // Append only new entries — INSERT OR IGNORE, no DELETEs ever.
+      await appendPointsToLedger(db, userId, newLedgerEntries);
+
+      // Lifetime score: add new points to existing stored score.
+      // The ratchet in upsertUserScore and the floor ensure it never decreases.
+      if (newPointsThisRun > 0) {
+        const existingScore = await getUserLifetimePoints(db, userId);
+        const floor = await getUserScoreFloor(db, userId);
+        const newTotal = Math.max(existingScore + newPointsThisRun, floor);
+        await upsertUserScore(db, userId, newTotal);
+      } else {
+        // No new predictions scored this run. Still enforce the floor.
+        const floor = await getUserScoreFloor(db, userId);
+        if (floor > 0) {
+          await upsertUserScore(db, userId, floor);
+        }
+      }
+
+      // Weekly season points come from the immutable ledger — accurate even if state is wiped.
+      const seasonPoints = await getLedgerSeasonPoints(db, userId, season.seasonId);
+      await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints);
+
+      // Achievements and mastery (unchanged).
       await replaceTeamMastery(db, userId, [...mastery.values()]);
 
       const questByDate = state?.familyLeague?.questBonusByDate;
       const todayObj = questByDate && typeof questByDate === "object" ? questByDate[todayIso] : null;
-      const yesterdayObj = questByDate && typeof questByDate === "object" ? questByDate[yesterdayIso] : null;
+      const yesterdayObj =
+        questByDate && typeof questByDate === "object" ? questByDate[yesterdayIso] : null;
       const hasTodayQuest = Boolean(
         todayObj &&
           typeof todayObj === "object" &&
@@ -1962,7 +2060,9 @@ async function syncLeagueScoresFromStates(db, code, key) {
           Object.entries(yesterdayObj).some(([k, done]) => done && String(k || "").startsWith(`acct:${userId}:`))
       );
       const progressRow = await db
-        .prepare("SELECT current_streak, best_streak, last_quest_date FROM ezra_user_progress WHERE user_id = ?1 LIMIT 1")
+        .prepare(
+          "SELECT current_streak, best_streak, last_quest_date FROM ezra_user_progress WHERE user_id = ?1 LIMIT 1"
+        )
         .bind(userId)
         .first();
       let currentStreak = Math.max(0, Number(progressRow?.current_streak || 0));
@@ -1988,19 +2088,8 @@ async function syncLeagueScoresFromStates(db, code, key) {
       if (bestStreak >= 7) await grantAchievement(db, userId, "streak_7");
       if (bestCombo >= 3) await grantAchievement(db, userId, "combo_3");
       if (totalExact >= 10) await grantAchievement(db, userId, "exact_10");
-      if ([...mastery.values()].some((m) => Number(m.predCount || 0) >= 25)) await grantAchievement(db, userId, "mastery_25");
-
-      if (questBonusPoints > 0) {
-        ledger.push({
-          eventId: "",
-          type: "quest_bonus",
-          points: questBonusPoints,
-          idempotencyKey: `quest_bonus:${code}:${userId}:${todayIso}`,
-          createdAt: new Date().toISOString(),
-          payload: { questBonusPoints },
-        });
-      }
-      await replacePointLedgerForUser(db, userId, code, ledger);
+      if ([...mastery.values()].some((m) => Number(m.predCount || 0) >= 25))
+        await grantAchievement(db, userId, "mastery_25");
     })
   );
 
@@ -2019,7 +2108,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
   const leaderUserId = String(leaderRow?.user_id || "");
   if (leaderUserId) {
     const prevLeaderKey = `league_leader:${code}:${season.seasonId}`;
-    const prevLeader = String(await getIngestStateText(db, prevLeaderKey, "") || "");
+    const prevLeader = String((await getIngestStateText(db, prevLeaderKey, "")) || "");
     if (prevLeader && prevLeader !== leaderUserId) {
       await emitSocialEvent(db, {
         leagueCode: code,
@@ -2363,6 +2452,24 @@ async function handleAdminRescoreAll(db, env, request, key) {
     },
     200
   );
+}
+
+async function handleAdminSetScoreFloor(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+  const body = (await parseJson(request)) || {};
+  const floors = Array.isArray(body?.floors) ? body.floors : [];
+  if (!floors.length) return json({ error: "Provide floors array: [{userId, points, reason}]" }, 400);
+  const results = [];
+  for (const entry of floors) {
+    const userId = String(entry?.userId || "").trim();
+    const points = Math.max(0, Number(entry?.points || 0));
+    const reason = String(entry?.reason || "admin");
+    if (!userId) { results.push({ userId, ok: false, error: "missing userId" }); continue; }
+    await setUserScoreFloor(db, userId, points, reason);
+    results.push({ userId, ok: true, points });
+  }
+  return json({ ok: true, results }, 200);
 }
 
 async function handleAdminLeagueVisibilityGet(db, env, request) {
@@ -3119,44 +3226,16 @@ async function handleChallengeDashboard(db, request, key) {
 // Fast single-user score recalculation — called on every bootstrap so the
 // lifetime score in ezra_user_scores is always up-to-date after login,
 // without depending on the cron or normalization detecting a change.
-async function recalcUserLifetimeScoreOnly(db, userId, userName, userState, sportsKey) {
-  const predictionRows = predictionEntriesForUser(userState, userId, userName);
-  const fallbackPoints = extractPointsFromState(userState, userId);
-  if (!predictionRows.length) {
-    if (fallbackPoints > 0) await upsertUserScore(db, userId, fallbackPoints);
-    return fallbackPoints;
+// Ensures the stored lifetime score is at least the configured floor.
+// Called on every login bootstrap — does not recalculate from state (that
+// can produce 0 when state is wiped); instead trusts the append-only ledger
+// and ratcheted ezra_user_scores written during settlement.
+async function recalcUserLifetimeScoreOnly(db, userId) {
+  const floor = await getUserScoreFloor(db, userId);
+  if (floor > 0) {
+    // upsertUserScore uses MAX semantics so this only raises, never lowers.
+    await upsertUserScore(db, userId, floor);
   }
-  const resultCache = new Map();
-  const ordered = [...predictionRows].sort((a, b) =>
-    String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || ""))
-  );
-  let points = 0;
-  let comboCount = 0;
-  for (const pick of ordered) {
-    const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, {
-      kickoffIso: pick.kickoffIso || "",
-    });
-    if (!result.final || result.home === null || result.away === null) continue;
-    const base =
-      pick.home === result.home && pick.away === result.away
-        ? 2
-        : predictionResultCode(pick.home, pick.away) === predictionResultCode(result.home, result.away)
-          ? 1
-          : 0;
-    if (base > 0) comboCount += 1;
-    else comboCount = 0;
-    const awarded = base > 0 ? (comboCount >= 3 ? base + 2 : comboCount === 2 ? base + 1 : base) : 0;
-    points += awarded;
-  }
-  const questBonusPoints = questBonusPointsFromState(userState, userId);
-  const calculatedTotal = Math.max(points + questBonusPoints, fallbackPoints);
-  // Never write a score lower than what's already stored. This protects
-  // manually-restored values and prevents zeroing when all predictions in
-  // the current state are for unfinished matches (result.final === false).
-  const existingPoints = await getUserLifetimePoints(db, userId);
-  const total = Math.max(calculatedTotal, existingPoints);
-  await upsertUserScore(db, userId, total);
-  return total;
 }
 
 async function handleAccountBootstrap(db, request, key) {
@@ -3193,7 +3272,7 @@ async function handleAccountBootstrap(db, request, key) {
   // Always recalculate this user's personal lifetime score directly from their
   // prediction state. This ensures ezra_user_scores is never stale after login,
   // regardless of whether normalization changed anything or the cron has run.
-  await recalcUserLifetimeScoreOnly(db, session.user_id, String(session.name || ""), userState, key).catch(() => {});
+  await recalcUserLifetimeScoreOnly(db, session.user_id).catch(() => {});
 
   const [lifetimePoints, dashboard, leagues] = await Promise.all([
     getUserLifetimePoints(db, session.user_id),
@@ -3940,6 +4019,9 @@ async function handleEzraAdminRoute(context, adminPath) {
     }
     if (route === "league-visibility" && (request.method === "PUT" || request.method === "PATCH")) {
       return handleAdminLeagueVisibilityPut(db, env, request);
+    }
+    if (route === "set-score-floor" && request.method === "POST") {
+      return handleAdminSetScoreFloor(db, env, request);
     }
 
     return json({ error: "Unsupported admin route or method" }, 405);
