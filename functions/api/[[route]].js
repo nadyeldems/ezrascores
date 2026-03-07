@@ -1938,11 +1938,11 @@ async function syncLeagueScoresFromStates(db, code, key) {
 
       const fallbackPoints = extractPointsFromState(state, userId);
       const total = Math.max(predictionPoints + questBonusPoints, fallbackPoints);
-      // Guard: if no prediction entries were found in this user's state AND the
-      // calculated total is 0, skip the write. This preserves any existing score
-      // (e.g. a manually-restored value) when a user's state has been wiped and
-      // prevents settlement runs from zeroing out legitimate scores.
-      if (predictionRows.length > 0 || total > 0) {
+      // Guard: only write scores and season points when the calculated total is
+      // positive. This prevents settlement runs from zeroing out legitimate
+      // (e.g. manually-restored) scores when a user's state is wiped or when
+      // all their predictions are for matches that haven't yet finished.
+      if (total > 0) {
         await upsertUserScore(db, userId, total);
         await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints + questSeasonPoints);
       }
@@ -3149,7 +3149,12 @@ async function recalcUserLifetimeScoreOnly(db, userId, userName, userState, spor
     points += awarded;
   }
   const questBonusPoints = questBonusPointsFromState(userState, userId);
-  const total = Math.max(points + questBonusPoints, fallbackPoints);
+  const calculatedTotal = Math.max(points + questBonusPoints, fallbackPoints);
+  // Never write a score lower than what's already stored. This protects
+  // manually-restored values and prevents zeroing when all predictions in
+  // the current state are for unfinished matches (result.final === false).
+  const existingPoints = await getUserLifetimePoints(db, userId);
+  const total = Math.max(calculatedTotal, existingPoints);
   await upsertUserScore(db, userId, total);
   return total;
 }
