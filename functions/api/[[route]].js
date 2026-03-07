@@ -1613,7 +1613,10 @@ async function upsertUserProgress(db, userId, progress) {
     .run();
 }
 
+let achievementCatalogReady = false;
 async function ensureAchievementCatalog(db) {
+  // Skip after first successful seed — avoids 6 INSERT OR IGNORE writes per bootstrap.
+  if (achievementCatalogReady) return;
   const nowIso = new Date().toISOString();
   const rows = [
     { code: "streak_3", name: "On Fire", description: "Complete quests 3 days in a row.", icon: "🔥" },
@@ -1629,6 +1632,7 @@ async function ensureAchievementCatalog(db) {
       .bind(row.code, row.name, row.description, row.icon, nowIso)
       .run();
   }
+  achievementCatalogReady = true;
 }
 
 async function grantAchievement(db, userId, code) {
@@ -3107,57 +3111,62 @@ async function handleLeagueList(db, request, key) {
 }
 
 async function buildChallengeDashboardForUser(db, session, key) {
-  await ensureAchievementCatalog(db);
-  const prefs = await getUserPreference(db, session.user_id);
-  const progress = await db
-    .prepare(
-      `
-      SELECT current_streak, best_streak, last_quest_date, combo_count, best_combo, combo_updated_at, updated_at
-      FROM ezra_user_progress
-      WHERE user_id = ?1
-      LIMIT 1
-      `
-    )
-    .bind(session.user_id)
-    .first();
-  const achievements = await db
-    .prepare(
-      `
-      SELECT a.code, a.name, a.description, a.icon, ua.earned_at
-      FROM ezra_user_achievements ua
-      JOIN ezra_achievements a ON a.code = ua.achievement_code
-      WHERE ua.user_id = ?1
-      ORDER BY ua.earned_at DESC
-      `
-    )
-    .bind(session.user_id)
-    .all();
-  const mastery = await db
-    .prepare(
-      `
-      SELECT team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at
-      FROM ezra_user_team_mastery
-      WHERE user_id = ?1
-      ORDER BY pred_count DESC, points_earned DESC, team_name COLLATE NOCASE ASC
-      LIMIT 8
-      `
-    )
-    .bind(session.user_id)
-    .all();
-  const lifetime = await db
-    .prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1")
-    .bind(session.user_id)
-    .first();
-
-  const leagues = await listLeaguesForUser(db, session.user_id);
+  // Run catalog seed and all independent per-user reads in parallel to cut round-trips.
+  const [, prefs, progress, achievements, mastery, lifetime, leagues] = await Promise.all([
+    ensureAchievementCatalog(db),
+    getUserPreference(db, session.user_id),
+    db
+      .prepare(
+        `
+        SELECT current_streak, best_streak, last_quest_date, combo_count, best_combo, combo_updated_at, updated_at
+        FROM ezra_user_progress
+        WHERE user_id = ?1
+        LIMIT 1
+        `
+      )
+      .bind(session.user_id)
+      .first(),
+    db
+      .prepare(
+        `
+        SELECT a.code, a.name, a.description, a.icon, ua.earned_at
+        FROM ezra_user_achievements ua
+        JOIN ezra_achievements a ON a.code = ua.achievement_code
+        WHERE ua.user_id = ?1
+        ORDER BY ua.earned_at DESC
+        `
+      )
+      .bind(session.user_id)
+      .all(),
+    db
+      .prepare(
+        `
+        SELECT team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at
+        FROM ezra_user_team_mastery
+        WHERE user_id = ?1
+        ORDER BY pred_count DESC, points_earned DESC, team_name COLLATE NOCASE ASC
+        LIMIT 8
+        `
+      )
+      .bind(session.user_id)
+      .all(),
+    db
+      .prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1")
+      .bind(session.user_id)
+      .first(),
+    listLeaguesForUser(db, session.user_id),
+  ]);
   const currentLeagueCode = normalizeLeagueCode(leagues?.[0]?.code || "");
   let season = null;
   let seasonStandings = [];
   let settleStatus = { settled: false, settledAt: 0, ageMs: null };
   if (currentLeagueCode) {
-    settleStatus = await getLeagueSettleStatus(db, currentLeagueCode);
     season = currentSevenDaySeasonWindow();
-    await ensureLeagueSeason(db, currentLeagueCode, season);
+    // Run settle-status check and season row creation in parallel.
+    [settleStatus] = await Promise.all([
+      getLeagueSettleStatus(db, currentLeagueCode),
+      ensureLeagueSeason(db, currentLeagueCode, season),
+    ]);
     const standingsRows = await db
       .prepare(
         `
@@ -3238,7 +3247,7 @@ async function recalcUserLifetimeScoreOnly(db, userId) {
   }
 }
 
-async function handleAccountBootstrap(db, request, key) {
+async function handleAccountBootstrap(context, db, request, key) {
   const { token, session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
 
@@ -3248,30 +3257,43 @@ async function handleAccountBootstrap(db, request, key) {
     .bind(session.user_id)
     .first();
   const userState = safeParseJsonText(stateRow?.state_json || "{}");
+  // normalizePredictionEntriesForUserState mutates userState in-place (synchronous).
+  // We get the corrected state immediately for the response without any I/O wait.
   const normalizeResult = normalizePredictionEntriesForUserState(userState, session.user_id, String(session.name || ""));
   if (normalizeResult.changed) {
-    // Persist the re-keyed state immediately so the next settlement run sees
-    // predictions under the canonical key.
-    await db
-      .prepare("UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1")
-      .bind(session.user_id, JSON.stringify(userState), new Date().toISOString())
-      .run();
-    // Re-settle scores for every league this user is in so league standings update.
-    const leagueMemberRows = await db
-      .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1")
-      .bind(session.user_id)
-      .all();
-    const userLeagueCodes = (leagueMemberRows?.results || [])
-      .map((r) => String(r?.league_code || ""))
-      .filter(Boolean);
-    for (const leagueCode of userLeagueCodes) {
-      await syncLeagueScoresFromStates(db, leagueCode, key).catch(() => {});
-    }
+    // Capture the already-normalized JSON for background persistence.
+    const normalizedJson = JSON.stringify(userState);
+    const normalizeUserId = session.user_id;
+    const normalizeNow = new Date().toISOString();
+    // Defer the slow DB write + per-league re-scoring to a background task so the
+    // HTTP response is returned immediately with the already-corrected in-memory state.
+    context.waitUntil(
+      (async () => {
+        try {
+          await db
+            .prepare("UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1")
+            .bind(normalizeUserId, normalizedJson, normalizeNow)
+            .run();
+          // Re-settle scores for every league this user is in so standings update.
+          const leagueMemberRows = await db
+            .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1")
+            .bind(normalizeUserId)
+            .all();
+          const userLeagueCodes = (leagueMemberRows?.results || [])
+            .map((r) => String(r?.league_code || ""))
+            .filter(Boolean);
+          for (const leagueCode of userLeagueCodes) {
+            await syncLeagueScoresFromStates(db, leagueCode, key).catch(() => {});
+          }
+        } catch {
+          // Background task — swallow errors so they don't surface to the response.
+        }
+      })()
+    );
   }
 
-  // Always recalculate this user's personal lifetime score directly from their
-  // prediction state. This ensures ezra_user_scores is never stale after login,
-  // regardless of whether normalization changed anything or the cron has run.
+  // Always enforce the score floor for this user. Fast (2 DB ops) so stays on
+  // the critical path to ensure lifetimePoints in the response is never below floor.
   await recalcUserLifetimeScoreOnly(db, session.user_id).catch(() => {});
 
   const [lifetimePoints, dashboard, leagues] = await Promise.all([
@@ -4056,7 +4078,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       return handleAccountMe(db, request);
     }
     if (route === "bootstrap" && request.method === "GET") {
-      return handleAccountBootstrap(db, request, key);
+      return handleAccountBootstrap(context, db, request, key);
     }
     if (route === "me" && (request.method === "PATCH" || request.method === "PUT")) {
       return handleAccountUpdateMe(db, request, env);

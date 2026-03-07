@@ -645,6 +645,16 @@ body.account-modal-open .account-menu .settings-panel {
   background: rgba(255, 153, 32, 0.07);
   color: var(--text-soft);
   white-space: nowrap;
+  transition: opacity 0.25s ease;
+}
+
+.lifetime-points-pill.syncing {
+  animation: points-pill-sync 1.5s ease-in-out infinite;
+}
+
+@keyframes points-pill-sync {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 0.4; }
 }
 
 body[data-theme="t90"] .settings-panel {
@@ -4786,9 +4796,13 @@ body[data-theme="t90"] .team-score.leading {
 }
 
 .skeleton-line.w-20 { width: 20%; }
+.skeleton-line.w-35 { width: 35%; }
 .skeleton-line.w-40 { width: 40%; }
 .skeleton-line.w-45 { width: 45%; }
+.skeleton-line.w-60 { width: 60%; }
 .skeleton-line.w-65 { width: 65%; }
+.skeleton-line.w-70 { width: 70%; }
+.skeleton-line.w-80 { width: 80%; }
 .skeleton-line.w-90 { width: 90%; }
 
 @keyframes skeleton-shift {

@@ -2525,13 +2525,22 @@ function renderLifetimePointsPill() {
   if (!el.lifetimePointsPill) return;
   if (!accountSignedIn()) {
     el.lifetimePointsPill.textContent = "Total points: --";
+    el.lifetimePointsPill.classList.remove("syncing");
     return;
   }
   const phase = String(state.account?.phase || "");
   if (phase === "SYNCING_PROFILE" || phase === "RESTORING_SESSION") {
-    el.lifetimePointsPill.textContent = "Total points: --";
+    // During sync, show the last-known cached value so the screen doesn't blank.
+    // The "syncing" class applies a subtle pulse so the user knows it's refreshing.
+    const cachedPoints = Number(localStorage.getItem("ezra_last_lifetime_points"));
+    el.lifetimePointsPill.textContent =
+      Number.isFinite(cachedPoints) && cachedPoints > 0
+        ? `Total points: ${cachedPoints}`
+        : "Total points: --";
+    el.lifetimePointsPill.classList.add("syncing");
     return;
   }
+  el.lifetimePointsPill.classList.remove("syncing");
   const dashPoints = Number(state.challengeDashboard?.lifetimePoints);
   const userPoints = Number(state.account?.user?.lifetimePoints);
   const cachedPoints = Number(localStorage.getItem("ezra_last_lifetime_points"));
