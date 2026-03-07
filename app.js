@@ -2199,6 +2199,7 @@ const el = {
   accountToggleAvatar: document.getElementById("account-toggle-avatar"),
   accountToggleAvatarFallback: document.getElementById("account-toggle-avatar-fallback"),
   accountPanel: document.getElementById("account-panel"),
+  accountCloseBtn: document.getElementById("account-close-btn"),
   accountAuthSignedOut: document.getElementById("account-auth-signedout"),
   accountAuthSignedIn: document.getElementById("account-auth-signedin"),
   accountNameInput: document.getElementById("account-name-input"),
@@ -2523,6 +2524,11 @@ function addNotification(message, meta = {}) {
 function renderLifetimePointsPill() {
   if (!el.lifetimePointsPill) return;
   if (!accountSignedIn()) {
+    el.lifetimePointsPill.textContent = "Total points: --";
+    return;
+  }
+  const phase = String(state.account?.phase || "");
+  if (phase === "SYNCING_PROFILE" || phase === "RESTORING_SESSION") {
     el.lifetimePointsPill.textContent = "Total points: --";
     return;
   }
@@ -3130,6 +3136,11 @@ function candidateFamilyMemberKeys() {
   if (name) {
     keys.add(`acct:${name}`);
     keys.add(name);
+    const lowerName = name.toLowerCase();
+    if (lowerName !== name) {
+      keys.add(`acct:${lowerName}`);
+      keys.add(lowerName);
+    }
   }
   return [...keys].filter(Boolean);
 }
@@ -8502,8 +8513,8 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
       renderAccountUI();
       throw err;
     } finally {
+      state.account.bootstrapInFlight = false; // Always clear; prevents stuck loader on stale/timed-out attempts
       if (!attemptId || isActiveAccountRestoreAttempt(attemptId)) {
-        state.account.bootstrapInFlight = false;
         state.account.bootstrapPromise = null;
       }
     }
@@ -12513,6 +12524,10 @@ function attachEvents() {
       setNotificationsOpen(false);
       setAccountMenuOpen(!state.accountMenuOpen);
     });
+  }
+
+  if (el.accountCloseBtn) {
+    el.accountCloseBtn.addEventListener("click", () => setAccountMenuOpen(false));
   }
 
   if (el.notificationsToggleBtn) {

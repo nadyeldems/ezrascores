@@ -1021,11 +1021,14 @@ function predictionEntriesForUser(state, userId, userName = "") {
   if (!predictions || typeof predictions !== "object") return [];
   const userIdText = String(userId || "").trim();
   const userNameText = String(userName || state?.account?.user?.name || "").trim();
+  const lowerNameText = userNameText.toLowerCase();
   const candidateKeys = [
     userIdText ? `acct:${userIdText}` : "",
     userIdText,
     userNameText ? `acct:${userNameText}` : "",
     userNameText,
+    lowerNameText && lowerNameText !== userNameText ? `acct:${lowerNameText}` : "",
+    lowerNameText && lowerNameText !== userNameText ? lowerNameText : "",
   ].filter(Boolean);
   const rows = [];
   for (const record of Object.values(predictions)) {
@@ -1164,8 +1167,8 @@ async function setAppSetting(db, key, value) {
 }
 
 async function runPredictionKeyNormalizerOnce(db) {
-  const doneKey = "prediction_key_normalizer_v1_done";
-  const runKey = "prediction_key_normalizer_v1_running";
+  const doneKey = "prediction_key_normalizer_v2_done";
+  const runKey = "prediction_key_normalizer_v2_running";
   const existingDone = await getAppSetting(db, doneKey);
   if (existingDone) {
     let parsed = {};
