@@ -10053,10 +10053,17 @@ function ensureFixtureBadgeContainer(summaryEl) {
   return container;
 }
 
-function renderFixtureBadges(summaryEl, event, { pinned = false } = {}) {
+function renderFixtureBadges(summaryEl, event, { pinned = false, featured = false } = {}) {
   const container = ensureFixtureBadgeContainer(summaryEl);
   if (!container) return;
   container.innerHTML = "";
+
+  if (featured) {
+    const featuredEl = document.createElement("span");
+    featuredEl.className = "fixture-ribbon fixture-ribbon-featured";
+    featuredEl.textContent = "★ Bonus Points";
+    container.appendChild(featuredEl);
+  }
 
   if (pinned) {
     const pinnedEl = document.createElement("span");
@@ -10086,7 +10093,9 @@ function refreshVisibleFixturePredictionBadges() {
     const homeName = event.strHomeTeam || "TBC";
     const awayName = event.strAwayTeam || "TBC";
     const hasFavorite = Boolean(favName && (homeName === favName || awayName === favName));
-    renderFixtureBadges(summaryEl, event, { pinned: hasFavorite });
+    const featuredId = String(state.dailyFixture.data?.eventId || "");
+    const isFeatured = Boolean(featuredId && event.idEvent && String(event.idEvent) === featuredId);
+    renderFixtureBadges(summaryEl, event, { pinned: hasFavorite, featured: isFeatured });
   });
 }
 
@@ -10612,7 +10621,9 @@ function renderFixtureList(target, events, mode) {
     if (hasFavorite) {
       node.classList.add("has-favorite");
     }
-    renderFixtureBadges(node.querySelector("summary"), event, { pinned: hasFavorite });
+    const featuredId = String(state.dailyFixture.data?.eventId || "");
+    const isFeatured = Boolean(featuredId && event.idEvent && String(event.idEvent) === featuredId);
+    renderFixtureBadges(node.querySelector("summary"), event, { pinned: hasFavorite, featured: isFeatured });
 
     if (state.focusedFixtureKey) {
       node.classList.toggle("fixture-focus", state.focusedFixtureKey === key);
