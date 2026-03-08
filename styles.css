@@ -2439,14 +2439,13 @@ body.league-member-overlay-open::before {
 }
 
 .account-toggle-avatar {
-  width: 2.84rem;
-  height: 2.84rem;
-  border-radius: 0.34rem;
+  width: 100%;
+  height: 100%;
+  border-radius: 0.36rem;
   border: 1px solid rgba(255, 181, 84, 0.88);
   object-fit: contain;
   object-position: center;
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.3), #0f0703 72%);
-  padding: 0.05rem;
   display: block;
   box-shadow: 0 0 0 2px rgba(255, 168, 72, 0.2), 0 0.35rem 0.85rem rgba(0, 0, 0, 0.42);
   image-rendering: auto;
@@ -2967,12 +2966,49 @@ body[data-motion="minimal"] .avatar-hero-img {
 
 .family-home-controls {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   margin-bottom: 0.28rem;
+}
+
+.family-snapshot-league-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--amber, #ff9820);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .family-home-toggle-btn {
   min-height: 1.9rem;
+}
+
+.family-deleting-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  border-radius: 0.8rem;
+  background: rgba(8, 5, 2, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+
+.family-deleting-label {
+  color: #ffcb82;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  animation: deleting-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes deleting-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 .fun-card {
@@ -2980,6 +3016,7 @@ body[data-motion="minimal"] .avatar-hero-img {
   border-radius: 0.8rem;
   padding: 0.55rem;
   background: rgba(10, 6, 3, 0.56);
+  position: relative;
 }
 
 .compact-head {

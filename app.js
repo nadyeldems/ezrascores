@@ -5413,18 +5413,21 @@ function renderFamilyLeaguePanel() {
   if (el.familyLeagueNameInput) {
     el.familyLeagueNameInput.value = leagueName;
     el.familyLeagueNameInput.disabled = !accountSignedIn() || !code || !isOwner;
-    el.familyLeagueNameInput.title = isOwner ? "Set league name" : "Only league owner can rename this league";
+    el.familyLeagueNameInput.title = "Set league name";
+    el.familyLeagueNameInput.classList.toggle("hidden", !isOwner || !code);
   }
   if (el.familyLeagueNameSaveBtn) {
     el.familyLeagueNameSaveBtn.disabled = !accountSignedIn() || !code || !isOwner;
-    el.familyLeagueNameSaveBtn.title = isOwner ? "Save league name" : "Only league owner can rename this league";
+    el.familyLeagueNameSaveBtn.title = "Save league name";
+    el.familyLeagueNameSaveBtn.classList.toggle("hidden", !isOwner || !code);
   }
   if (el.familyPrevLeagueBtn) el.familyPrevLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   if (el.familyNextLeagueBtn) el.familyNextLeagueBtn.disabled = !accountSignedIn() || joinedCount < 2;
   if (el.familyDeleteCodeBtn) {
-    const canDelete = Boolean(accountSignedIn() && currentLeague?.code);
+    const canDelete = Boolean(accountSignedIn() && currentLeague?.code && isOwner);
     el.familyDeleteCodeBtn.disabled = !canDelete;
-    el.familyDeleteCodeBtn.title = canDelete ? "Delete this league (owner only)" : "Select a league first";
+    el.familyDeleteCodeBtn.title = "Delete this league";
+    el.familyDeleteCodeBtn.classList.toggle("hidden", !isOwner || !code);
   }
   if (el.familyShareCodeBtn) {
     const canShare = Boolean(accountSignedIn() && currentLeague?.code);
@@ -5472,6 +5475,7 @@ function renderFamilyLeaguePanel() {
     const controls = document.createElement("div");
     controls.className = "family-home-controls";
     controls.innerHTML = `
+      ${code ? `<span class="family-snapshot-league-name">${escapeHtml(leagueName)}</span>` : ""}
       <button class="btn family-home-toggle-btn" type="button">
         ${state.familyLeague.homeExpanded ? "Collapse Snapshot" : "Show Full League"}
       </button>
@@ -13034,13 +13038,20 @@ function attachEvents() {
     el.familyDeleteCodeBtn.addEventListener("click", async () => {
       const currentLeague = currentSelectedLeagueRecord();
       if (!currentLeague?.code) return;
-      const confirmed = window.confirm(`Delete league ${currentLeague.code}? This cannot be undone.`);
+      const confirmed = window.confirm(`Delete league "${currentLeague.name || currentLeague.code}"? This cannot be undone.`);
       if (!confirmed) return;
+      const panel = document.getElementById("family-league-panel");
+      const overlay = document.createElement("div");
+      overlay.className = "family-deleting-overlay";
+      overlay.innerHTML = `<span class="family-deleting-label">Deleting league...</span>`;
+      panel?.appendChild(overlay);
       try {
         await deleteFamilyLeagueCode();
         renderFamilyLeaguePanel();
       } catch (err) {
         setAccountStatus(`Delete league failed: ${err.message}`, true);
+      } finally {
+        overlay.remove();
       }
     });
   }
