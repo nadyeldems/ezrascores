@@ -100,19 +100,24 @@ async function runProtectedCron(env, path) {
 async function runJobs(env) {
   const now = new Date();
   const shouldRunFixtures = now.getUTCMinutes() === 0 && now.getUTCHours() % 3 === 0;
-  const [tables, settle, fixtures] = await Promise.all([
+  const shouldRunDailyFixture = now.getUTCMinutes() === 0; // Every hour; no-op if already set for today
+  const [tables, settle, fixtures, dailyFixture] = await Promise.all([
     warmTables(env),
     runProtectedCron(env, "/api/v1/ezra/account/cron/settle"),
     shouldRunFixtures
       ? runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures")
       : Promise.resolve({ ok: true, skipped: true, reason: "Runs every 3 hours at minute 00" }),
+    shouldRunDailyFixture
+      ? runProtectedCron(env, "/api/v1/ezra/account/cron/daily-fixture")
+      : Promise.resolve({ ok: true, skipped: true, reason: "Runs at minute 00 only" }),
   ]);
   return {
-    ok: Boolean(tables.ok && fixtures.ok && settle.ok),
+    ok: Boolean(tables.ok && fixtures.ok && settle.ok && dailyFixture.ok),
     at: new Date().toISOString(),
     tables,
     fixtures,
     settle,
+    dailyFixture,
   };
 }
 
@@ -136,6 +141,13 @@ export default {
     }
     if (url.pathname === "/fixtures-backfill") {
       const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures");
+      return new Response(JSON.stringify(payload, null, 2), {
+        status: payload.ok ? 200 : 502,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+    if (url.pathname === "/daily-fixture-now") {
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/daily-fixture");
       return new Response(JSON.stringify(payload, null, 2), {
         status: payload.ok ? 200 : 502,
         headers: { "Content-Type": "application/json; charset=utf-8" },

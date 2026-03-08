@@ -999,6 +999,12 @@ function todayIsoUtc() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function tomorrowIsoUtc() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function parseIsoDateMs(value) {
   const raw = String(value || "").trim();
   if (!raw) return Number.NaN;
@@ -4237,21 +4243,10 @@ async function handleUsersSearch(db, request) {
 }
 
 // Daily featured fixture — same for all users, resets at midnight UTC.
-async function handleDailyFixture(db, request, key) {
-  const { session } = await accountAuth(db, request);
-  if (!session) return json({ error: "Unauthorized" }, 401);
-  const todayKey = `daily_quest_fixture_${todayIsoUtc()}`;
-  const cached = await getAppSetting(db, todayKey);
-  if (cached) {
-    try {
-      return json({ fixture: JSON.parse(cached) }, 200, { "Cache-Control": "no-store" });
-    } catch { /* fall through to refresh */ }
-  }
-
-  // Fetch today's fixtures (and up to 2 days ahead) from SportsDB and pick one at random.
-  const sportsKey = String(key || "074910");
-  let chosenFixture = null;
-  const leagueIds = ["4328", "4329", "4335"]; // EPL, Championship, La Liga
+// Shared helper: pick a featured fixture from ezra_fixtures_cache (no TheSportsDB call).
+// datesToTry is an array of ISO date strings to attempt in order (e.g. [today, tomorrow]).
+async function selectFeaturedFixtureFromCache(db, datesToTry) {
+  const leagueIds = ["4328", "4329", "4335"];
   const shuffle = (arr) => {
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) {
@@ -4260,41 +4255,72 @@ async function handleDailyFixture(db, request, key) {
     }
     return a;
   };
-  // Try today first, then next 2 days as fallback so non-match days still surface an upcoming fixture.
-  const datesToTry = [0, 1, 2].map((offset) => {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() + offset);
-    return d.toISOString().slice(0, 10);
-  });
-  outer: for (const dateStr of datesToTry) {
+  for (const dateStr of datesToTry) {
     for (const leagueId of shuffle(leagueIds)) {
-      try {
-        const url = `https://www.thesportsdb.com/api/v1/json/${sportsKey}/eventsday.php?d=${dateStr}&l=${leagueId}`;
-        const res = await fetchWithTimeout(url, {}, 8000);
-        if (!res.ok) continue;
-        const data = await res.json();
-        // For today: skip started/live matches. For future days: include all (they haven't started).
-        const events = Array.isArray(data?.events)
-          ? data.events.filter((e) => dateStr === datesToTry[0] ? (!isFinalEvent(e) && !isLiveEvent(e)) : !isFinalEvent(e))
-          : [];
-        if (!events.length) continue;
-        const evt = shuffle(events)[0];
-        chosenFixture = {
-          eventId: String(evt.idEvent || ""),
-          homeTeam: String(evt.strHomeTeam || ""),
-          awayTeam: String(evt.strAwayTeam || ""),
-          kickoff: evt.dateEvent && evt.strTime ? `${evt.dateEvent}T${normalizeTime(evt.strTime)}Z` : "",
-          leagueId,
-        };
-        break outer;
-      } catch { /* try next league */ }
+      const rows = await db
+        .prepare(
+          `SELECT payload_json FROM ezra_fixtures_cache
+           WHERE date_event = ?1 AND league_id = ?2
+             AND (LOWER(COALESCE(status_text, '')) NOT LIKE '%match finish%'
+               AND LOWER(COALESCE(status_text, '')) NOT LIKE '%full time%')
+           ORDER BY str_time ASC LIMIT 10`
+        )
+        .bind(dateStr, leagueId)
+        .all();
+      const events = (rows?.results || [])
+        .map((r) => { try { return JSON.parse(r.payload_json); } catch { return null; } })
+        .filter(Boolean);
+      if (!events.length) continue;
+      const evt = shuffle(events)[0];
+      return {
+        eventId: String(evt.idEvent || ""),
+        homeTeam: String(evt.strHomeTeam || ""),
+        awayTeam: String(evt.strAwayTeam || ""),
+        kickoff: evt.dateEvent && evt.strTime ? `${evt.dateEvent}T${normalizeTime(evt.strTime)}Z` : "",
+        leagueId,
+      };
     }
   }
+  return null;
+}
 
-  if (chosenFixture) {
-    await setAppSetting(db, todayKey, JSON.stringify(chosenFixture));
+// Cron handler: pre-populate today's featured fixture from ezra_fixtures_cache.
+// No-op if today's key is already set; tries tomorrow as fallback on days with no matches.
+async function handleCronDailyFixture(db) {
+  const today = todayIsoUtc();
+  const todayKey = `daily_quest_fixture_${today}`;
+  const existing = await getAppSetting(db, todayKey);
+  if (existing) {
+    try {
+      JSON.parse(existing);
+      return { ok: true, cached: true, date: today };
+    } catch { /* corrupt value — fall through to refresh */ }
   }
-  return json({ fixture: chosenFixture }, 200, { "Cache-Control": "no-store" });
+  const fixture = await selectFeaturedFixtureFromCache(db, [today, tomorrowIsoUtc()]);
+  if (fixture) {
+    await setAppSetting(db, todayKey, JSON.stringify(fixture));
+  }
+  return { ok: true, cached: false, date: today, fixture: fixture || null };
+}
+
+async function handleDailyFixture(db, request) {
+  const { session } = await accountAuth(db, request);
+  if (!session) return json({ error: "Unauthorized" }, 401);
+  const today = todayIsoUtc();
+  const todayKey = `daily_quest_fixture_${today}`;
+  // Return cron-pre-populated value if already set.
+  const cached = await getAppSetting(db, todayKey);
+  if (cached) {
+    try {
+      return json({ fixture: JSON.parse(cached) }, 200, { "Cache-Control": "no-store" });
+    } catch { /* corrupt value — fall through */ }
+  }
+  // Fallback: cron hasn't run yet — select from DB cache and store for this request.
+  const fixture = await selectFeaturedFixtureFromCache(db, [today, tomorrowIsoUtc()]);
+  if (fixture) {
+    await setAppSetting(db, todayKey, JSON.stringify(fixture));
+  }
+  return json({ fixture: fixture || null }, 200, { "Cache-Control": "no-store" });
 }
 
 // League season archive — titles won per season.
@@ -4647,7 +4673,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       return handleUsersSearch(db, request);
     }
     if (route === "daily-fixture" && request.method === "GET") {
-      return handleDailyFixture(db, request, key);
+      return handleDailyFixture(db, request);
     }
     if (route === "league/standings" && request.method === "GET") {
       return handlePublicLeagueStandings(db, request, key);
@@ -4694,6 +4720,14 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       }
       await setIngestStateNumber(db, "fixtures_backfill_cursor", nextCursor);
       return json({ ok: true, date: todayIso, cursor, nextCursor, chunk, results }, 200);
+    }
+    if (route === "cron/daily-fixture" && (request.method === "POST" || request.method === "GET")) {
+      const incoming = String(request.headers.get("x-ezra-cron-secret") || "").trim();
+      const configured = String(env.EZRA_CRON_SECRET || "").trim();
+      if (!configured || incoming !== configured) {
+        return json({ error: "Unauthorized cron call" }, 401);
+      }
+      return json(await handleCronDailyFixture(db));
     }
     if (route === "cron/fixtures/full" && (request.method === "POST" || request.method === "GET")) {
       const incoming = String(request.headers.get("x-ezra-cron-secret") || "").trim();
