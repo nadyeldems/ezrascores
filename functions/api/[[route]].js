@@ -3517,15 +3517,25 @@ async function handleAccountBootstrap(context, db, request, key) {
     const normalizedJson = JSON.stringify(userState);
     const normalizeUserId = session.user_id;
     const normalizeNow = new Date().toISOString();
+    // The updated_at we read — used for optimistic concurrency in the deferred write below.
+    const originalUpdatedAt = stateRow?.updated_at || null;
     // Defer the slow DB write + per-league re-scoring to a background task so the
     // HTTP response is returned immediately with the already-corrected in-memory state.
     context.waitUntil(
       (async () => {
         try {
-          await db
-            .prepare("UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1")
-            .bind(normalizeUserId, normalizedJson, normalizeNow)
+          // IMPORTANT: only write if the state has not been modified since we read it.
+          // A client PUT (e.g. saving a new prediction) may have run between the bootstrap
+          // read and this waitUntil firing, and that newer state must not be overwritten.
+          const writeResult = await db
+            .prepare(
+              "UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1 AND updated_at IS ?4"
+            )
+            .bind(normalizeUserId, normalizedJson, normalizeNow, originalUpdatedAt)
             .run();
+          // If 0 rows were changed the client already wrote a newer state — skip re-scoring
+          // as the cron/settle job will pick it up on its next run.
+          if (!writeResult?.meta?.changes) return;
           // Re-settle scores for every league this user is in so standings update.
           const leagueMemberRows = await db
             .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1")

@@ -9069,6 +9069,7 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
       throw err;
     } finally {
       state.account.bootstrapInFlight = false; // Always clear; prevents stuck loader on stale/timed-out attempts
+      renderAccountProgress(); // Re-render now that bootstrapInFlight is false so the spinner clears
       if (!attemptId || isActiveAccountRestoreAttempt(attemptId)) {
         state.account.bootstrapPromise = null;
       }
