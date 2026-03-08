@@ -149,18 +149,31 @@
                   <div class="account-actions">
                     <button id="account-register-btn" class="btn" type="button">Create Account</button>
                     <button id="account-login-btn" class="btn" type="button">Sign In</button>
-                    <button id="account-forgot-btn" class="btn" type="button">Forgot PIN?</button>
                   </div>
-                  <div id="account-recovery-box" class="account-recovery-box hidden">
+                  <button id="account-forgot-btn" class="btn-link recovery-back-link" type="button">Forgot PIN?</button>
+                </div>
+                <div id="account-recovery-box" class="account-recovery-box hidden">
+                  <div class="recovery-header">
+                    <span class="recovery-title">Reset your PIN</span>
+                    <span id="account-recovery-step-label" class="recovery-step-label">Step 1 of 2 — Request a code</span>
+                  </div>
+                  <div id="account-recovery-step-1">
+                    <input id="account-recovery-name-input" class="account-input" type="text" maxlength="32" placeholder="Your display name" />
                     <input id="account-recovery-email-input" class="account-input" type="email" maxlength="254" placeholder="Recovery email" />
-                    <input id="account-recovery-code-input" class="account-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Recovery code from email (6 digits)" />
-                    <input id="account-recovery-new-pin-input" class="account-input" type="password" maxlength="24" placeholder="New PIN / passcode" />
                     <div class="account-actions">
-                      <button id="account-recovery-send-btn" class="btn" type="button">Send Reset Code</button>
-                      <button id="account-recovery-reset-btn" class="btn" type="button">Reset PIN</button>
-                      <button id="account-recovery-cancel-btn" class="btn" type="button">Back to Sign In</button>
+                      <button id="account-recovery-send-btn" class="btn" type="button">Send Code</button>
                     </div>
                   </div>
+                  <div id="account-recovery-step-2" class="hidden">
+                    <p id="account-recovery-email-hint" class="recovery-email-hint"></p>
+                    <input id="account-recovery-code-input" class="account-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-digit code from email" />
+                    <input id="account-recovery-new-pin-input" class="account-input" type="password" maxlength="24" placeholder="New PIN / passcode" />
+                    <div class="account-actions">
+                      <button id="account-recovery-reset-btn" class="btn" type="button">Set New PIN</button>
+                    </div>
+                    <button id="account-recovery-resend-btn" class="btn-link recovery-back-link" type="button">Resend code</button>
+                  </div>
+                  <button id="account-recovery-cancel-btn" class="btn-link recovery-back-link" type="button">← Back to sign in</button>
                 </div>
                 <div id="account-auth-signedin" class="account-auth-box hidden">
                   <p id="account-user-label" class="muted">Signed in</p>

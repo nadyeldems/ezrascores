@@ -2069,6 +2069,7 @@ const state = {
     token: STORED_ACCOUNT_TOKEN,
     user: null,
     recoveryOpen: false,
+    recoveryStep: 1,
     phase: STORED_ACCOUNT_TOKEN ? "RESTORING_SESSION" : "SIGNED_OUT",
     uiState: "SIGNED_OUT_IDLE",
     keepLoggedIn: EFFECTIVE_KEEP_LOGGED_IN,
@@ -2227,9 +2228,15 @@ const el = {
   accountRecoveryBox: document.getElementById("account-recovery-box"),
   accountRecoveryCodeInput: document.getElementById("account-recovery-code-input"),
   accountRecoveryNewPinInput: document.getElementById("account-recovery-new-pin-input"),
+  accountRecoveryNameInput: document.getElementById("account-recovery-name-input"),
+  accountRecoveryStep1: document.getElementById("account-recovery-step-1"),
+  accountRecoveryStep2: document.getElementById("account-recovery-step-2"),
+  accountRecoveryStepLabel: document.getElementById("account-recovery-step-label"),
+  accountRecoveryEmailHint: document.getElementById("account-recovery-email-hint"),
   accountRecoverySendBtn: document.getElementById("account-recovery-send-btn"),
   accountRecoveryResetBtn: document.getElementById("account-recovery-reset-btn"),
   accountRecoveryCancelBtn: document.getElementById("account-recovery-cancel-btn"),
+  accountRecoveryResendBtn: document.getElementById("account-recovery-resend-btn"),
   accountEmailManageInput: document.getElementById("account-email-manage-input"),
   accountKeepLoggedInSignedIn: document.getElementById("account-keep-logged-in-signedin"),
   accountAvatarPreview: document.getElementById("account-avatar-preview"),
@@ -2804,16 +2811,32 @@ function updateAccountControlsState() {
 function setAccountRecoveryOpen(open) {
   if (accountSignedIn()) return;
   state.account.recoveryOpen = Boolean(open);
-  if (el.accountRecoveryBox) {
-    el.accountRecoveryBox.classList.toggle("hidden", !state.account.recoveryOpen);
-  }
+  el.accountRecoveryBox?.classList.toggle("hidden", !open);
+  el.accountAuthSignedOut?.classList.toggle("hidden", open);
   if (el.accountForgotBtn) {
-    el.accountForgotBtn.setAttribute("aria-expanded", String(state.account.recoveryOpen));
-    el.accountForgotBtn.textContent = state.account.recoveryOpen ? "Hide Reset" : "Forgot PIN?";
+    el.accountForgotBtn.setAttribute("aria-expanded", String(open));
   }
-  if (state.account.recoveryOpen && el.accountRecoveryEmailInput) {
-    el.accountRecoveryEmailInput.focus();
+  if (open) {
+    setRecoveryStep(1);
+    el.accountRecoveryNameInput?.focus();
+  } else {
+    [el.accountRecoveryNameInput, el.accountRecoveryEmailInput,
+     el.accountRecoveryCodeInput, el.accountRecoveryNewPinInput].forEach((inp) => { if (inp) inp.value = ""; });
+    if (el.accountRecoveryEmailHint) el.accountRecoveryEmailHint.textContent = "";
+    el.accountPinInput?.focus();
   }
+}
+
+function setRecoveryStep(step) {
+  state.account.recoveryStep = step;
+  el.accountRecoveryStep1?.classList.toggle("hidden", step !== 1);
+  el.accountRecoveryStep2?.classList.toggle("hidden", step !== 2);
+  if (el.accountRecoveryStepLabel) {
+    el.accountRecoveryStepLabel.textContent = step === 1
+      ? "Step 1 of 2 — Request a code"
+      : "Step 2 of 2 — Enter your code";
+  }
+  if (step === 2) el.accountRecoveryCodeInput?.focus();
 }
 
 function setAccountStatus(text, isError = false) {
@@ -9347,28 +9370,30 @@ async function loginAccount() {
 }
 
 async function startPinRecovery() {
-  const name = String(el.accountNameInput?.value || "").trim();
+  const name = String(el.accountRecoveryNameInput?.value || "").trim();
   const email = String(el.accountRecoveryEmailInput?.value || "").trim();
   if (!name || !email) {
-    throw new Error("Enter your display name and recovery email first.");
+    throw new Error("Enter your display name and recovery email.");
   }
   const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/recovery/start`, { name, email });
-  setAccountRecoveryOpen(true);
+  if (el.accountRecoveryEmailHint) {
+    el.accountRecoveryEmailHint.textContent = `Code sent to ${email}`;
+  }
   if (el.accountRecoveryCodeInput) {
     el.accountRecoveryCodeInput.value = data?.devCode ? String(data.devCode) : "";
-    el.accountRecoveryCodeInput.focus();
   }
-  const fallback = data?.detail ? `${data.detail}${data?.devCode ? ` Dev code: ${data.devCode}` : ""}` : "Check your email for the recovery code.";
+  setRecoveryStep(2);
+  const fallback = data?.detail ? data.detail : "Check your email for the 6-digit code.";
   setAccountStatus(data?.sent ? "Recovery code sent. Check your inbox." : fallback, !data?.sent);
 }
 
 async function completePinRecovery() {
-  const name = String(el.accountNameInput?.value || "").trim();
+  const name = String(el.accountRecoveryNameInput?.value || "").trim();
   const email = String(el.accountRecoveryEmailInput?.value || "").trim();
   const code = String(el.accountRecoveryCodeInput?.value || "").trim();
   const newPin = String(el.accountRecoveryNewPinInput?.value || "");
   if (!name || !email || !code || !newPin) {
-    throw new Error("Enter name, email, recovery code, and a new PIN.");
+    throw new Error("Enter your name, email, the recovery code, and a new PIN.");
   }
   const data = await apiRequest("POST", `${API_PROXY_BASE}/v1/ezra/account/recovery/complete`, { name, email, code, newPin });
   state.account.token = data.token || "";
@@ -9378,6 +9403,7 @@ async function completePinRecovery() {
   state.account.keepLoggedIn = Boolean(getKeepLoggedInSelection());
   storeAccountToken(state.account.token, state.account.keepLoggedIn);
   if (el.accountPinInput) el.accountPinInput.value = "";
+  if (el.accountRecoveryNameInput) el.accountRecoveryNameInput.value = "";
   if (el.accountRecoveryEmailInput) el.accountRecoveryEmailInput.value = "";
   if (el.accountRecoveryCodeInput) el.accountRecoveryCodeInput.value = "";
   if (el.accountRecoveryNewPinInput) el.accountRecoveryNewPinInput.value = "";
@@ -12579,8 +12605,14 @@ function attachEvents() {
   if (el.accountRecoveryCancelBtn) {
     el.accountRecoveryCancelBtn.addEventListener("click", () => {
       setAccountRecoveryOpen(false);
-      if (el.accountPinInput) el.accountPinInput.focus();
-      setAccountStatus("Back to sign in.");
+      setAccountStatus("");
+    });
+  }
+
+  if (el.accountRecoveryResendBtn) {
+    el.accountRecoveryResendBtn.addEventListener("click", () => {
+      setRecoveryStep(1);
+      setAccountStatus("Enter your details and request a new code.");
     });
   }
 

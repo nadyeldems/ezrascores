@@ -2333,9 +2333,67 @@ body.league-member-overlay-open::before {
 .account-recovery-box {
   display: grid;
   gap: 0.35rem;
+}
+
+.recovery-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 0.1rem;
+}
+
+.recovery-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.recovery-step-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.recovery-email-hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0;
+  padding-bottom: 0.1rem;
+}
+
+.recovery-back-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
   margin-top: 0.15rem;
-  padding-top: 0.2rem;
-  border-top: 1px dashed var(--line-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.recovery-back-link:hover {
+  color: var(--text);
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0.1rem 0;
+  font-family: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.btn-link:hover {
+  color: var(--text);
 }
 
 .account-input {
