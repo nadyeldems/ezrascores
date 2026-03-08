@@ -2428,13 +2428,14 @@ body.league-member-overlay-open::before {
   height: 18px;
 }
 
-.account-avatar-btn {
+button.account-avatar-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   width: 3.05rem;
   height: 3.05rem;
+  min-height: unset;
   border-radius: 0.42rem;
   overflow: hidden;
 }
@@ -2444,8 +2445,8 @@ body.league-member-overlay-open::before {
   height: 100%;
   border-radius: 0;
   border: none;
-  object-fit: contain;
-  object-position: center;
+  object-fit: cover;
+  object-position: center top;
   background: radial-gradient(circle at 35% 30%, rgba(255, 176, 79, 0.3), #0f0703 72%);
   display: block;
   image-rendering: auto;
