@@ -4248,9 +4248,8 @@ async function handleDailyFixture(db, request, key) {
     } catch { /* fall through to refresh */ }
   }
 
-  // Fetch today's fixtures from SportsDB and pick one at random.
+  // Fetch today's fixtures (and up to 2 days ahead) from SportsDB and pick one at random.
   const sportsKey = String(key || "074910");
-  const todayStr = todayIsoUtc();
   let chosenFixture = null;
   const leagueIds = ["4328", "4329", "4335"]; // EPL, Championship, La Liga
   const shuffle = (arr) => {
@@ -4261,24 +4260,35 @@ async function handleDailyFixture(db, request, key) {
     }
     return a;
   };
-  for (const leagueId of shuffle(leagueIds)) {
-    try {
-      const url = `https://www.thesportsdb.com/api/v1/json/${sportsKey}/eventsday.php?d=${todayStr}&l=${leagueId}`;
-      const res = await fetchWithTimeout(url, {}, 8000);
-      if (!res.ok) continue;
-      const data = await res.json();
-      const events = Array.isArray(data?.events) ? data.events.filter((e) => !isFinalEvent(e) && !isLiveEvent(e)) : [];
-      if (!events.length) continue;
-      const evt = shuffle(events)[0];
-      chosenFixture = {
-        eventId: String(evt.idEvent || ""),
-        homeTeam: String(evt.strHomeTeam || ""),
-        awayTeam: String(evt.strAwayTeam || ""),
-        kickoff: evt.dateEvent && evt.strTime ? `${evt.dateEvent}T${normalizeTime(evt.strTime)}Z` : "",
-        leagueId,
-      };
-      break;
-    } catch { /* try next league */ }
+  // Try today first, then next 2 days as fallback so non-match days still surface an upcoming fixture.
+  const datesToTry = [0, 1, 2].map((offset) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + offset);
+    return d.toISOString().slice(0, 10);
+  });
+  outer: for (const dateStr of datesToTry) {
+    for (const leagueId of shuffle(leagueIds)) {
+      try {
+        const url = `https://www.thesportsdb.com/api/v1/json/${sportsKey}/eventsday.php?d=${dateStr}&l=${leagueId}`;
+        const res = await fetchWithTimeout(url, {}, 8000);
+        if (!res.ok) continue;
+        const data = await res.json();
+        // For today: skip started/live matches. For future days: include all (they haven't started).
+        const events = Array.isArray(data?.events)
+          ? data.events.filter((e) => dateStr === datesToTry[0] ? (!isFinalEvent(e) && !isLiveEvent(e)) : !isFinalEvent(e))
+          : [];
+        if (!events.length) continue;
+        const evt = shuffle(events)[0];
+        chosenFixture = {
+          eventId: String(evt.idEvent || ""),
+          homeTeam: String(evt.strHomeTeam || ""),
+          awayTeam: String(evt.strAwayTeam || ""),
+          kickoff: evt.dateEvent && evt.strTime ? `${evt.dateEvent}T${normalizeTime(evt.strTime)}Z` : "",
+          leagueId,
+        };
+        break outer;
+      } catch { /* try next league */ }
+    }
   }
 
   if (chosenFixture) {

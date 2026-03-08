@@ -464,20 +464,6 @@ body[data-theme="club"] .footer {
   white-space: nowrap;
 }
 
-.panel-enter {
-  animation: panel-enter-fade 200ms ease;
-}
-
-@keyframes panel-enter-fade {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
 
 .mobile-tabs {
   display: grid;
@@ -3152,15 +3138,6 @@ body[data-motion="minimal"] .avatar-hero-img {
   background: rgba(0, 0, 0, 0.2);
 }
 
-.family-points {
-  display: inline-flex;
-  min-width: 2rem;
-  justify-content: center;
-  align-items: center;
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  padding: 0.05rem 0.42rem;
-}
 
 .title-badge {
   display: inline-flex;

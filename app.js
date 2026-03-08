@@ -1484,8 +1484,10 @@ function avatarSeedIndex(seed, modulo) {
 }
 
 function accountLifetimePoints() {
-  const raw = Number(state.challengeDashboard?.lifetimePoints);
-  return Number.isFinite(raw) ? Math.max(0, raw) : 0;
+  const dash = Number(state.challengeDashboard?.lifetimePoints);
+  if (Number.isFinite(dash) && dash > 0) return dash;
+  const user = Number(state.account.user?.lifetimePoints);
+  return Number.isFinite(user) ? Math.max(0, user) : 0;
 }
 
 function avatarUnlockStoreKey(user = state.account.user) {
@@ -3836,6 +3838,8 @@ function dailyQuestList() {
     ? "Quest complete. Bonus points awarded."
     : dailyFx
     ? `Predict today's featured match: ${fixtureLabel}`
+    : state.dailyFixture.checked
+    ? "No featured fixture today — check back later."
     : "Loading today's featured fixture...";
   return [
     {
@@ -3845,7 +3849,7 @@ function dailyQuestList() {
       description: fixtureDesc,
       done: fixtureDone,
       buttonLabel: !fixtureDone && dailyFx ? "Go to Fixture" : null,
-      statusLabel: fixtureDone ? "Complete" : null,
+      statusLabel: fixtureDone ? "✓" : null,
       onClick: async () => {
         if (!dailyFx?.eventId) {
           if (!state.dailyFixture.loading) loadDailyFixture();
@@ -3867,7 +3871,7 @@ function dailyQuestList() {
       description: popDone ? "Quest complete. Bonus points awarded." : popStarted ? `${popCorrect}/5 correct today` : "Start the pop quiz and get 5 correct.",
       done: popDone,
       buttonLabel: !popDone && !popStarted ? "Start" : null,
-      statusLabel: popDone ? "Complete" : popStarted ? `${popCorrect}/5` : null,
+      statusLabel: popDone ? "✓" : popStarted ? `${popCorrect}/5` : null,
       onClick: async () => {
         await startPopQuizQuest();
       },
@@ -3883,7 +3887,7 @@ function dailyQuestList() {
         : "Start quest to get a random player from any league.",
       done: randomDone,
       buttonLabel: !randomDone && !randomStarted ? "Start Quest" : null,
-      statusLabel: randomDone ? "Complete" : randomStarted ? "Target Active" : null,
+      statusLabel: randomDone ? "✓" : randomStarted ? "Active" : null,
       onClick: async () => {
         await startQuestRandomPlayer();
         renderMissionsPanel();
@@ -3900,7 +3904,7 @@ function dailyQuestList() {
         : "Answer 3 daily club questions to earn bonus points.",
       done: clubDone,
       buttonLabel: !clubDone ? (clubStarted ? "Continue Quiz" : "Start Quiz") : null,
-      statusLabel: clubDone ? "Complete" : clubStarted ? `${clubAnswered}/3` : null,
+      statusLabel: clubDone ? "✓" : clubStarted ? `${clubAnswered}/3` : null,
       onClick: async () => {
         await startClubQuiz();
       },
@@ -3918,6 +3922,7 @@ async function loadDailyFixture(force = false) {
     const data = await apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/daily-fixture`, null, state.account.token);
     state.dailyFixture.data = data?.fixture || null;
     state.dailyFixture.at = Date.now();
+    state.dailyFixture.checked = true;
   } catch { /* silently ignore */ }
   state.dailyFixture.loading = false;
   renderMissionsPanel();
@@ -4069,8 +4074,8 @@ function renderLeagueArchive() {
   list.innerHTML = seasons
     .slice(0, 8)
     .map((s) => {
-      const winner = escapeHtml(String(s.winnerName || s.winner_name || "Unknown"));
-      const pts = Number(s.winnerPoints || s.winner_points || 0);
+      const winner = escapeHtml(String(s.userName || s.winnerName || s.winner_name || "Unknown"));
+      const pts = Number(s.points ?? s.winnerPoints ?? s.winner_points ?? 0);
       const range = [s.startsAt || s.starts_at, s.endsAt || s.ends_at].filter(Boolean).map((d) => String(d).slice(0, 10)).join(" – ");
       return `<div class="league-archive-row">
         <span class="league-archive-trophy">🏆</span>
@@ -5352,6 +5357,7 @@ function renderFamilyLeaguePanel() {
     ensureSignedInUserInFamilyLeague();
   }
   const code = String(state.familyLeague.leagueCode || "").toUpperCase();
+  const isLoadingDirectory = state.leagueDirectory.loading || (state.refreshInFlight && !state.boot.firstRefreshDone && accountSignedIn() && !state.leagueDirectory.items.length);
   const joinedCodes = Array.isArray(state.leagueDirectory.items) && state.leagueDirectory.items.length
     ? state.leagueDirectory.items.map((league) => String(league?.code || "").toUpperCase()).filter(Boolean)
     : Array.isArray(state.familyLeague.joinedLeagueCodes)
@@ -5361,7 +5367,11 @@ function renderFamilyLeaguePanel() {
   const currentPos = joinedCount ? state.familyLeague.currentLeagueIndex + 1 : 0;
   const currentLeague = currentSelectedLeagueRecord();
   const leagueName = String(currentLeague?.name || "").trim() || `League ${code || "--"}`;
-  el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"})`;
+  if (isLoadingDirectory && !joinedCount) {
+    el.familyCodeLabel.textContent = code ? `League: ${leagueName} (${code}) — loading…` : "Loading league…";
+  } else {
+    el.familyCodeLabel.textContent = `League ${currentPos}/${joinedCount || 1}: ${leagueName} (${code || "--"})`;
+  }
   const dashboardSeason = state.challengeDashboard?.currentSeason || null;
   const endsAt =
     String(currentLeague?.season?.endsAt || "") ||
@@ -5477,7 +5487,6 @@ function renderFamilyLeaguePanel() {
             : ""
         }
         ${!isSignedInMember ? `<button class="btn btn-inline league-compare-btn" type="button">Compare</button>` : ""}
-        <span class="family-points">${Number(member.points || 0)}</span>
       </div>
     `;
     row.querySelector(".league-follow-btn")?.addEventListener("click", async (event) => {
@@ -8979,6 +8988,7 @@ async function runPostAuthBootstrap(contextLabel = "auth", options = {}) {
         updateLeagueRankSignals(state.leagueDirectory.items, true);
         renderChallengeDashboardPanels();
         renderLifetimePointsPill();
+        renderAvatarPresetGrid(); // Refresh avatar credits/unlock meta after dashboard arrives
         // Celebrate newly unlocked achievements (compare against seen cache).
         const freshAchievements = Array.isArray(state.challengeDashboard?.achievements) ? state.challengeDashboard.achievements : [];
         setTimeout(() => checkForNewAchievements(freshAchievements), 1500);
@@ -11210,14 +11220,7 @@ function renderMainTabButtons() {
 
 function setPanelVisible(panel, visible) {
   if (!panel) return;
-  const shouldHide = !visible;
-  const wasHidden = panel.classList.contains("hidden");
-  panel.classList.toggle("hidden", shouldHide);
-  if (!shouldHide && wasHidden) {
-    panel.classList.remove("panel-enter");
-    requestAnimationFrame(() => panel.classList.add("panel-enter"));
-    setTimeout(() => panel.classList.remove("panel-enter"), 220);
-  }
+  panel.classList.toggle("hidden", !visible);
 }
 
 function renderMobileSectionLayout() {
@@ -12752,16 +12755,7 @@ function attachEvents() {
       }
       const selectedVariant = ensureAvatarVariantUnlocked(currentAccountAvatar().variant);
       if (variant === selectedVariant) {
-        state.avatarPendingConfirmVariant = "";
-        renderAvatarPresetGrid();
         setAccountStatus(`${avatarVariantLabel(variant)} already selected.`);
-        return;
-      }
-      const pending = String(state.avatarPendingConfirmVariant || "").trim();
-      if (pending !== variant) {
-        state.avatarPendingConfirmVariant = variant;
-        renderAvatarPresetGrid();
-        setAccountStatus(`Tap again to confirm ${avatarVariantLabel(variant)}.`);
         return;
       }
       const current = readAvatarEditorState();
