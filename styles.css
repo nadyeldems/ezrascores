@@ -3222,15 +3222,17 @@ body[data-motion="minimal"] .avatar-hero-img {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.35rem;
+  min-width: 1.35rem;
   height: 1.35rem;
-  border-radius: 50%;
+  padding: 0 0.42rem;
+  border-radius: 0.7rem;
   background: rgba(47, 143, 68, 0.18);
   border: 1px solid rgba(47, 143, 68, 0.38);
   color: #7dd89a;
   font-size: 0.78rem;
   font-weight: 700;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .challenge-card {

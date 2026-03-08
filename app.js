@@ -3878,13 +3878,11 @@ function dailyQuestList() {
           if (!state.dailyFixture.loading) loadDailyFixture();
           return;
         }
-        // Navigate to the fixture. Open predict panel.
-        const event = allKnownEventsById().get(String(dailyFx.eventId || ""));
-        if (event) {
-          openFixtureDetail(event);
-        } else {
-          showRewardToast("Fixture not yet in schedule — check back later.");
-        }
+        // Navigate to predict tab and auto-open the fixture.
+        state.openFixtureKey = `id:${dailyFx.eventId}`;
+        const fixtureDate = String(dailyFx.kickoff || "").slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(fixtureDate)) state.selectedDate = fixtureDate;
+        setMainTab("predict");
       },
     },
     {
