@@ -4082,6 +4082,14 @@ async function loadLeagueArchive(leagueCode, force = false) {
   renderLeagueArchive();
 }
 
+function formatArchiveDate(isoDate) {
+  const raw = String(isoDate || "").slice(0, 10);
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const [year, month, day] = raw.split("-").map(Number);
+  return `${day} ${months[month - 1]} ${year}`;
+}
+
 function renderLeagueArchive() {
   const section = el.leagueArchiveSection;
   const list = el.leagueArchiveList;
@@ -4099,14 +4107,15 @@ function renderLeagueArchive() {
     .map((s) => {
       const winner = escapeHtml(String(s.userName || s.winnerName || s.winner_name || "Unknown"));
       const pts = Number(s.points ?? s.winnerPoints ?? s.winner_points ?? 0);
-      const range = [s.startsAt || s.starts_at, s.endsAt || s.ends_at].filter(Boolean).map((d) => String(d).slice(0, 10)).join(" – ");
+      const startDate = s.startsAt || s.starts_at || "";
+      const dateLabel = formatArchiveDate(startDate);
       return `<div class="league-archive-row">
         <span class="league-archive-trophy">🏆</span>
         <div class="league-archive-body">
           <span class="league-archive-winner">${winner}</span>
           <span class="league-archive-pts">${pts} pts</span>
         </div>
-        <span class="league-archive-date">${escapeHtml(range || "--")}</span>
+        ${dateLabel ? `<span class="league-archive-date">${escapeHtml(dateLabel)}</span>` : ""}
       </div>`;
     })
     .join("");
@@ -9499,6 +9508,8 @@ async function logoutAccount() {
   }
   state.leagueDirectory.promise = null;
   state.leagueDirectory.items = [];
+  state.leagueArchive.seasons = [];
+  state.leagueArchive.at = 0;
   renderAccountUI();
   renderFamilyLeaguePanel();
   refreshVisibleFixturePredictionBadges();

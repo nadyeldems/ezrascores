@@ -4336,11 +4336,15 @@ async function handleLeagueSeasonArchive(db, request) {
   const rows = await db
     .prepare(
       `SELECT t.season_id, t.user_id, t.awarded_at, u.name,
-              COALESCE(sp.points, 0) AS points
+              COALESCE(sp.points, 0) AS points,
+              COALESCE(ls.starts_at, '') AS starts_at,
+              COALESCE(ls.ends_at, '') AS ends_at
        FROM ezra_league_season_titles t
        JOIN ezra_users u ON u.id = t.user_id
        LEFT JOIN ezra_league_season_points sp
          ON sp.league_code = t.league_code AND sp.season_id = t.season_id AND sp.user_id = t.user_id
+       LEFT JOIN ezra_league_seasons ls
+         ON ls.league_code = t.league_code AND ls.season_id = t.season_id
        WHERE t.league_code = ?1
        ORDER BY t.season_id DESC
        LIMIT 20`
@@ -4354,6 +4358,8 @@ async function handleLeagueSeasonArchive(db, request) {
     userName: String(row.name || ""),
     points: Math.max(0, Number(row.points || 0)),
     awardedAt: String(row.awarded_at || ""),
+    startsAt: String(row.starts_at || "").slice(0, 10),
+    endsAt: String(row.ends_at || "").slice(0, 10),
   }));
   return json({ seasons }, 200, { "Cache-Control": "no-store" });
 }
