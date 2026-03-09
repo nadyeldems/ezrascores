@@ -2109,7 +2109,10 @@ async function syncLeagueScoresFromStates(db, code, key) {
         const questKey = `quest_bonus:${userId}:${questDate}`;
         if (!recordedKeys.has(questKey)) {
           // Attribute to the season that contains this quest's completion date.
-          const questSeason = currentSevenDaySeasonWindow(new Date(questDate));
+          // Use T12:00:00Z (noon UTC) so that YYYY-MM-DD strings parsed on a Monday
+          // (midnight UTC falls in the prior week's 1-minute grace window) are firmly
+          // attributed to the correct new week, not the previous one.
+          const questSeason = currentSevenDaySeasonWindow(new Date(questDate + "T12:00:00Z"));
           if (!affectedSeasons.has(questSeason.seasonId)) {
             affectedSeasons.set(questSeason.seasonId, questSeason);
           }
