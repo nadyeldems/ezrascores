@@ -6176,11 +6176,11 @@ export async function onRequest(context) {
     const key = env.SPORTSDB_KEY || "074910";
     if (version === "v1" && lowerPath.startsWith("ezra/account")) {
       const accountPath = upstreamPath.slice("ezra/account".length).replace(/^\/+/, "");
-      return handleEzraAccountRoute(context, accountPath, key);
+      return await handleEzraAccountRoute(context, accountPath, key);
     }
     if (version === "v1" && lowerPath.startsWith("ezra/admin")) {
       const adminPath = upstreamPath.slice("ezra/admin".length).replace(/^\/+/, "");
-      return handleEzraAdminRoute(context, adminPath);
+      return await handleEzraAdminRoute(context, adminPath);
     }
 
     if (request.method !== "GET") {
