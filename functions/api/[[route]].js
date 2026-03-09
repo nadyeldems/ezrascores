@@ -1982,14 +1982,19 @@ async function syncLeagueScoresFromStates(db, code, key) {
         String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || ""))
       );
 
-      // Bulk-load all existing idempotency keys for this user in a single query.
-      // Replaces per-entry SELECT checks (which were O(n) round-trips to D1).
+      // Bulk-load all existing idempotency keys (and their point values) for this user.
+      // Stored as Map<key, points> so quest entries can be topped-up when the user
+      // completes more quests after the first settle of that day. Map.has() is a drop-in
+      // replacement for Set.has(), so prediction checks below are unchanged.
       const existingKeyRows = await db
-        .prepare("SELECT idempotency_key FROM ezra_points_ledger WHERE user_id = ?1")
+        .prepare("SELECT idempotency_key, points FROM ezra_points_ledger WHERE user_id = ?1")
         .bind(userId)
         .all();
-      const recordedKeys = new Set(
-        (existingKeyRows?.results || []).map((r) => String(r.idempotency_key || ""))
+      const recordedKeys = new Map(
+        (existingKeyRows?.results || []).map((r) => [
+          String(r.idempotency_key || ""),
+          Number(r.points || 0),
+        ])
       );
 
       // Combo tracking (ordered by kickoff so streaks are accurate)
@@ -2107,12 +2112,12 @@ async function syncLeagueScoresFromStates(db, code, key) {
       const questPointsByDate = questBonusPointsByDate(state, userId);
       for (const [questDate, questPoints] of Object.entries(questPointsByDate)) {
         const questKey = `quest_bonus:${userId}:${questDate}`;
+        // Use T12:00:00Z (noon UTC) so that YYYY-MM-DD strings parsed on a Monday
+        // (midnight UTC falls in the prior week's 1-minute grace window) are firmly
+        // attributed to the correct new week, not the previous one.
+        const questSeason = currentSevenDaySeasonWindow(new Date(questDate + "T12:00:00Z"));
         if (!recordedKeys.has(questKey)) {
-          // Attribute to the season that contains this quest's completion date.
-          // Use T12:00:00Z (noon UTC) so that YYYY-MM-DD strings parsed on a Monday
-          // (midnight UTC falls in the prior week's 1-minute grace window) are firmly
-          // attributed to the correct new week, not the previous one.
-          const questSeason = currentSevenDaySeasonWindow(new Date(questDate + "T12:00:00Z"));
+          // No entry yet — fresh insert.
           if (!affectedSeasons.has(questSeason.seasonId)) {
             affectedSeasons.set(questSeason.seasonId, questSeason);
           }
@@ -2127,6 +2132,27 @@ async function syncLeagueScoresFromStates(db, code, key) {
             payload: { questDate, questPoints },
           });
           newPointsThisRun += questPoints;
+        } else {
+          // Entry already exists — top up if the user has completed more quests since the
+          // last settle (e.g. 4th quest + all-done bonus completed after first run today).
+          const settledPts = recordedKeys.get(questKey) ?? 0;
+          if (questPoints > settledPts) {
+            const delta = questPoints - settledPts;
+            await db
+              .prepare(
+                "UPDATE ezra_points_ledger SET points = ?1, payload_json = ?2 WHERE idempotency_key = ?3"
+              )
+              .bind(
+                questPoints,
+                JSON.stringify({ questDate, questPoints }),
+                questKey
+              )
+              .run();
+            if (!affectedSeasons.has(questSeason.seasonId)) {
+              affectedSeasons.set(questSeason.seasonId, questSeason);
+            }
+            newPointsThisRun += delta;
+          }
         }
       }
 
