@@ -980,6 +980,9 @@ function questBonusPointsByDate(state, userId) {
   const prefix = `acct:${String(userId || "")}:`;
   const result = {};
   for (const [date, value] of Object.entries(byDate)) {
+    // Skip any key that isn't a valid calendar date — avoids Invalid Date RangeErrors downstream
+    // when calling new Date(questDate).toISOString() or currentSevenDaySeasonWindow(new Date(questDate)).
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
     if (!value || typeof value !== "object") continue;
     let totalPoints = 0;
     let doneCountForDay = 0;
