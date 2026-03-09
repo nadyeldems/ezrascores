@@ -63,11 +63,12 @@ async function warmTables(env) {
   };
 }
 
-async function runProtectedCron(env, path) {
+async function runProtectedCron(env, path, timeoutMs) {
   const baseUrl = normalizeBase(env.PAGES_BASE_URL);
-  const timeoutMs = Number(env.TABLE_WARM_TIMEOUT_MS || 15000);
+  // Callers pass an explicit timeout. Falls back to env var, then 60s default.
+  const resolvedTimeout = timeoutMs || Number(env.SETTLE_TIMEOUT_MS || 60000);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  const timer = setTimeout(() => controller.abort("timeout"), resolvedTimeout);
   const url = `${baseUrl}${path}`;
   try {
     const res = await fetch(url, {
@@ -103,12 +104,12 @@ async function runJobs(env) {
   const shouldRunDailyFixture = now.getUTCMinutes() === 0; // Every hour; no-op if already set for today
   const [tables, settle, fixtures, dailyFixture] = await Promise.all([
     warmTables(env),
-    runProtectedCron(env, "/api/v1/ezra/account/cron/settle"),
+    runProtectedCron(env, "/api/v1/ezra/account/cron/settle", 60000),
     shouldRunFixtures
-      ? runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures")
+      ? runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures", 60000)
       : Promise.resolve({ ok: true, skipped: true, reason: "Runs every 3 hours at minute 00" }),
     shouldRunDailyFixture
-      ? runProtectedCron(env, "/api/v1/ezra/account/cron/daily-fixture")
+      ? runProtectedCron(env, "/api/v1/ezra/account/cron/daily-fixture", 15000)
       : Promise.resolve({ ok: true, skipped: true, reason: "Runs at minute 00 only" }),
   ]);
   return {
@@ -133,28 +134,28 @@ export default {
       return new Response("ok", { status: 200 });
     }
     if (url.pathname === "/full-backfill") {
-      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures/full");
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures/full", 120000);
       return new Response(JSON.stringify(payload, null, 2), {
         status: payload.ok ? 200 : 502,
         headers: { "Content-Type": "application/json; charset=utf-8" },
       });
     }
     if (url.pathname === "/fixtures-backfill") {
-      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures");
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/fixtures", 60000);
       return new Response(JSON.stringify(payload, null, 2), {
         status: payload.ok ? 200 : 502,
         headers: { "Content-Type": "application/json; charset=utf-8" },
       });
     }
     if (url.pathname === "/daily-fixture-now") {
-      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/daily-fixture");
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/daily-fixture", 15000);
       return new Response(JSON.stringify(payload, null, 2), {
         status: payload.ok ? 200 : 502,
         headers: { "Content-Type": "application/json; charset=utf-8" },
       });
     }
     if (url.pathname === "/settle-now") {
-      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/settle");
+      const payload = await runProtectedCron(env, "/api/v1/ezra/account/cron/settle", 60000);
       return new Response(JSON.stringify(payload, null, 2), {
         status: payload.ok ? 200 : 502,
         headers: { "Content-Type": "application/json; charset=utf-8" },

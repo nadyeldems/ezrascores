@@ -58,8 +58,44 @@
     <div id="app-splash" class="app-splash" aria-live="polite" role="status">
       <div class="app-splash-inner">
         <h2>EZRASCORES</h2>
-        <p>Loading matchday data...</p>
+        <p id="splash-msg"></p>
         <span class="app-splash-loader" aria-hidden="true"></span>
+        <script>
+          var msgs = [
+            "Inflating the match ball...",
+            "Bribing the linesman...",
+            "Arguing with the referee...",
+            "VAR is reviewing this loading screen...",
+            "Warming up the substitutes...",
+            "Checking for offside...",
+            "Polishing the trophy cabinet...",
+            "Texting the agent...",
+            "Retaping the captain's armband...",
+            "Blaming the pitch...",
+            "Calculating injury time...",
+            "Teaching the goalkeeper to use his feet...",
+            "Hiding in the tunnel...",
+            "Rehearsing goal celebrations...",
+            "Reading the manager's post-match excuses...",
+            "Bootroom gossip loading...",
+            "Drying out the corner flags...",
+            "Repainting the penalty spot...",
+            "Arguing about who left the kit in the dryer...",
+            "Sharpening the striker's shooting boots...",
+            "Checking if the ball crossed the line...",
+            "Convincing the striker it was offside...",
+            "Updating the injury list...",
+            "Finding a scapegoat for the last result...",
+            "Generating post-match clichés...",
+            "Pulling the hamstring... almost there...",
+            "Confusing the tactics board...",
+            "Negotiating a new five-year deal...",
+            "Blaming the Europa League schedule...",
+            "Asking the chairman for transfer funds..."
+          ];
+          document.getElementById("splash-msg").textContent =
+            msgs[Math.floor(Math.random() * msgs.length)];
+        </script>
       </div>
     </div>
     <a class="skip-link" href="#main-content">Skip to main content</a>
