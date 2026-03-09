@@ -1982,6 +1982,16 @@ async function syncLeagueScoresFromStates(db, code, key) {
         String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || ""))
       );
 
+      // Bulk-load all existing idempotency keys for this user in a single query.
+      // Replaces per-entry SELECT checks (which were O(n) round-trips to D1).
+      const existingKeyRows = await db
+        .prepare("SELECT idempotency_key FROM ezra_points_ledger WHERE user_id = ?1")
+        .bind(userId)
+        .all();
+      const recordedKeys = new Set(
+        (existingKeyRows?.results || []).map((r) => String(r.idempotency_key || ""))
+      );
+
       // Combo tracking (ordered by kickoff so streaks are accurate)
       let comboCount = 0;
       let bestCombo = 0;
@@ -2064,13 +2074,9 @@ async function syncLeagueScoresFromStates(db, code, key) {
         mastery.set(teamId, existing);
 
         // Only add to ledger if not already recorded (idempotency_key is per-user per-event).
+        // Uses the bulk-loaded recordedKeys set (O(1) lookup) instead of a per-entry DB query.
         const idempKey = `prediction:${userId}:${pick.eventId}`;
-        const alreadyRecorded = await db
-          .prepare("SELECT id FROM ezra_points_ledger WHERE idempotency_key = ?1 LIMIT 1")
-          .bind(idempKey)
-          .first();
-
-        if (!alreadyRecorded) {
+        if (!recordedKeys.has(idempKey)) {
           // Use the season that contains the match's kickoff date, NOT the current cron season.
           // Without this, a late-settled Saturday match settled on Monday morning would be
           // credited to the new week's season and inflate Monday's mini league standings.
@@ -2101,11 +2107,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
       const questPointsByDate = questBonusPointsByDate(state, userId);
       for (const [questDate, questPoints] of Object.entries(questPointsByDate)) {
         const questKey = `quest_bonus:${userId}:${questDate}`;
-        const questAlreadyRecorded = await db
-          .prepare("SELECT id FROM ezra_points_ledger WHERE idempotency_key = ?1 LIMIT 1")
-          .bind(questKey)
-          .first();
-        if (!questAlreadyRecorded) {
+        if (!recordedKeys.has(questKey)) {
           // Attribute to the season that contains this quest's completion date.
           const questSeason = currentSevenDaySeasonWindow(new Date(questDate));
           if (!affectedSeasons.has(questSeason.seasonId)) {
