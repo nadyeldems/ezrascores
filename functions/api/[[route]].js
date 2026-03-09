@@ -4735,10 +4735,10 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       return handleChallengeDashboard(db, request, key);
     }
     if (route === "cron/settle" && (request.method === "POST" || request.method === "GET")) {
-      return handleCronSettle(db, request, key, env);
+      return await handleCronSettle(db, request, key, env);
     }
     if (route === "cron/normalize-predictions" && (request.method === "POST" || request.method === "GET")) {
-      return handleCronNormalizePredictions(db, request, env);
+      return await handleCronNormalizePredictions(db, request, env);
     }
     if (route === "cron/fixtures" && (request.method === "POST" || request.method === "GET")) {
       const incoming = String(request.headers.get("x-ezra-cron-secret") || "").trim();
