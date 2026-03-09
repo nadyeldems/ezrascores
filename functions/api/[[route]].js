@@ -1979,6 +1979,9 @@ async function syncLeagueScoresFromStates(db, code, key) {
       const mastery = new Map();
       const newLedgerEntries = [];
       let newPointsThisRun = 0;
+      // Track every season that receives a new ledger entry this run so we can
+      // update season points for all of them, not just the current week.
+      const affectedSeasons = new Map([[season.seasonId, season]]);
 
       for (const pick of ordered) {
         const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, {
@@ -2058,13 +2061,22 @@ async function syncLeagueScoresFromStates(db, code, key) {
           .first();
 
         if (!alreadyRecorded) {
+          // Use the season that contains the match's kickoff date, NOT the current cron season.
+          // Without this, a late-settled Saturday match settled on Monday morning would be
+          // credited to the new week's season and inflate Monday's mini league standings.
+          const matchSeason = pick.kickoffIso
+            ? currentSevenDaySeasonWindow(new Date(pick.kickoffIso))
+            : season;
+          if (!affectedSeasons.has(matchSeason.seasonId)) {
+            affectedSeasons.set(matchSeason.seasonId, matchSeason);
+          }
           newLedgerEntries.push({
             eventId: pick.eventId,
             type: "prediction",
             points: awarded,
             idempotencyKey: idempKey,
             fixtureLeagueCode,
-            seasonId: season.seasonId,
+            seasonId: matchSeason.seasonId,
             createdAt: pick.kickoffIso || new Date().toISOString(),
             payload: { base, comboCount, exact: base === 2 },
           });
@@ -2113,9 +2125,14 @@ async function syncLeagueScoresFromStates(db, code, key) {
         }
       }
 
-      // Weekly season points come from the immutable ledger — accurate even if state is wiped.
-      const seasonPoints = await getLedgerSeasonPoints(db, userId, season.seasonId);
-      await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints);
+      // Update season points for every season that received a new ledger entry this run.
+      // Normally this is just the current season, but if a late-settled prediction from a
+      // prior week was just recorded it will also include that past season's row.
+      for (const [, affSeason] of affectedSeasons) {
+        await ensureLeagueSeason(db, code, affSeason);
+        const affSeasonPoints = await getLedgerSeasonPoints(db, userId, affSeason.seasonId);
+        await upsertLeagueSeasonPoints(db, code, affSeason.seasonId, userId, affSeasonPoints);
+      }
 
       // Achievements and mastery (unchanged).
       await replaceTeamMastery(db, userId, [...mastery.values()]);
