@@ -2305,7 +2305,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
   const leaderUserId = String(leaderRow?.user_id || "");
   if (leaderUserId) {
     const prevLeaderKey = `league_leader:${code}:${season.seasonId}`;
-    const prevLeader = String((await getIngestStateText(db, prevLeaderKey, "")) || "");
+    const prevLeader = String((await getAppSetting(db, prevLeaderKey)) || "");
     if (prevLeader && prevLeader !== leaderUserId) {
       await emitSocialEvent(db, {
         leagueCode: code,
@@ -2319,7 +2319,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
         },
       });
     }
-    await setIngestStateText(db, prevLeaderKey, leaderUserId);
+    await setAppSetting(db, prevLeaderKey, leaderUserId);
   }
 
   const winnerUserId = await awardSeasonTitleIfEligible(db, code, season.seasonId);
