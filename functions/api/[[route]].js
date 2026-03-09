@@ -969,19 +969,25 @@ const QUEST_ALL_DONE_BONUS = 10;
 // How many quests must be done for the all-done bonus.
 const QUEST_ALL_DONE_COUNT = Object.keys(QUEST_POINTS).length;
 
-function questBonusPointsFromState(state, userId) {
+// Returns { "YYYY-MM-DD": points, ... } — one entry per date that has unrecorded quest
+// completions. Each date is treated independently so that:
+//   - quests are attributed to the season containing their completion date (not the cron date)
+//   - no cumulative double-counting across days within the same week
+//   - idempotency key quest_bonus:{userId}:{date} ensures each date is only ever credited once
+function questBonusPointsByDate(state, userId) {
   const byDate = state?.familyLeague?.questBonusByDate;
-  if (!byDate || typeof byDate !== "object") return 0;
+  if (!byDate || typeof byDate !== "object") return {};
   const prefix = `acct:${String(userId || "")}:`;
-  let totalPoints = 0;
-  for (const value of Object.values(byDate)) {
+  const result = {};
+  for (const [date, value] of Object.entries(byDate)) {
     if (!value || typeof value !== "object") continue;
+    let totalPoints = 0;
     let doneCountForDay = 0;
     for (const [key, done] of Object.entries(value)) {
       if (!done || !key.startsWith(prefix)) continue;
       // key format: acct:{userId}:{questId}
       const questId = key.slice(prefix.length);
-      if (questId === "__bonus__") continue; // legacy all-done bonus key
+      if (questId === "__bonus__") continue; // all-done bonus tracked separately below
       const pts = Number(QUEST_POINTS[questId] ?? 5);
       totalPoints += pts;
       doneCountForDay += 1;
@@ -991,8 +997,9 @@ function questBonusPointsFromState(state, userId) {
     if (doneCountForDay >= QUEST_ALL_DONE_COUNT && value[bonusKey]) {
       totalPoints += QUEST_ALL_DONE_BONUS;
     }
+    if (totalPoints > 0) result[date] = totalPoints;
   }
-  return totalPoints;
+  return result;
 }
 
 function todayIsoUtc() {
@@ -2084,26 +2091,34 @@ async function syncLeagueScoresFromStates(db, code, key) {
         }
       }
 
-      // Quest bonus — idempotent per user per day (not per mini-league).
-      const questBonusPoints = questBonusPointsFromState(state, userId);
-      if (questBonusPoints > 0) {
-        const questKey = `quest_bonus:${userId}:${todayIso}`;
+      // Quest bonus — one ledger entry per completion date, attributed to the season that
+      // contains that date (mirrors the prediction kickoff-based season fix).
+      // Each date's idempotency key ensures it can only be written once, even across
+      // multiple cron runs or concurrent league settlements.
+      const questPointsByDate = questBonusPointsByDate(state, userId);
+      for (const [questDate, questPoints] of Object.entries(questPointsByDate)) {
+        const questKey = `quest_bonus:${userId}:${questDate}`;
         const questAlreadyRecorded = await db
           .prepare("SELECT id FROM ezra_points_ledger WHERE idempotency_key = ?1 LIMIT 1")
           .bind(questKey)
           .first();
         if (!questAlreadyRecorded) {
+          // Attribute to the season that contains this quest's completion date.
+          const questSeason = currentSevenDaySeasonWindow(new Date(questDate));
+          if (!affectedSeasons.has(questSeason.seasonId)) {
+            affectedSeasons.set(questSeason.seasonId, questSeason);
+          }
           newLedgerEntries.push({
             eventId: "",
             type: "quest_bonus",
-            points: questBonusPoints,
+            points: questPoints,
             idempotencyKey: questKey,
             fixtureLeagueCode: "",
-            seasonId: season.seasonId,
-            createdAt: new Date().toISOString(),
-            payload: { questBonusPoints },
+            seasonId: questSeason.seasonId,
+            createdAt: new Date(questDate).toISOString(),
+            payload: { questDate, questPoints },
           });
-          newPointsThisRun += questBonusPoints;
+          newPointsThisRun += questPoints;
         }
       }
 
