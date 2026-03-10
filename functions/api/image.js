@@ -33,35 +33,48 @@ export async function onRequest(context) {
     return Response.json({ error: "Host not allowed" }, { status: 403 });
   }
 
-  const cacheKey = new Request(reqUrl.toString(), request);
-  const cache = caches.default;
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    const headers = new Headers(cached.headers);
-    headers.set("X-EZRA-Cache", "HIT");
-    return new Response(cached.body, { status: cached.status, headers });
+  try {
+    // Use only the URL string (no original request init) to avoid constructor
+    // throwing on incompatible request properties (mode, credentials, etc.)
+    const cacheKey = new Request(reqUrl.toString());
+    const cache = caches.default;
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      const headers = new Headers(cached.headers);
+      headers.set("X-EZRA-Cache", "HIT");
+      return new Response(cached.body, { status: cached.status, headers });
+    }
+
+    let upstream;
+    try {
+      upstream = await fetch(target.toString());
+    } catch (fetchErr) {
+      // Upstream fetch failed (network error, CDN blocking, DNS failure, etc.)
+      return new Response(`Upstream fetch failed: ${fetchErr.message}`, { status: 502 });
+    }
+
+    if (!upstream.ok) {
+      return new Response(`Upstream image error (${upstream.status})`, { status: upstream.status });
+    }
+
+    const contentType = upstream.headers.get("Content-Type") || "";
+    if (!contentType.toLowerCase().startsWith("image/")) {
+      return new Response("Unsupported content type", { status: 415 });
+    }
+
+    const headers = new Headers();
+    headers.set("Content-Type", contentType);
+    headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+    headers.set("X-EZRA-Cache", "MISS");
+
+    const response = new Response(upstream.body, {
+      status: upstream.status,
+      headers,
+    });
+
+    context.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
+  } catch (err) {
+    return new Response(`Image proxy error: ${err.message}`, { status: 502 });
   }
-
-  const upstream = await fetch(target.toString());
-  if (!upstream.ok) {
-    return new Response(`Upstream image error (${upstream.status})`, { status: upstream.status });
-  }
-
-  const contentType = upstream.headers.get("Content-Type") || "";
-  if (!contentType.toLowerCase().startsWith("image/")) {
-    return new Response("Unsupported content type", { status: 415 });
-  }
-
-  const headers = new Headers();
-  headers.set("Content-Type", contentType);
-  headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
-  headers.set("X-EZRA-Cache", "MISS");
-
-  const response = new Response(upstream.body, {
-    status: upstream.status,
-    headers,
-  });
-
-  context.waitUntil(cache.put(cacheKey, response.clone()));
-  return response;
 }
