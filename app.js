@@ -6347,12 +6347,12 @@ function normalizeSquadPlayer(raw, team) {
     number,
     nationality: raw.strNationality || "Unknown",
     position: raw.strPosition || "Unknown",
-    image: proxiedImageUrl(raw.strCutout || ""),
+    image: raw.strCutout || "",
     goals: extractPlayerGoals(raw),
     appearances: extractPlayerAppearances(raw),
     teamId: team?.idTeam || "",
     teamName: team?.strTeam || raw.strTeam || "",
-    teamBadge: proxiedImageUrl(team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || ""),
+    teamBadge: team?.strBadge || state.teamBadgeMap[team?.strTeam || ""] || "",
   };
 }
 
