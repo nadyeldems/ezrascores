@@ -1746,6 +1746,15 @@ async function emitSocialEvent(db, { leagueCode = "", userId = "", eventType = "
 
 async function awardSeasonTitleIfEligible(db, leagueCode, seasonId) {
   if (!leagueCode || !seasonId) return null;
+  // Only award a title once the 7-day season window has fully closed.
+  // seasonId format: W{YYYYMMDD} where the date is the Monday the season started.
+  const m = /^W(\d{4})(\d{2})(\d{2})$/.exec(seasonId);
+  if (m) {
+    const seasonEnd =
+      Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) +
+      7 * 24 * 60 * 60 * 1000;
+    if (Date.now() < seasonEnd) return null; // Season still in progress
+  }
   const existing = await db
     .prepare(
       `
