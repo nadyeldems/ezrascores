@@ -7818,7 +7818,7 @@ function proxiedImageUrl(url) {
   return raw;
 }
 
-function setImgSrc(imgEl, url, alt = "", allowDirectFallback = false) {
+function setImgSrc(imgEl, url, alt = "", allowDirectFallback = true) {
   if (!imgEl) return;
   const raw = String(url || "").trim();
   const proxied = proxiedImageUrl(raw);

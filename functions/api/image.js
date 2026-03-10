@@ -47,7 +47,17 @@ export async function onRequest(context) {
 
     let upstream;
     try {
-      upstream = await fetch(target.toString());
+      // Pass browser-like headers so the upstream CDN doesn't reject the request.
+      // Without these, Cloudflare Workers' bare fetch() sends no User-Agent/Accept
+      // and r2.thesportsdb.com returns 500 thinking it's a bot.
+      upstream = await fetch(target.toString(), {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; EzraScores/1.0; +https://ezrascores.com)",
+          "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Referer": "https://www.thesportsdb.com/",
+        },
+      });
     } catch (fetchErr) {
       // Upstream fetch failed (network error, CDN blocking, DNS failure, etc.)
       return new Response(`Upstream fetch failed: ${fetchErr.message}`, { status: 502 });
