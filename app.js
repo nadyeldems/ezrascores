@@ -6717,8 +6717,7 @@ function renderPlayerQuiz(player) {
     el.playerQuizFocus.classList.add("active");
   }
   if (el.playerQuizFocusImage) {
-    el.playerQuizFocusImage.src = player.image || "";
-    el.playerQuizFocusImage.alt = `${player.name} cutout`;
+    setImgSrc(el.playerQuizFocusImage, player.image, `${player.name} cutout`);
   }
 
   const options = quizOptionsForPlayer(player);
@@ -8239,8 +8238,7 @@ async function showRandomPlayerPop(forceNew = false) {
     pop.vx = (Math.random() > 0.5 ? 1 : -1) * (130 + Math.random() * 50);
     pop.vy = (Math.random() > 0.5 ? 1 : -1) * (112 + Math.random() * 48);
 
-    el.playerDvdImage.src = player.image;
-    el.playerDvdImage.alt = `${player.name} cutout`;
+    setImgSrc(el.playerDvdImage, player.image, `${player.name} cutout`);
     el.playerDvdName.textContent = player.name;
     el.playerDvdLayer.classList.remove("hidden");
     el.playerDvdLayer.classList.remove("revealed");
