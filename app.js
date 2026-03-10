@@ -10381,16 +10381,23 @@ function renderStatsTable(stats) {
 function renderTimelineBlock(timeline, homeTeam, awayTeam) {
   if (!Array.isArray(timeline) || !timeline.length) return "";
   const sorted = [...timeline].sort((a, b) => (Number(a.intTime) || 0) - (Number(b.intTime) || 0));
+  const header = `<div class="tl-row tl-header">
+    <div class="tl-home">${escapeHtml(homeTeam)}</div>
+    <div class="tl-min"></div>
+    <div class="tl-away">${escapeHtml(awayTeam)}</div>
+  </div>`;
   const body = sorted.map((ev) => {
     const minute = ev.intTime ? `${ev.intTime}'` : "";
     const type = String(ev.strTimeline || "").toLowerCase();
     const player = escapeHtml(ev.strPlayer || "");
-    const assist = escapeHtml(ev.strAssist || "");
+    const rawAssist = ev.strAssist || "";
+    // Suppress assist if it's the same name as the scorer (API data quirk)
+    const assist = rawAssist && rawAssist !== (ev.strPlayer || "") ? escapeHtml(rawAssist) : "";
     const isHome = String(ev.strHome || "").toLowerCase() === "home";
     let icon, detail, typeClass;
     if (type.includes("own") && type.includes("goal")) {
       icon = "⚽"; typeClass = "tl-own-goal";
-      detail = player;
+      detail = `${player} <span class="tl-assist">(o.g.)</span>`;
     } else if (type.includes("goal") && type.includes("penalty")) {
       icon = "⚽"; typeClass = "tl-penalty";
       detail = `${player} <span class="tl-assist">(pen.)</span>`;
@@ -10407,14 +10414,14 @@ function renderTimelineBlock(timeline, homeTeam, awayTeam) {
     } else {
       icon = "•"; typeClass = "tl-other"; detail = player;
     }
-    return `<div class="tl-event ${typeClass}">
-      <span class="tl-side">${escapeHtml(isHome ? "H" : "A")}</span>
-      <span class="tl-icon">${icon}</span>
-      <span class="tl-minute">${escapeHtml(minute)}</span>
-      <span class="tl-detail">${detail}</span>
+    const cell = `<span class="tl-icon">${icon}</span> ${detail}`;
+    return `<div class="tl-row ${typeClass}">
+      <div class="tl-home">${isHome ? cell : ""}</div>
+      <div class="tl-min">${escapeHtml(minute)}</div>
+      <div class="tl-away">${isHome ? "" : cell}</div>
     </div>`;
   }).join("");
-  return `<div class="timeline-block"><p class="stats-title">Match Events</p>${body}</div>`;
+  return `<div class="timeline-block"><p class="stats-title">Match Events</p>${header}${body}</div>`;
 }
 
 function renderLineupBlock(lineup, homeTeam, awayTeam) {
@@ -10481,7 +10488,9 @@ function renderHighlightsBlock(event, stateInfo) {
 
 async function getRichEventData(eventId) {
   if (!eventId) return null;
-  if (state.eventDetailCache[eventId]) return state.eventDetailCache[eventId];
+  const cached = state.eventDetailCache[eventId];
+  // Serve cache only for non-live events; live matches always fetch fresh data
+  if (cached && !isLiveEvent(cached.event)) return cached;
   const [event, stats, timeline, lineup] = await Promise.all([
     safeLoad(() => fetchEventById(eventId), null),
     safeLoad(() => fetchEventStats(eventId), []),
@@ -10489,7 +10498,10 @@ async function getRichEventData(eventId) {
     safeLoad(() => fetchEventLineup(eventId), []),
   ]);
   const rich = { event, stats, timeline, lineup };
-  state.eventDetailCache[eventId] = rich;
+  // Only persist in cache if the event is not live
+  if (!isLiveEvent(event)) {
+    state.eventDetailCache[eventId] = rich;
+  }
   return rich;
 }
 
@@ -10564,6 +10576,15 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
     detailsEl.appendChild(predictionModule);
   }
   detailsEl.classList.remove("loading");
+  // For live matches, schedule a re-hydration after 60s so goalscorers/stats stay current
+  clearTimeout(state.detailRefreshTimer);
+  if (resolvedState.key === "live") {
+    state.detailRefreshTimer = setTimeout(async () => {
+      if (detailsEl.isConnected && detailsEl.closest("details")?.open) {
+        await hydrateFixtureDetails(detailsEl, event, stateInfo);
+      }
+    }, 60000);
+  }
 }
 
 function teamFormFromEvents(events, team) {

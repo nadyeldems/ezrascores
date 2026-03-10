@@ -5469,38 +5469,49 @@ body[data-theme="t90"] .team-score.leading {
   margin-top: 0.45rem;
   border-top: 1px dashed var(--line-soft);
   padding-top: 0.35rem;
-  display: grid;
-  gap: 0.15rem;
 }
-.tl-event {
+.tl-row {
   display: grid;
-  grid-template-columns: 14px 18px 30px minmax(0, 1fr);
-  align-items: baseline;
-  gap: 0.25rem;
+  grid-template-columns: 1fr 36px 1fr;
+  align-items: center;
+  gap: 0.2rem;
   font-size: 0.72rem;
-  padding: 0.12rem 0;
+  padding: 0.18rem 0;
+  border-bottom: 1px solid var(--line-soft);
 }
-.tl-side {
-  font-size: 0.62rem;
+.tl-header {
+  font-size: 0.65rem;
   font-weight: 700;
-  color: var(--text-soft);
+  color: var(--amber);
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+.tl-header .tl-away {
+  text-align: right;
+}
+.tl-min {
+  text-align: center;
+  font-weight: 700;
+  color: var(--amber);
+  font-size: 0.66rem;
+}
+.tl-home {
+  text-align: right;
+  color: var(--text);
+  line-height: 1.35;
+}
+.tl-away {
+  text-align: left;
+  color: var(--text);
+  line-height: 1.35;
 }
 .tl-icon {
   font-size: 0.78rem;
   line-height: 1;
 }
-.tl-minute {
-  font-weight: 700;
-  color: var(--amber);
-  font-size: 0.68rem;
-}
-.tl-detail {
-  color: var(--text);
-  line-height: 1.3;
-}
 .tl-assist {
   color: var(--text-soft);
-  font-size: 0.66rem;
+  font-size: 0.64rem;
 }
 
 /* ── Match Line-ups ──────────────────────────────── */
