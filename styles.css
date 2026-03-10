@@ -5464,6 +5464,96 @@ body[data-theme="t90"] .team-score.leading {
   color: #9e6e35;
 }
 
+/* ── Match Timeline ──────────────────────────────── */
+.timeline-block {
+  margin-top: 0.45rem;
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 0.35rem;
+  display: grid;
+  gap: 0.15rem;
+}
+.tl-event {
+  display: grid;
+  grid-template-columns: 14px 18px 30px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  padding: 0.12rem 0;
+}
+.tl-side {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+.tl-icon {
+  font-size: 0.78rem;
+  line-height: 1;
+}
+.tl-minute {
+  font-weight: 700;
+  color: var(--amber);
+  font-size: 0.68rem;
+}
+.tl-detail {
+  color: var(--text);
+  line-height: 1.3;
+}
+.tl-assist {
+  color: var(--text-soft);
+  font-size: 0.66rem;
+}
+
+/* ── Match Line-ups ──────────────────────────────── */
+.lineup-block {
+  margin-top: 0.45rem;
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 0.35rem;
+}
+.lu-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+.lu-col {
+  min-width: 0;
+}
+.lu-team {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--amber);
+  margin-bottom: 0.25rem;
+}
+.lu-formation {
+  font-weight: 400;
+  color: var(--text-soft);
+  font-size: 0.63rem;
+}
+.lu-player {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 0.2rem;
+  align-items: baseline;
+  font-size: 0.68rem;
+  padding: 0.08rem 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.lu-num {
+  color: var(--amber);
+  font-weight: 600;
+  font-size: 0.62rem;
+  text-align: right;
+}
+.lu-name {
+  color: var(--text);
+}
+.lu-subs-hdr {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+  margin: 0.3rem 0 0.12rem;
+}
+
 .fixture-details.loading {
   opacity: 0.72;
 }

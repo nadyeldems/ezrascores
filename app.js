@@ -9806,6 +9806,18 @@ async function fetchEventStats(eventId) {
   return safeArray(data, "eventstats");
 }
 
+async function fetchEventTimeline(eventId) {
+  if (!eventId) return [];
+  const data = await apiGetV1(`ezra/eventtimeline?id=${encodeURIComponent(eventId)}`);
+  return safeArray(data, "timeline");
+}
+
+async function fetchEventLineup(eventId) {
+  if (!eventId) return [];
+  const data = await apiGetV1(`ezra/eventlineup?id=${encodeURIComponent(eventId)}`);
+  return safeArray(data, "lineup");
+}
+
 function teamLeagueCode(team) {
   if (!team) return "";
   const leagueName = team.strLeague || "";
@@ -10355,7 +10367,7 @@ function normalizedStats(stats) {
 }
 
 function renderStatsTable(stats) {
-  const rows = normalizedStats(stats).slice(0, 8);
+  const rows = normalizedStats(stats);
   if (!rows.length) return "";
   const body = rows
     .map(
@@ -10364,6 +10376,70 @@ function renderStatsTable(stats) {
     )
     .join("");
   return `<div class="stats-block"><p class="stats-title">Match Stats</p>${body}</div>`;
+}
+
+function renderTimelineBlock(timeline, homeTeam, awayTeam) {
+  if (!Array.isArray(timeline) || !timeline.length) return "";
+  const sorted = [...timeline].sort((a, b) => (Number(a.intTime) || 0) - (Number(b.intTime) || 0));
+  const body = sorted.map((ev) => {
+    const minute = ev.intTime ? `${ev.intTime}'` : "";
+    const type = String(ev.strTimeline || "").toLowerCase();
+    const player = escapeHtml(ev.strPlayer || "");
+    const assist = escapeHtml(ev.strAssist || "");
+    const isHome = String(ev.strHome || "").toLowerCase() === "home";
+    let icon, detail, typeClass;
+    if (type.includes("own") && type.includes("goal")) {
+      icon = "⚽"; typeClass = "tl-own-goal";
+      detail = player;
+    } else if (type.includes("goal") && type.includes("penalty")) {
+      icon = "⚽"; typeClass = "tl-penalty";
+      detail = `${player} <span class="tl-assist">(pen.)</span>`;
+    } else if (type.includes("goal")) {
+      icon = "⚽"; typeClass = "tl-goal";
+      detail = assist ? `${player} <span class="tl-assist">(${assist})</span>` : player;
+    } else if (type.includes("red")) {
+      icon = "🟥"; typeClass = "tl-red-card"; detail = player;
+    } else if (type.includes("yellow") || type.includes("card")) {
+      icon = "🟨"; typeClass = "tl-yellow-card"; detail = player;
+    } else if (type.includes("subst") || type.includes("sub")) {
+      icon = "🔄"; typeClass = "tl-sub";
+      detail = assist ? `${player} ↕ ${assist}` : player;
+    } else {
+      icon = "•"; typeClass = "tl-other"; detail = player;
+    }
+    return `<div class="tl-event ${typeClass}">
+      <span class="tl-side">${escapeHtml(isHome ? "H" : "A")}</span>
+      <span class="tl-icon">${icon}</span>
+      <span class="tl-minute">${escapeHtml(minute)}</span>
+      <span class="tl-detail">${detail}</span>
+    </div>`;
+  }).join("");
+  return `<div class="timeline-block"><p class="stats-title">Match Events</p>${body}</div>`;
+}
+
+function renderLineupBlock(lineup, homeTeam, awayTeam) {
+  if (!Array.isArray(lineup) || !lineup.length) return "";
+  const home = lineup.filter((p) => String(p.strHome || "").toLowerCase() === "home");
+  const away = lineup.filter((p) => String(p.strHome || "").toLowerCase() === "away");
+  if (!home.length && !away.length) return "";
+  const byOrder = (a, b) => (Number(a.intOrder) || 99) - (Number(b.intOrder) || 99);
+  const homeStarters = home.filter((p) => Number(p.intOrder || 99) <= 11).sort(byOrder);
+  const homeSubs = home.filter((p) => Number(p.intOrder || 99) > 11).sort(byOrder);
+  const awayStarters = away.filter((p) => Number(p.intOrder || 99) <= 11).sort(byOrder);
+  const awaySubs = away.filter((p) => Number(p.intOrder || 99) > 11).sort(byOrder);
+  const homeFormation = home[0]?.strFormation || "";
+  const awayFormation = away[0]?.strFormation || "";
+  const renderPlayer = (p) =>
+    `<div class="lu-player"><span class="lu-num">${escapeHtml(String(p.intSquadNumber || ""))}</span><span class="lu-name">${escapeHtml(p.strPlayer || "")}</span></div>`;
+  const renderCol = (starters, subs, name, formation) =>
+    `<div class="lu-col">
+      <div class="lu-team">${escapeHtml(name)}${formation ? ` <span class="lu-formation">${escapeHtml(formation)}</span>` : ""}</div>
+      ${starters.map(renderPlayer).join("")}
+      ${subs.length ? `<div class="lu-subs-hdr">Subs</div>${subs.map(renderPlayer).join("")}` : ""}
+    </div>`;
+  const homeCol = home.length ? renderCol(homeStarters, homeSubs, homeTeam, homeFormation) : "";
+  const awayCol = away.length ? renderCol(awayStarters, awaySubs, awayTeam, awayFormation) : "";
+  return `<div class="lineup-block"><p class="stats-title">Line-ups</p><div class="lu-cols">${homeCol}${awayCol}</div></div>`;
 }
 
 function normalizeHttpUrl(value) {
@@ -10406,14 +10482,13 @@ function renderHighlightsBlock(event, stateInfo) {
 async function getRichEventData(eventId) {
   if (!eventId) return null;
   if (state.eventDetailCache[eventId]) return state.eventDetailCache[eventId];
-  const payload = await Promise.all([
+  const [event, stats, timeline, lineup] = await Promise.all([
     safeLoad(() => fetchEventById(eventId), null),
     safeLoad(() => fetchEventStats(eventId), []),
+    safeLoad(() => fetchEventTimeline(eventId), []),
+    safeLoad(() => fetchEventLineup(eventId), []),
   ]);
-  const rich = {
-    event: payload[0],
-    stats: payload[1],
-  };
+  const rich = { event, stats, timeline, lineup };
   state.eventDetailCache[eventId] = rich;
   return rich;
 }
@@ -10472,10 +10547,12 @@ async function hydrateFixtureDetails(detailsEl, event, stateInfo) {
     }
   }
   const rows = detailRowsFromEvent(core, resolvedState);
+  const timelineHtml = renderTimelineBlock(rich?.timeline, core.strHomeTeam || "", core.strAwayTeam || "");
   const statsHtml = renderStatsTable(rich?.stats);
   const highlightsHtml = renderHighlightsBlock(core, resolvedState);
-  const hasExtra = Boolean(statsHtml || highlightsHtml);
-  detailsEl.innerHTML = `${renderDetailRows(rows)}${statsHtml}${highlightsHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
+  const lineupHtml = renderLineupBlock(rich?.lineup, core.strHomeTeam || "", core.strAwayTeam || "");
+  const hasExtra = Boolean(statsHtml || highlightsHtml || timelineHtml || lineupHtml);
+  detailsEl.innerHTML = `${renderDetailRows(rows)}${timelineHtml}${statsHtml}${highlightsHtml}${lineupHtml}${hasExtra ? "" : '<p class="detail-empty">No extra match data for this fixture.</p>'}`;
   // Kick off background market data load so the bar appears on next open (or refreshes)
   const currentLeagueForMarket = currentSelectedLeagueRecord();
   const marketCode = normalizeLeagueCodeClient(currentLeagueForMarket?.code || state.familyLeague?.leagueCode || "");

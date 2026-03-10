@@ -5799,6 +5799,26 @@ async function handleEzraEventStatsRoute(context, key) {
   return json({ eventstats }, 200, { "Cache-Control": "public, max-age=60, s-maxage=60" });
 }
 
+async function handleEzraEventTimelineRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const eventId = String(url.searchParams.get("id") || "").trim();
+  if (!eventId) return json({ timeline: [] }, 200);
+  const payload = await fetchSportsDb("v1", key, `lookuptimeline.php?id=${encodeURIComponent(eventId)}`).catch(() => null);
+  const timeline = firstArray(payload);
+  return json({ timeline }, 200, { "Cache-Control": "public, max-age=60, s-maxage=60" });
+}
+
+async function handleEzraEventLineupRoute(context, key) {
+  const { request } = context;
+  const url = new URL(request.url);
+  const eventId = String(url.searchParams.get("id") || "").trim();
+  if (!eventId) return json({ lineup: [] }, 200);
+  const payload = await fetchSportsDb("v1", key, `lookuplineup.php?id=${encodeURIComponent(eventId)}`).catch(() => null);
+  const lineup = firstArray(payload);
+  return json({ lineup }, 200, { "Cache-Control": "public, max-age=60, s-maxage=60" });
+}
+
 function canonicalEventHash(event) {
   const parts = [
     String(event?.idEvent || ""),
@@ -6260,6 +6280,12 @@ export async function onRequest(context) {
     }
     if (version === "v1" && lowerPath === "ezra/eventstats" && request.method === "GET") {
       return handleEzraEventStatsRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/eventtimeline" && request.method === "GET") {
+      return handleEzraEventTimelineRoute(context, key);
+    }
+    if (version === "v1" && lowerPath === "ezra/eventlineup" && request.method === "GET") {
+      return handleEzraEventLineupRoute(context, key);
     }
     if (version === "v1" && lowerPath === "ezra/live/stream") {
       return handleEzraLiveStreamRoute(context, key);
