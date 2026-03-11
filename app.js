@@ -10396,19 +10396,24 @@ function renderTimelineBlock(timeline, homeTeam, awayTeam) {
   </div>`;
   const body = sorted.map((ev) => {
     const minute = ev.intTime ? `${ev.intTime}'` : "";
-    const type = String(ev.strTimeline || "").toLowerCase();
+    // strTimelineDetail has meaningful values ("Normal Goal", "Own Goal", "Penalty",
+    // "Yellow Card", "Red Card", "Substitution 1-5"); strTimeline is coarser ("Goal",
+    // "Card", "subst") and used as fallback (covers subs where detail may be absent).
+    const type = String(ev.strTimelineDetail || ev.strTimeline || "").toLowerCase();
     const player = escapeHtml(ev.strPlayer || "");
     const rawAssist = ev.strAssist || "";
     // Suppress assist if it's the same name as the scorer (API data quirk)
     const assist = rawAssist && rawAssist !== (ev.strPlayer || "") ? escapeHtml(rawAssist) : "";
-    const isHome = String(ev.strHome || "").toLowerCase() === "home";
+    // strHome is "Yes" for home-team events, "No" for away-team events
+    const isHome = String(ev.strHome || "").toLowerCase() === "yes";
     let icon, detail, typeClass;
     if (type.includes("miss")) {
       icon = "✗"; typeClass = "tl-missed"; detail = player;
     } else if (type.includes("own") && type.includes("goal")) {
       icon = "⚽"; typeClass = "tl-own-goal";
       detail = `${player} <span class="tl-assist">(o.g.)</span>`;
-    } else if (type.includes("goal") && type.includes("penalty")) {
+    } else if (type.includes("penalty")) {
+      // Matches "Penalty" (scored pen.) — must come before generic "goal" check
       icon = "⚽"; typeClass = "tl-penalty";
       detail = `${player} <span class="tl-assist">(pen.)</span>`;
     } else if (type.includes("goal")) {
@@ -10418,7 +10423,8 @@ function renderTimelineBlock(timeline, homeTeam, awayTeam) {
       icon = "🟥"; typeClass = "tl-red-card"; detail = player;
     } else if (type.includes("yellow") || type.includes("card")) {
       icon = "🟨"; typeClass = "tl-yellow-card"; detail = player;
-    } else if (type.includes("subst") || type.includes("sub")) {
+    } else if (type.includes("sub")) {
+      // Matches "Substitution 1/2/3…" (from strTimelineDetail) and "subst" (strTimeline)
       icon = "🔄"; typeClass = "tl-sub";
       detail = assist ? `${player} ↕ ${assist}` : player;
     } else {
