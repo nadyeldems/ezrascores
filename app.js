@@ -10514,8 +10514,13 @@ async function getRichEventData(eventId) {
     safeLoad(() => fetchEventLineup(eventId), []),
   ]);
   const rich = { event, stats, timeline, lineup };
-  // Only persist in cache if the event is not live
-  if (!isLiveEvent(event)) {
+  // Only persist in cache when:
+  // 1. The event is not currently live (live events always need fresh data)
+  // 2. We actually got some data back — don't cache empty results, as TheSportsDB
+  //    can have a data lag after a match finishes; re-fetching on next expand lets
+  //    us pick up the data once it arrives without waiting for a page reload.
+  const hasData = (stats?.length > 0) || (timeline?.length > 0) || (lineup?.length > 0);
+  if (!isLiveEvent(event) && hasData) {
     state.eventDetailCache[eventId] = rich;
   }
   return rich;
@@ -12568,8 +12573,22 @@ function nextPollDelay(context) {
     state.pollMode = "live";
     return POLL_LIVE_MS;
   }
+  // Stay at live-rate when a kickoff is imminent (within 90 minutes) so the
+  // fixture pill flips from "upcoming" to "live" as soon as the game starts.
+  // This fixes the case where the last live game ends, polling drops to 3 hours,
+  // and the next evening kickoff is missed entirely.
+  if (context.minutesToNextKickoff !== null && context.minutesToNextKickoff <= 90) {
+    state.pollMode = "live";
+    return POLL_LIVE_MS;
+  }
   if (context.hasTodayFixtures || context.favoriteHasTodayFixture) {
     state.pollMode = "matchday";
+    // If we know when the next game kicks off, sleep until 90 min before it
+    // rather than the full 3 hours — ensures we enter the live-rate window on time
+    if (context.minutesToNextKickoff !== null) {
+      const wakeInMs = Math.max(ONE_MINUTE_MS, (context.minutesToNextKickoff - 90) * ONE_MINUTE_MS);
+      return Math.min(POLL_MATCHDAY_MS, wakeInMs);
+    }
     return POLL_MATCHDAY_MS;
   }
   state.pollMode = "idle";
