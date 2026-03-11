@@ -5176,6 +5176,10 @@ body[data-theme="t90"] .theme-btn.active {
   background: #120902;
 }
 
+.kickoff-time:empty {
+  display: none;
+}
+
 .match-state.live {
   border-color: #c8372b;
   color: #ffcbcb;

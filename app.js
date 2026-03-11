@@ -5147,10 +5147,17 @@ function renderPredictionCardsHtml(memberData, compareEnabled, showPreviousRound
     .slice(0, 24)
     .map((row) => {
       const kickoffText = row.kickoff ? new Date(row.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "TBA";
+      // Use live event state to prevent stale settlement data (e.g. 0-0) from showing for in-progress matches
+      const liveEvent = (state.fixtures || []).find((e) => String(e.idEvent || "") === row.eventId);
+      const liveState = liveEvent ? eventState(liveEvent) : null;
       const finalText =
-        Number.isFinite(Number(row.them?.finalHome ?? row.you?.finalHome)) && Number.isFinite(Number(row.them?.finalAway ?? row.you?.finalAway))
-          ? `${Number(row.them?.finalHome ?? row.you?.finalHome)}-${Number(row.them?.finalAway ?? row.you?.finalAway)}`
-          : "Pending";
+        liveState?.key === "live"
+          ? "Live"
+          : liveState?.key === "upcoming"
+            ? "Pending"
+            : Number.isFinite(Number(row.them?.finalHome ?? row.you?.finalHome)) && Number.isFinite(Number(row.them?.finalAway ?? row.you?.finalAway))
+              ? `${Number(row.them?.finalHome ?? row.you?.finalHome)}-${Number(row.them?.finalAway ?? row.you?.finalAway)}`
+              : "Pending";
       const themOutcome = predictionOutcomeLabel(row.them);
       const youOutcome = predictionOutcomeLabel(row.you);
       const themPick =
@@ -8691,8 +8698,11 @@ function formatKickoffTime(event) {
   if (kickoff && !Number.isNaN(kickoff.getTime())) {
     return kickoff.toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
   }
-  const time = String(event?.strTime || "").slice(0, 5);
-  return time || "TBA";
+  const time = String(event?.strTime || "").trim();
+  // Only treat as a valid time if it looks like HH:MM
+  if (/^\d{2}:\d{2}/.test(time)) return time.slice(0, 5);
+  // Unknown time (e.g. "TBA") — suppress pill for live/final since state pill already shows that
+  return (isLiveEvent(event) || isFinalEvent(event)) ? "" : "TBA";
 }
 
 function serverNow() {
