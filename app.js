@@ -10349,9 +10349,6 @@ function detailRowsFromEvent(event, stateInfo) {
     { label: "League", value: event.strLeague || "" },
     { label: "Kickoff", value: formatDateTime(event.dateEvent, event.strTime) },
     { label: "Venue", value: event.strVenue || "" },
-    { label: "Match State", value: stateInfo.label },
-    { label: "Status", value: detailStatusText(event, stateInfo) },
-    { label: "Season", value: event.strSeason || "" },
     { label: "Round", value: event.intRound || "" },
     { label: "Referee", value: event.strReferee || "" },
     { label: "Attendance", value: event.intSpectators || "" },
@@ -10379,13 +10376,14 @@ function normalizedStats(stats) {
 function renderStatsTable(stats) {
   const rows = normalizedStats(stats);
   if (!rows.length) return "";
-  const body = rows
-    .map(
-      (row) =>
-        `<div class="stat-row"><span class="stat-label">${escapeHtml(row.label)}</span><span class="stat-home">${escapeHtml(row.home)}</span><span class="stat-sep">-</span><span class="stat-away">${escapeHtml(row.away)}</span></div>`
-    )
-    .join("");
-  return `<div class="stats-block"><p class="stats-title">Match Stats</p>${body}</div>`;
+  const renderRow = (row) =>
+    `<div class="stat-row"><span class="stat-label">${escapeHtml(row.label)}</span><span class="stat-home">${escapeHtml(row.home)}</span><span class="stat-sep">-</span><span class="stat-away">${escapeHtml(row.away)}</span></div>`;
+  const visible = rows.slice(0, 5).map(renderRow).join("");
+  const extra = rows.slice(5);
+  const extraHtml = extra.length
+    ? `<div class="stats-extra hidden">${extra.map(renderRow).join("")}</div><button class="stats-toggle" onclick="var x=this.previousElementSibling,h=x.classList.toggle('hidden');this.textContent=h?'View all stats \u25be':'View less \u25b4'">View all stats ▾</button>`
+    : "";
+  return `<div class="stats-block"><p class="stats-title">Match Stats</p>${visible}${extraHtml}</div>`;
 }
 
 function renderTimelineBlock(timeline, homeTeam, awayTeam) {
@@ -10405,7 +10403,9 @@ function renderTimelineBlock(timeline, homeTeam, awayTeam) {
     const assist = rawAssist && rawAssist !== (ev.strPlayer || "") ? escapeHtml(rawAssist) : "";
     const isHome = String(ev.strHome || "").toLowerCase() === "home";
     let icon, detail, typeClass;
-    if (type.includes("own") && type.includes("goal")) {
+    if (type.includes("miss")) {
+      icon = "✗"; typeClass = "tl-missed"; detail = player;
+    } else if (type.includes("own") && type.includes("goal")) {
       icon = "⚽"; typeClass = "tl-own-goal";
       detail = `${player} <span class="tl-assist">(o.g.)</span>`;
     } else if (type.includes("goal") && type.includes("penalty")) {

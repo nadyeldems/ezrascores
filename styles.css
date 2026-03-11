@@ -5468,6 +5468,27 @@ body[data-theme="t90"] .team-score.leading {
   color: #9e6e35;
 }
 
+.stats-extra.hidden {
+  display: none;
+}
+
+.stats-toggle {
+  margin-top: 0.3rem;
+  background: none;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  color: var(--text-soft);
+  font-size: 0.65rem;
+  padding: 0.18rem 0.55rem;
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+}
+.stats-toggle:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
 /* ── Match Timeline ──────────────────────────────── */
 .timeline-block {
   margin-top: 0.45rem;
@@ -5489,6 +5510,9 @@ body[data-theme="t90"] .team-score.leading {
   color: var(--amber);
   padding-bottom: 0.3rem;
   border-bottom: 1px solid var(--line-soft);
+}
+.tl-header .tl-home {
+  text-align: left;
 }
 .tl-header .tl-away {
   text-align: right;
