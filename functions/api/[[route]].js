@@ -4165,7 +4165,21 @@ async function handleSocialFeed(db, request) {
     .bind(...bindings)
     .all();
 
-  const events = (rows?.results || []).map((row) => {
+  // Deduplicate before rendering: the dedup_key on ezra_social_events includes
+  // league_code, so a user in EPL + Championship + La Liga generates one row per
+  // league for the same underlying event (same streak, same perfect score, etc.).
+  // Keep only the most recent row per (user_id, event_type, calendar-day) so
+  // each user sees each event type at most once per day in the feed.
+  const seenDedup = new Set();
+  const dedupedRows = (rows?.results || []).filter((row) => {
+    const day = String(row?.created_at || "").slice(0, 10);
+    const key = `${String(row?.user_id || "")}:${String(row?.event_type || "")}:${day}`;
+    if (seenDedup.has(key)) return false;
+    seenDedup.add(key);
+    return true;
+  });
+
+  const events = dedupedRows.map((row) => {
     const payload = safeParseJsonText(row?.payload_json || "{}");
     const name = String(row?.name || "Player");
     let message = "New update";

@@ -2910,9 +2910,13 @@ body[data-motion="minimal"] .avatar-hero-img {
 #fun-zone-panel.play-focus #family-league-panel,
 #fun-zone-panel.play-focus #social-feed-panel,
 #fun-zone-panel.play-focus #challenge-streak-panel,
-#fun-zone-panel.play-focus #challenge-mastery-panel,
 #fun-zone-panel.play-focus #challenge-achievements-panel {
   display: block;
+}
+
+/* Team mastery is hidden from the play section UI but data still accumulates */
+#challenge-mastery-panel {
+  display: none !important;
 }
 
 #fun-zone-panel.play-focus .fun-grid {

@@ -5813,7 +5813,15 @@ async function refreshSocialLayer(force = false) {
       apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/rivalry${query}`, null, state.account.token),
       apiRequest("GET", `${API_PROXY_BASE}/v1/ezra/account/follow/requests`, null, state.account.token),
     ]);
-    state.socialFeed.items = Array.isArray(feed?.events) ? feed.events : [];
+    // Client-side safety dedup: drop any events with a duplicate id
+    // (backend already deduplicates by user+type+day, this catches anything else)
+    const seenIds = new Set();
+    state.socialFeed.items = (Array.isArray(feed?.events) ? feed.events : []).filter((ev) => {
+      const id = ev?.id;
+      if (id == null || seenIds.has(id)) return false;
+      seenIds.add(id);
+      return true;
+    });
     state.socialFeed.followingIds = Array.isArray(feed?.followingUserIds)
       ? feed.followingUserIds.map((id) => String(id))
       : [];
