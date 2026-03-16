@@ -1318,6 +1318,14 @@ async function fetchEventResultById(key, eventId, resultCache, db, options = {})
     resultCache.set(cacheKey, cached);
     return cached;
   }
+  // cacheOnly mode: never make an upstream HTTP call. Return whatever is in D1
+  // (even if stale/expired) so callers on hot paths (e.g. bootstrap) don't
+  // block on TheSportsDB for every prediction. The cron will refresh results.
+  if (options?.cacheOnly) {
+    const stale = cached || fallback;
+    resultCache.set(cacheKey, stale);
+    return stale;
+  }
   try {
     const data = await fetchSportsDb("v1", key, `lookupevent.php?id=${encodeURIComponent(cacheKey)}`);
     const event = firstArray(data)?.[0] || null;
@@ -3157,6 +3165,7 @@ async function recalcUserLifetimeScoreOnly(db, userId, userName, userState, spor
   for (const pick of ordered) {
     const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, {
       kickoffIso: pick.kickoffIso || "",
+      cacheOnly: true,
     });
     if (!result.final || result.home === null || result.away === null) continue;
     const base =
@@ -3194,17 +3203,10 @@ async function handleAccountBootstrap(db, request, key) {
       .prepare("UPDATE ezra_profile_states SET state_json = ?2, updated_at = ?3 WHERE user_id = ?1")
       .bind(session.user_id, JSON.stringify(userState), new Date().toISOString())
       .run();
-    // Re-settle scores for every league this user is in so league standings update.
-    const leagueMemberRows = await db
-      .prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1")
-      .bind(session.user_id)
-      .all();
-    const userLeagueCodes = (leagueMemberRows?.results || [])
-      .map((r) => String(r?.league_code || ""))
-      .filter(Boolean);
-    for (const leagueCode of userLeagueCodes) {
-      await syncLeagueScoresFromStates(db, leagueCode, key).catch(() => {});
-    }
+    // Note: league score re-settlement is intentionally NOT triggered here.
+    // syncLeagueScoresFromStates iterates all members × all predictions and
+    // makes upstream TheSportsDB calls — far too slow for a sign-in hot path.
+    // The cron runs every minute and will re-settle scores promptly.
   }
 
   // Always recalculate this user's personal lifetime score directly from their
