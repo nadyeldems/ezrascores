@@ -384,6 +384,7 @@ function buildClearSessionCookie(request) {
 const ACCOUNT_SESSION_MS = 1000 * 60 * 60 * 24 * 30;
 
 let accountSchemaReady = false;
+let achievementCatalogReady = false;
 async function ensureAccountSchema(db) {
   if (accountSchemaReady) return;
   const statements = [
@@ -1547,29 +1548,29 @@ async function upsertLeagueSeasonPoints(db, leagueCode, seasonId, userId, points
 
 async function replaceTeamMastery(db, userId, rows) {
   const nowIso = new Date().toISOString();
-  await db.prepare("DELETE FROM ezra_user_team_mastery WHERE user_id = ?1").bind(userId).run();
-  for (const row of rows || []) {
-    await db
-      .prepare(
-        `
-        INSERT INTO ezra_user_team_mastery
-          (user_id, team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at)
-        VALUES
-          (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        `
-      )
-      .bind(
-        userId,
-        String(row.teamId || ""),
-        String(row.teamName || "Unknown"),
-        Math.max(0, Number(row.predCount || 0)),
-        Math.max(0, Number(row.resultCorrect || 0)),
-        Math.max(0, Number(row.exactCorrect || 0)),
-        Math.max(0, Number(row.pointsEarned || 0)),
-        nowIso
-      )
-      .run();
-  }
+  // DELETE + all INSERTs in one atomic batch — N+1 sequential round trips → 1.
+  const stmts = [
+    db.prepare("DELETE FROM ezra_user_team_mastery WHERE user_id = ?1").bind(userId),
+    ...(rows || []).map((row) =>
+      db
+        .prepare(
+          `INSERT INTO ezra_user_team_mastery
+             (user_id, team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+        )
+        .bind(
+          userId,
+          String(row.teamId || ""),
+          String(row.teamName || "Unknown"),
+          Math.max(0, Number(row.predCount || 0)),
+          Math.max(0, Number(row.resultCorrect || 0)),
+          Math.max(0, Number(row.exactCorrect || 0)),
+          Math.max(0, Number(row.pointsEarned || 0)),
+          nowIso
+        )
+    ),
+  ];
+  await db.batch(stmts);
 }
 
 async function upsertUserProgress(db, userId, progress) {
@@ -1605,6 +1606,9 @@ async function upsertUserProgress(db, userId, progress) {
 }
 
 async function ensureAchievementCatalog(db) {
+  // Skip once the catalog has been seeded in this Worker isolate. The rows
+  // never change at runtime so an in-memory guard is safe.
+  if (achievementCatalogReady) return;
   const nowIso = new Date().toISOString();
   const rows = [
     { code: "streak_3", name: "On Fire", description: "Complete quests 3 days in a row.", icon: "🔥" },
@@ -1614,12 +1618,15 @@ async function ensureAchievementCatalog(db) {
     { code: "mastery_25", name: "Team Analyst", description: "Make 25 predictions for one club.", icon: "📈" },
     { code: "titles_5", name: "Dynasty", description: "Win 5 mini-league weekly titles.", icon: "👑" },
   ];
-  for (const row of rows) {
-    await db
-      .prepare("INSERT OR IGNORE INTO ezra_achievements (code, name, description, icon, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
-      .bind(row.code, row.name, row.description, row.icon, nowIso)
-      .run();
-  }
+  // Batch all INSERT OR IGNORE into one D1 round trip.
+  await db.batch(
+    rows.map((row) =>
+      db
+        .prepare("INSERT OR IGNORE INTO ezra_achievements (code, name, description, icon, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
+        .bind(row.code, row.name, row.description, row.icon, nowIso)
+    )
+  );
+  achievementCatalogReady = true;
 }
 
 async function grantAchievement(db, userId, code) {
@@ -1720,31 +1727,31 @@ async function awardSeasonTitleIfEligible(db, leagueCode, seasonId) {
 }
 
 async function replacePointLedgerForUser(db, userId, leagueCode, entries = []) {
-  await db
-    .prepare("DELETE FROM ezra_points_ledger WHERE user_id = ?1 AND league_code = ?2 AND (type = 'prediction' OR type = 'quest_bonus')")
-    .bind(userId, leagueCode)
-    .run();
-  for (const row of entries) {
-    await db
-      .prepare(
-        `
-        INSERT OR IGNORE INTO ezra_points_ledger
-          (event_id, user_id, league_code, type, points, idempotency_key, payload_json, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        `
-      )
-      .bind(
-        String(row.eventId || ""),
-        userId,
-        leagueCode,
-        String(row.type || "prediction"),
-        Math.max(0, Number(row.points || 0)),
-        String(row.idempotencyKey || ""),
-        JSON.stringify(row.payload || {}),
-        String(row.createdAt || new Date().toISOString())
-      )
-      .run();
-  }
+  // DELETE + all INSERT OR IGNOREs in one atomic batch.
+  const stmts = [
+    db
+      .prepare("DELETE FROM ezra_points_ledger WHERE user_id = ?1 AND league_code = ?2 AND (type = 'prediction' OR type = 'quest_bonus')")
+      .bind(userId, leagueCode),
+    ...entries.map((row) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO ezra_points_ledger
+             (event_id, user_id, league_code, type, points, idempotency_key, payload_json, created_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+        )
+        .bind(
+          String(row.eventId || ""),
+          userId,
+          leagueCode,
+          String(row.type || "prediction"),
+          Math.max(0, Number(row.points || 0)),
+          String(row.idempotencyKey || ""),
+          JSON.stringify(row.payload || {}),
+          String(row.createdAt || new Date().toISOString())
+        )
+    ),
+  ];
+  await db.batch(stmts);
 }
 
 async function ensureDefaultLeagueForUser(db, userId) {
@@ -3073,13 +3080,11 @@ async function buildLeagueDirectoryForUser(db, userId, key) {
   const detailed = await Promise.all(
     leagues.map(async (league) => {
       const code = normalizeLeagueCode(league.code);
-      let standings = [];
-      try {
-        standings = await leagueStandings(db, code, key);
-      } catch {
-        standings = await leagueStandingsFallback(db, code);
-      }
-      const settleStatus = code ? await getLeagueSettleStatus(db, code) : { settled: false, settledAt: 0, ageMs: null };
+      // Standings and settle-status are independent — fetch in parallel.
+      const [standings, settleStatus] = await Promise.all([
+        leagueStandings(db, code, key).catch(() => leagueStandingsFallback(db, code)),
+        code ? getLeagueSettleStatus(db, code) : Promise.resolve({ settled: false, settledAt: 0, ageMs: null }),
+      ]);
       return {
         code: league.code,
         name: normalizeLeagueName(league.name, `League ${league.code}`),
@@ -3107,79 +3112,71 @@ async function handleLeagueList(db, request, key) {
 }
 
 async function buildChallengeDashboardForUser(db, session, key) {
-  await ensureAchievementCatalog(db);
-  const prefs = await getUserPreference(db, session.user_id);
-  const progress = await db
-    .prepare(
-      `
-      SELECT current_streak, best_streak, last_quest_date, combo_count, best_combo, combo_updated_at, updated_at
-      FROM ezra_user_progress
-      WHERE user_id = ?1
-      LIMIT 1
-      `
-    )
-    .bind(session.user_id)
-    .first();
-  const achievements = await db
-    .prepare(
-      `
-      SELECT a.code, a.name, a.description, a.icon, ua.earned_at
-      FROM ezra_user_achievements ua
-      JOIN ezra_achievements a ON a.code = ua.achievement_code
-      WHERE ua.user_id = ?1
-      ORDER BY ua.earned_at DESC
-      `
-    )
-    .bind(session.user_id)
-    .all();
-  const mastery = await db
-    .prepare(
-      `
-      SELECT team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at
-      FROM ezra_user_team_mastery
-      WHERE user_id = ?1
-      ORDER BY pred_count DESC, points_earned DESC, team_name COLLATE NOCASE ASC
-      LIMIT 8
-      `
-    )
-    .bind(session.user_id)
-    .all();
-  const lifetime = await db
-    .prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1")
-    .bind(session.user_id)
-    .first();
+  // ensureAchievementCatalog is guarded by achievementCatalogReady so it's
+  // free on warm isolates; kick it off concurrently with the five read queries.
+  const [, prefs, progress, achievements, mastery, lifetime, leagues] = await Promise.all([
+    ensureAchievementCatalog(db),
+    getUserPreference(db, session.user_id),
+    db
+      .prepare(
+        `SELECT current_streak, best_streak, last_quest_date, combo_count, best_combo, combo_updated_at, updated_at
+         FROM ezra_user_progress WHERE user_id = ?1 LIMIT 1`
+      )
+      .bind(session.user_id)
+      .first(),
+    db
+      .prepare(
+        `SELECT a.code, a.name, a.description, a.icon, ua.earned_at
+         FROM ezra_user_achievements ua
+         JOIN ezra_achievements a ON a.code = ua.achievement_code
+         WHERE ua.user_id = ?1
+         ORDER BY ua.earned_at DESC`
+      )
+      .bind(session.user_id)
+      .all(),
+    db
+      .prepare(
+        `SELECT team_id, team_name, pred_count, result_correct, exact_correct, points_earned, updated_at
+         FROM ezra_user_team_mastery WHERE user_id = ?1
+         ORDER BY pred_count DESC, points_earned DESC, team_name COLLATE NOCASE ASC
+         LIMIT 8`
+      )
+      .bind(session.user_id)
+      .all(),
+    db.prepare("SELECT points FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1").bind(session.user_id).first(),
+    listLeaguesForUser(db, session.user_id),
+  ]);
 
-  const leagues = await listLeaguesForUser(db, session.user_id);
   const currentLeagueCode = normalizeLeagueCode(leagues?.[0]?.code || "");
   let season = null;
   let seasonStandings = [];
   let settleStatus = { settled: false, settledAt: 0, ageMs: null };
   if (currentLeagueCode) {
-    settleStatus = await getLeagueSettleStatus(db, currentLeagueCode);
     season = currentSevenDaySeasonWindow();
-    await ensureLeagueSeason(db, currentLeagueCode, season);
-    const standingsRows = await db
-      .prepare(
-        `
-        SELECT u.id AS user_id, u.name, u.avatar_json, COALESCE(sp.points, 0) AS points
-             ,(
-               SELECT COUNT(*)
-               FROM ezra_league_season_titles t
-               WHERE t.league_code = lm.league_code
-                 AND t.user_id = lm.user_id
-             ) AS titles_won
-        FROM ezra_league_members lm
-        JOIN ezra_users u ON u.id = lm.user_id
-        LEFT JOIN ezra_league_season_points sp
-          ON sp.user_id = lm.user_id
-         AND sp.league_code = lm.league_code
-         AND sp.season_id = ?2
-        WHERE lm.league_code = ?1
-        ORDER BY points DESC, u.name COLLATE NOCASE ASC
-        `
-      )
-      .bind(currentLeagueCode, season.seasonId)
-      .all();
+    // All three operations are independent — run them in parallel.
+    // settleStatus is written via side-effect inside .then() so the outer
+    // Promise.all result tuple stays clean.
+    const [settleResult, , standingsRows] = await Promise.all([
+      getLeagueSettleStatus(db, currentLeagueCode),
+      ensureLeagueSeason(db, currentLeagueCode, season),
+      db
+        .prepare(
+          `SELECT u.id AS user_id, u.name, u.avatar_json, COALESCE(sp.points, 0) AS points
+                ,(SELECT COUNT(*) FROM ezra_league_season_titles t
+                  WHERE t.league_code = lm.league_code AND t.user_id = lm.user_id) AS titles_won
+           FROM ezra_league_members lm
+           JOIN ezra_users u ON u.id = lm.user_id
+           LEFT JOIN ezra_league_season_points sp
+             ON sp.user_id = lm.user_id
+            AND sp.league_code = lm.league_code
+            AND sp.season_id = ?2
+           WHERE lm.league_code = ?1
+           ORDER BY points DESC, u.name COLLATE NOCASE ASC`
+        )
+        .bind(currentLeagueCode, season.seasonId)
+        .all(),
+    ]);
+    settleStatus = settleResult;
     seasonStandings = (standingsRows?.results || []).map((row) => ({
       user_id: row.user_id,
       name: row.name,
@@ -3283,15 +3280,16 @@ async function handleAccountBootstrap(db, request, key) {
 
   // Fire dashboard and leagues immediately — they only need the session object,
   // not the user's prediction state. Running them concurrently with the state
-  // fetch eliminates sequential latency on the hot bootstrap path.
+  // and score fetches eliminates sequential latency on the hot bootstrap path.
   const dashboardPromise = buildChallengeDashboardForUser(db, session, key);
   const leaguesPromise = buildLeagueDirectoryForUser(db, session.user_id, key);
 
-  // Load and normalise prediction state while dashboard/leagues are in flight.
-  const stateRow = await db
-    .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
-    .bind(session.user_id)
-    .first();
+  // Load prediction state and last-known score in a single parallel round trip.
+  const [stateRow, scoreRow] = await Promise.all([
+    db.prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1").bind(session.user_id).first(),
+    db.prepare("SELECT points, updated_at FROM ezra_user_scores WHERE user_id = ?1 LIMIT 1").bind(session.user_id).first(),
+  ]);
+
   const userState = safeParseJsonText(stateRow?.state_json || "{}");
   const normalizeResult = normalizePredictionEntriesForUserState(userState, session.user_id, String(session.name || ""));
   if (normalizeResult.changed) {
@@ -3307,12 +3305,17 @@ async function handleAccountBootstrap(db, request, key) {
     // The cron runs every minute and will re-settle scores promptly.
   }
 
-  // recalcUserLifetimeScoreOnly returns the computed total directly — use it
-  // instead of a second getUserLifetimePoints DB read. Falls back to the
-  // stored score only if the recalculation itself throws.
-  const lifetimePoints = await recalcUserLifetimeScoreOnly(
-    db, session.user_id, String(session.name || ""), userState, key
-  ).catch(() => getUserLifetimePoints(db, session.user_id));
+  // Throttle the full score recalculation. If the stored score was written
+  // more recently than SCORE_RECALC_THROTTLE_MS AND the prediction state
+  // hasn't changed since then, return the cached value immediately. This
+  // avoids the bulk D1 read on every page refresh or rapid re-authentication.
+  const stateMs = stateRow?.updated_at ? Date.parse(stateRow.updated_at) : 0;
+  const scoreMs = scoreRow?.updated_at ? Date.parse(scoreRow.updated_at) : 0;
+  const scoreIsStale = !scoreRow || normalizeResult.changed || stateMs > scoreMs || Date.now() - scoreMs > SCORE_RECALC_THROTTLE_MS;
+  const lifetimePoints = scoreIsStale
+    ? await recalcUserLifetimeScoreOnly(db, session.user_id, String(session.name || ""), userState, key)
+        .catch(() => Math.max(0, Number(scoreRow?.points || 0)))
+    : Math.max(0, Number(scoreRow?.points || 0));
 
   // Both promises are already well underway — this is effectively a join, not
   // sequential work.
@@ -4267,6 +4270,9 @@ const TABLE_REFRESH_IDLE_MS = 15 * 60 * 1000;
 const FIXTURE_HISTORY_DAYS = 92;
 const FIXTURE_FUTURE_DAYS = 183;
 const LEAGUE_SETTLE_MIN_INTERVAL_MS = 60 * 1000;
+// Skip the score recalc on bootstrap if the stored score is fresher than this.
+// Prevents repeated heavy D1 bulk-reads on page refreshes / frequent sign-ins.
+const SCORE_RECALC_THROTTLE_MS = 2 * 60 * 1000;
 const LEAGUE_SETTLE_LOCK_MS = 45 * 1000;
 const LIVE_SNAPSHOT_REFRESH_MS = 60 * 1000;
 const LIVE_STREAM_POLL_MS = 5000;
