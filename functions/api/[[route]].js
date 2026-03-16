@@ -1276,6 +1276,57 @@ async function readCachedEventResult(db, eventId) {
   return readResultFromCacheRow(row);
 }
 
+// Bulk-read multiple event results from D1 in a single parameterised IN query
+// instead of N individual SELECTs. Chunks to 90 IDs to stay under D1's bound-
+// parameter limit. Returns a Map<eventId, result>.
+async function readCachedEventResultsBulk(db, eventIds) {
+  if (!db || !eventIds.length) return new Map();
+  const unique = [...new Set(eventIds.map((id) => String(id || "")).filter(Boolean))];
+  if (!unique.length) return new Map();
+  const CHUNK = 90;
+  const map = new Map();
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const placeholders = chunk.map((_, j) => `?${j + 1}`).join(", ");
+    const rows = await db
+      .prepare(
+        `SELECT event_id, payload_json, home_score, away_score, is_final, kickoff_at, fetched_at, expires_at
+         FROM ezra_event_results_cache WHERE event_id IN (${placeholders})`
+      )
+      .bind(...chunk)
+      .all();
+    for (const row of rows?.results || []) {
+      const parsed = readResultFromCacheRow(row);
+      if (parsed) map.set(String(row.event_id), parsed);
+    }
+  }
+  return map;
+}
+
+// Bulk-read fixture metadata for a set of event IDs in a single query.
+// Returns a Map<eventId, row> where row has { payload_json, league_id }.
+async function readFixturesBulk(db, eventIds) {
+  if (!db || !eventIds.length) return new Map();
+  const unique = [...new Set(eventIds.map((id) => String(id || "")).filter(Boolean))];
+  if (!unique.length) return new Map();
+  const CHUNK = 90;
+  const map = new Map();
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const chunk = unique.slice(i, i + CHUNK);
+    const placeholders = chunk.map((_, j) => `?${j + 1}`).join(", ");
+    const rows = await db
+      .prepare(
+        `SELECT event_id, payload_json, league_id FROM ezra_fixtures_cache WHERE event_id IN (${placeholders})`
+      )
+      .bind(...chunk)
+      .all();
+    for (const row of rows?.results || []) {
+      map.set(String(row.event_id), row);
+    }
+  }
+  return map;
+}
+
 async function writeCachedEventResult(db, eventId, event, result) {
   if (!db || !eventId) return;
   const now = Date.now();
@@ -1876,13 +1927,18 @@ async function syncLeagueScoresFromStates(db, code, key) {
 
   await Promise.all(
     ids.map(async (userId) => {
-      const userRow = await db.prepare("SELECT name FROM ezra_users WHERE id = ?1 LIMIT 1").bind(userId).first();
+      // Single JOIN replaces two sequential D1 round trips per user.
       const row = await db
-        .prepare("SELECT state_json FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+        .prepare(
+          `SELECT u.name, p.state_json
+           FROM ezra_users u
+           LEFT JOIN ezra_profile_states p ON p.user_id = u.id
+           WHERE u.id = ?1 LIMIT 1`
+        )
         .bind(userId)
         .first();
       const state = safeParseJsonText(row?.state_json || "{}");
-      const predictionRows = predictionEntriesForUser(state, userId, String(userRow?.name || ""));
+      const predictionRows = predictionEntriesForUser(state, userId, String(row?.name || ""));
       const ordered = [...predictionRows].sort((a, b) => String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || "")));
       let predictionPoints = 0;
       let seasonPoints = 0;
@@ -1891,13 +1947,19 @@ async function syncLeagueScoresFromStates(db, code, key) {
       let totalExact = 0;
       const mastery = new Map();
       const ledger = [];
+      // Pre-warm the shared resultCache with a bulk D1 read so that already-
+      // cached events are served from memory. Only missing or stale entries
+      // fall through to fetchEventResultById's upstream HTTP path.
+      const pickEventIds = [...new Set(ordered.map((p) => String(p.eventId || "")).filter(Boolean))];
+      const bulkResults = await readCachedEventResultsBulk(db, pickEventIds);
+      for (const [id, res] of bulkResults) resultCache.set(id, res);
+      // Prefetch all fixture metadata for this user in one query instead of
+      // one SELECT per prediction inside the scoring loop.
+      const fixtureMap = await readFixturesBulk(db, pickEventIds);
       for (const pick of ordered) {
         const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, { kickoffIso: pick.kickoffIso || "" });
         if (!result.final || result.home === null || result.away === null) continue;
-        const eventRow = await db
-          .prepare("SELECT payload_json, league_id FROM ezra_fixtures_cache WHERE event_id = ?1 LIMIT 1")
-          .bind(String(pick.eventId || ""))
-          .first();
+        const eventRow = fixtureMap.get(String(pick.eventId || "")) ?? null;
         const event = safeParseJsonText(eventRow?.payload_json || "{}");
         const leagueCode = leagueIdToCode(eventRow?.league_id);
         const teamId = normalizeTeamIdToken(String(event?.idHomeTeam || "")) || normalizeTeamIdToken(String(event?.idAwayTeam || "")) || "unknown";
@@ -3175,8 +3237,14 @@ async function recalcUserLifetimeScoreOnly(db, userId, userName, userState, spor
   const ordered = [...predictionRows].sort((a, b) =>
     String(a.kickoffIso || "").localeCompare(String(b.kickoffIso || ""))
   );
-  // Fetch all cached results in parallel — cacheOnly means pure D1 reads with
-  // no upstream HTTP calls, so there's no benefit to serialising them.
+  // Pre-warm the in-memory resultCache with a single bulk D1 query covering all
+  // event IDs. This collapses N round trips into one so the Promise.all below
+  // resolves from memory for every event that is already in the D1 cache.
+  const allEventIds = [...new Set(ordered.map((p) => String(p.eventId || "")).filter(Boolean))];
+  const bulkCached = await readCachedEventResultsBulk(db, allEventIds);
+  for (const [id, result] of bulkCached) resultCache.set(id, result);
+  // fetchEventResultById with cacheOnly:true now hits the in-memory Map for
+  // already-cached events; only truly-absent entries fall back to D1.
   const fetchedResults = await Promise.all(
     ordered.map((pick) =>
       fetchEventResultById(sportsKey, pick.eventId, resultCache, db, {
@@ -3213,7 +3281,13 @@ async function handleAccountBootstrap(db, request, key) {
   const { token, session } = await accountAuth(db, request);
   if (!session) return json({ error: "Unauthorized" }, 401);
 
-  // Load state first so we can normalise prediction keys inline before scoring.
+  // Fire dashboard and leagues immediately — they only need the session object,
+  // not the user's prediction state. Running them concurrently with the state
+  // fetch eliminates sequential latency on the hot bootstrap path.
+  const dashboardPromise = buildChallengeDashboardForUser(db, session, key);
+  const leaguesPromise = buildLeagueDirectoryForUser(db, session.user_id, key);
+
+  // Load and normalise prediction state while dashboard/leagues are in flight.
   const stateRow = await db
     .prepare("SELECT state_json, updated_at FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
     .bind(session.user_id)
@@ -3233,16 +3307,17 @@ async function handleAccountBootstrap(db, request, key) {
     // The cron runs every minute and will re-settle scores promptly.
   }
 
-  // Always recalculate this user's personal lifetime score directly from their
-  // prediction state. This ensures ezra_user_scores is never stale after login,
-  // regardless of whether normalization changed anything or the cron has run.
-  await recalcUserLifetimeScoreOnly(db, session.user_id, String(session.name || ""), userState, key).catch(() => {});
+  // recalcUserLifetimeScoreOnly returns the computed total directly — use it
+  // instead of a second getUserLifetimePoints DB read. Falls back to the
+  // stored score only if the recalculation itself throws.
+  const lifetimePoints = await recalcUserLifetimeScoreOnly(
+    db, session.user_id, String(session.name || ""), userState, key
+  ).catch(() => getUserLifetimePoints(db, session.user_id));
 
-  const [lifetimePoints, dashboard, leagues] = await Promise.all([
-    getUserLifetimePoints(db, session.user_id),
-    buildChallengeDashboardForUser(db, session, key),
-    buildLeagueDirectoryForUser(db, session.user_id, key),
-  ]);
+  // Both promises are already well underway — this is effectively a join, not
+  // sequential work.
+  const [dashboard, leagues] = await Promise.all([dashboardPromise, leaguesPromise]);
+
   return json(
     {
       user: {
