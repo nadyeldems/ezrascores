@@ -1592,18 +1592,28 @@ async function emitSocialEvent(db, { leagueCode = "", userId = "", eventType = "
 
 async function awardSeasonTitleIfEligible(db, leagueCode, seasonId) {
   if (!leagueCode || !seasonId) return null;
+
+  // Check existing title and the points that winner had when awarded.
   const existing = await db
     .prepare(
       `
-      SELECT league_code, season_id, user_id
-      FROM ezra_league_season_titles
-      WHERE league_code = ?1 AND season_id = ?2
+      SELECT lst.user_id, COALESCE(lsp.points, 0) AS awarded_points
+      FROM ezra_league_season_titles lst
+      LEFT JOIN ezra_league_season_points lsp
+        ON lsp.league_code = lst.league_code
+       AND lsp.season_id = lst.season_id
+       AND lsp.user_id = lst.user_id
+      WHERE lst.league_code = ?1 AND lst.season_id = ?2
       LIMIT 1
       `
     )
     .bind(leagueCode, seasonId)
     .first();
-  if (existing?.user_id) return String(existing.user_id);
+
+  // If already awarded to someone with positive points, keep that winner locked in.
+  if (existing?.user_id && Number(existing.awarded_points || 0) > 0) {
+    return String(existing.user_id);
+  }
 
   const leader = await db
     .prepare(
@@ -1619,15 +1629,33 @@ async function awardSeasonTitleIfEligible(db, leagueCode, seasonId) {
     .first();
   const winnerUserId = String(leader?.user_id || "").trim();
   if (!winnerUserId) return null;
-  await db
-    .prepare(
-      `
-      INSERT OR IGNORE INTO ezra_league_season_titles (league_code, season_id, user_id, awarded_at)
-      VALUES (?1, ?2, ?3, ?4)
-      `
-    )
-    .bind(leagueCode, seasonId, winnerUserId, new Date().toISOString())
-    .run();
+  // Never award a title when nobody has scored any season points yet.
+  if (Number(leader?.points || 0) <= 0) return null;
+
+  const nowIso = new Date().toISOString();
+  if (existing?.user_id) {
+    // Replace the bogus 0-point placeholder with the real winner.
+    await db
+      .prepare(
+        `
+        UPDATE ezra_league_season_titles
+        SET user_id = ?3, awarded_at = ?4
+        WHERE league_code = ?1 AND season_id = ?2
+        `
+      )
+      .bind(leagueCode, seasonId, winnerUserId, nowIso)
+      .run();
+  } else {
+    await db
+      .prepare(
+        `
+        INSERT OR IGNORE INTO ezra_league_season_titles (league_code, season_id, user_id, awarded_at)
+        VALUES (?1, ?2, ?3, ?4)
+        `
+      )
+      .bind(leagueCode, seasonId, winnerUserId, nowIso)
+      .run();
+  }
   return winnerUserId;
 }
 

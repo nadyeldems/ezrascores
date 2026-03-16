@@ -4672,15 +4672,18 @@ function renderPredictionCardsHtml(memberData, compareEnabled, showPreviousRound
     .sort((a, b) => predictionKickoffMs(b) - predictionKickoffMs(a));
   const previousCompleteRoundKey = completeRows.length ? predictionRoundKey(completeRows[0]) : "";
 
+  // If no upcoming incomplete picks (e.g. between weekends), fall back to the
+  // most recent completed round so the comparison is never empty.
+  const effectiveShowPrevious = showPreviousRound || !nextIncompleteRoundKey;
   let scopedRows = [];
-  if (showPreviousRound) {
+  if (effectiveShowPrevious) {
     scopedRows = previousCompleteRoundKey ? merged.filter((row) => predictionRoundKey(row) === previousCompleteRoundKey) : [];
   } else {
-    scopedRows = nextIncompleteRoundKey ? merged.filter((row) => predictionRoundKey(row) === nextIncompleteRoundKey) : [];
+    scopedRows = merged.filter((row) => predictionRoundKey(row) === nextIncompleteRoundKey);
   }
 
   if (!scopedRows.length) {
-    return `<div class="empty">${showPreviousRound ? "No previous round picks yet." : "No incomplete round picks available."}</div>`;
+    return `<div class="empty">${effectiveShowPrevious ? "No previous round picks yet." : "No incomplete round picks available."}</div>`;
   }
 
   return scopedRows
@@ -4775,13 +4778,18 @@ function renderLeagueMemberView() {
   const viewerTotalPoints = Math.max(0, Number(data?.viewerPoints?.total || 0));
   const viewerTitlesWon = Math.max(0, Number(data?.viewerTitlesWon || 0));
   const showPreviousRound = Boolean(state.leagueMemberView.showPreviousRound);
+  // If there are no unsettled predictions on either side, auto-fallback to previous round.
+  const memberPredictions = Array.isArray(data?.predictions) ? data.predictions : [];
+  const yourPredictions = currentUserPredictionsSnapshot();
+  const hasIncompletePicks = [...memberPredictions, ...yourPredictions].some((p) => !Boolean(p?.settled));
+  const effectiveShowPrevious = showPreviousRound || !hasIncompletePicks;
   el.leagueMemberTitle.textContent = `${memberName}${memberTitlesWon > 0 ? ` 🏆 x${memberTitlesWon}` : ""} • Profile`;
   const memberAvatarConfig = isSelf ? state.account.user?.avatar || data?.user?.avatar : data?.user?.avatar;
   const memberAvatar = avatarBadgeMarkup(memberAvatarConfig, memberName, "member-profile-avatar");
   const viewerAvatar = avatarBadgeMarkup(state.account.user?.avatar, state.account.user?.name || "You", "member-profile-avatar");
   const dream = leagueMemberDreamTeamSummary(data.dreamTeam);
   const myDream = leagueMemberDreamTeamSummary(state.dreamTeam);
-  const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled, showPreviousRound);
+  const predictionsHtml = renderPredictionCardsHtml(data, compareEnabled, effectiveShowPrevious);
 
   el.leagueMemberBody.innerHTML = `
     <div class="member-compare-sticky">
@@ -4820,7 +4828,7 @@ function renderLeagueMemberView() {
     <section class="member-view-group">
       <div class="panel-head compact-head">
         <h4>Score Predictions</h4>
-        <button id="member-round-toggle" class="btn" type="button">${showPreviousRound ? "Next Incomplete Round" : "Previous Round Picks"}</button>
+        ${hasIncompletePicks ? `<button id="member-round-toggle" class="btn" type="button">${effectiveShowPrevious ? "Next Incomplete Round" : "Previous Round Picks"}</button>` : ""}
       </div>
       <div class="member-pred-grid">${predictionsHtml}</div>
     </section>
