@@ -1399,6 +1399,38 @@ async function fetchEventResultById(key, eventId, resultCache, db, options = {})
     resultCache.set(cacheKey, stale);
     return stale;
   }
+
+  // Stale-while-revalidate: if D1 has any result (even expired) return it
+  // immediately so the caller is never blocked on a TheSportsDB round trip.
+  // The upstream fetch runs in the background and updates D1 + the in-memory
+  // cache so the next caller (or next cron tick) gets fresh data.
+  if (cached) {
+    resultCache.set(cacheKey, cached);
+    _waitUntil(
+      (async () => {
+        try {
+          const data = await fetchSportsDb("v1", key, `lookupevent.php?id=${encodeURIComponent(cacheKey)}`);
+          const event = firstArray(data)?.[0] || null;
+          const home = numericScore(event?.intHomeScore);
+          const away = numericScore(event?.intAwayScore);
+          const normalizedTime = normalizeTime(event?.strTime || "");
+          const kickoffAt =
+            event?.dateEvent && normalizedTime
+              ? `${String(event.dateEvent).trim()}T${normalizedTime}Z`
+              : String(options?.kickoffIso || "");
+          const final = eventLikelyFinal(event, options?.kickoffIso || "") && home !== null && away !== null;
+          const fresh = { final, home, away, kickoffAt, event };
+          await writeCachedEventResult(db, cacheKey, event, fresh);
+          resultCache.set(cacheKey, fresh);
+        } catch {
+          // Swallow background refresh errors — stale data is already served.
+        }
+      })()
+    );
+    return cached;
+  }
+
+  // No D1 data at all — must fetch synchronously (first-ever lookup for this event).
   try {
     const data = await fetchSportsDb("v1", key, `lookupevent.php?id=${encodeURIComponent(cacheKey)}`);
     const event = firstArray(data)?.[0] || null;
@@ -1412,10 +1444,6 @@ async function fetchEventResultById(key, eventId, resultCache, db, options = {})
     resultCache.set(cacheKey, result);
     return result;
   } catch {
-    if (cached) {
-      resultCache.set(cacheKey, cached);
-      return cached;
-    }
     resultCache.set(cacheKey, fallback);
     return fallback;
   }
@@ -4586,11 +4614,27 @@ async function handleEzraClubQuizRoute(context, key) {
 // calls. This prevents cache-stampede on cold caches during match days.
 const inflightUpstream = new Map();
 
+// Holds the current request's waitUntil function so deep async helpers
+// (fetchSportsDb, fetchEventResultById) can schedule background work without
+// needing the full context object threaded through every call stack.
+// Defaults to a no-op so it is safe to call in the scheduled cron handler.
+let _waitUntil = (p) => p;
+
 async function fetchSportsDb(version, key, pathWithQuery) {
   const upstream = upstreamUrl(version, key, pathWithQuery);
   if (!upstream) throw new Error("Invalid API version");
+
+  // L1: Cloudflare CDN Cache API — shared across all isolates in the same PoP.
+  // A cache hit here costs ~1 ms and requires zero TheSportsDB RTT or D1 reads.
+  const cfCache = caches.default;
+  const cfReq = new Request(upstream);
+  const cfHit = await cfCache.match(cfReq);
+  if (cfHit) return cfHit.json();
+
+  // L2: in-isolate in-flight dedup — prevents stampede within one Worker instance.
   const dedupeKey = `${version}:${pathWithQuery}`;
   if (inflightUpstream.has(dedupeKey)) return inflightUpstream.get(dedupeKey);
+
   const promise = fetchUpstreamWithRetry(upstream, {
     headers: version === "v2" ? { "X-API-KEY": key } : undefined,
   })
@@ -4599,7 +4643,21 @@ async function fetchSportsDb(version, key, pathWithQuery) {
         const body = await upstreamRes.text();
         throw new Error(body || `Upstream error (${upstreamRes.status})`);
       }
-      return upstreamRes.json();
+      const data = await upstreamRes.json();
+      // Write to Cloudflare cache in the background — does not block the caller.
+      const ttl = ttlForPath(pathWithQuery);
+      _waitUntil(
+        cfCache.put(
+          cfReq,
+          new Response(JSON.stringify(data), {
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": `public, max-age=${ttl}, s-maxage=${ttl}`,
+            },
+          })
+        )
+      );
+      return data;
     })
     .finally(() => inflightUpstream.delete(dedupeKey));
   inflightUpstream.set(dedupeKey, promise);
@@ -5674,6 +5732,8 @@ async function handleEzraTablesRoute(context, key) {
 }
 
 export async function onRequest(context) {
+  // Expose waitUntil to deep helpers (fetchSportsDb, fetchEventResultById).
+  _waitUntil = context.waitUntil.bind(context);
   try {
     const { request, env } = context;
     const url = new URL(request.url);
