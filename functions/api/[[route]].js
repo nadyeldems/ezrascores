@@ -385,8 +385,26 @@ const ACCOUNT_SESSION_MS = 1000 * 60 * 60 * 24 * 30;
 
 let accountSchemaReady = false;
 let achievementCatalogReady = false;
+// Bump this string whenever a new table, column, or index is added so that
+// cold-starting Workers pick up the change even if D1 flags the schema ready.
+const SCHEMA_VERSION = "v4";
 async function ensureAccountSchema(db) {
   if (accountSchemaReady) return;
+  // Fast path: a single lightweight SELECT replaces the full 30-statement
+  // migration batch on cold starts after initial deployment. The try/catch
+  // handles the very first ever deploy where ezra_app_settings doesn't exist.
+  try {
+    const flag = await db
+      .prepare("SELECT value_text FROM ezra_app_settings WHERE key = ?1 LIMIT 1")
+      .bind(`schema_ready_${SCHEMA_VERSION}`)
+      .first();
+    if (String(flag?.value_text || "") === "1") {
+      accountSchemaReady = true;
+      return;
+    }
+  } catch {
+    // Table doesn't exist yet — first-ever deployment. Fall through to full migration.
+  }
   const statements = [
     `
       CREATE TABLE IF NOT EXISTS ezra_users (
@@ -742,6 +760,8 @@ async function ensureAccountSchema(db) {
   }
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_ezra_users_email_key ON ezra_users(email_key)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_ezra_league_members_invited_by ON ezra_league_members(invited_by_user_id)").run();
+  // Persist the ready marker so subsequent cold starts skip the migration batch.
+  await setAppSetting(db, `schema_ready_${SCHEMA_VERSION}`, "1");
   accountSchemaReady = true;
 }
 
@@ -2044,10 +2064,9 @@ async function syncLeagueScoresFromStates(db, code, key) {
 
       const fallbackPoints = extractPointsFromState(state, userId);
       const total = Math.max(predictionPoints + questBonusPoints, fallbackPoints);
-      await upsertUserScore(db, userId, total);
-      await upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints + questSeasonPoints);
-      await replaceTeamMastery(db, userId, [...mastery.values()]);
 
+      // Compute quest/streak flags synchronously so the ledger is fully built
+      // before WAVE 1 fires (replacePointLedgerForUser needs the final ledger).
       const questByDate = state?.familyLeague?.questBonusByDate;
       const todayObj = questByDate && typeof questByDate === "object" ? questByDate[todayIso] : null;
       const yesterdayObj = questByDate && typeof questByDate === "object" ? questByDate[yesterdayIso] : null;
@@ -2061,35 +2080,6 @@ async function syncLeagueScoresFromStates(db, code, key) {
           typeof yesterdayObj === "object" &&
           Object.entries(yesterdayObj).some(([k, done]) => done && String(k || "").startsWith(`acct:${userId}:`))
       );
-      const progressRow = await db
-        .prepare("SELECT current_streak, best_streak, last_quest_date FROM ezra_user_progress WHERE user_id = ?1 LIMIT 1")
-        .bind(userId)
-        .first();
-      let currentStreak = Math.max(0, Number(progressRow?.current_streak || 0));
-      let bestStreak = Math.max(0, Number(progressRow?.best_streak || 0));
-      const lastQuestDate = String(progressRow?.last_quest_date || "");
-      if (hasTodayQuest && lastQuestDate !== todayIso) {
-        currentStreak = hadYesterdayQuest ? currentStreak + 1 : 1;
-        bestStreak = Math.max(bestStreak, currentStreak);
-      } else if (!hasTodayQuest && !hadYesterdayQuest && lastQuestDate && lastQuestDate !== todayIso) {
-        currentStreak = 0;
-      }
-      const nextLastQuestDate = hasTodayQuest ? todayIso : lastQuestDate;
-      await upsertUserProgress(db, userId, {
-        currentStreak,
-        bestStreak,
-        lastQuestDate: nextLastQuestDate,
-        comboCount,
-        bestCombo,
-        comboUpdatedAt: new Date().toISOString(),
-      });
-
-      if (bestStreak >= 3) await grantAchievement(db, userId, "streak_3");
-      if (bestStreak >= 7) await grantAchievement(db, userId, "streak_7");
-      if (bestCombo >= 3) await grantAchievement(db, userId, "combo_3");
-      if (totalExact >= 10) await grantAchievement(db, userId, "exact_10");
-      if ([...mastery.values()].some((m) => Number(m.predCount || 0) >= 25)) await grantAchievement(db, userId, "mastery_25");
-
       if (questBonusPoints > 0) {
         ledger.push({
           eventId: "",
@@ -2100,7 +2090,64 @@ async function syncLeagueScoresFromStates(db, code, key) {
           payload: { questBonusPoints },
         });
       }
-      await replacePointLedgerForUser(db, userId, code, ledger);
+
+      // WAVE 1: three writes + one read are fully independent — run in parallel.
+      const [progressRow] = await Promise.all([
+        db
+          .prepare("SELECT current_streak, best_streak, last_quest_date FROM ezra_user_progress WHERE user_id = ?1 LIMIT 1")
+          .bind(userId)
+          .first(),
+        upsertUserScore(db, userId, total),
+        upsertLeagueSeasonPoints(db, code, season.seasonId, userId, seasonPoints + questSeasonPoints),
+        replaceTeamMastery(db, userId, [...mastery.values()]),
+      ]);
+
+      // Streak / combo derivation — requires progressRow from WAVE 1.
+      let currentStreak = Math.max(0, Number(progressRow?.current_streak || 0));
+      let bestStreak = Math.max(0, Number(progressRow?.best_streak || 0));
+      const lastQuestDate = String(progressRow?.last_quest_date || "");
+      if (hasTodayQuest && lastQuestDate !== todayIso) {
+        currentStreak = hadYesterdayQuest ? currentStreak + 1 : 1;
+        bestStreak = Math.max(bestStreak, currentStreak);
+      } else if (!hasTodayQuest && !hadYesterdayQuest && lastQuestDate && lastQuestDate !== todayIso) {
+        currentStreak = 0;
+      }
+      const nextLastQuestDate = hasTodayQuest ? todayIso : lastQuestDate;
+      const waveNowIso = new Date().toISOString();
+
+      // WAVE 2: progress upsert + all earned achievement grants in one batch,
+      // running concurrently with the ledger replace (both are db.batch calls).
+      const achievementCodes = [];
+      if (bestStreak >= 3) achievementCodes.push("streak_3");
+      if (bestStreak >= 7) achievementCodes.push("streak_7");
+      if (bestCombo >= 3) achievementCodes.push("combo_3");
+      if (totalExact >= 10) achievementCodes.push("exact_10");
+      if ([...mastery.values()].some((m) => Number(m.predCount || 0) >= 25)) achievementCodes.push("mastery_25");
+      await Promise.all([
+        db.batch([
+          db
+            .prepare(
+              `INSERT INTO ezra_user_progress
+                 (user_id, current_streak, best_streak, last_quest_date, combo_count, best_combo, combo_updated_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+               ON CONFLICT(user_id) DO UPDATE SET
+                 current_streak = excluded.current_streak,
+                 best_streak = excluded.best_streak,
+                 last_quest_date = excluded.last_quest_date,
+                 combo_count = excluded.combo_count,
+                 best_combo = excluded.best_combo,
+                 combo_updated_at = excluded.combo_updated_at,
+                 updated_at = excluded.updated_at`
+            )
+            .bind(userId, currentStreak, bestStreak, nextLastQuestDate, comboCount, bestCombo, waveNowIso, waveNowIso),
+          ...achievementCodes.map((aCode) =>
+            db
+              .prepare("INSERT OR IGNORE INTO ezra_user_achievements (user_id, achievement_code, earned_at) VALUES (?1, ?2, ?3)")
+              .bind(userId, aCode, waveNowIso)
+          ),
+        ]),
+        replacePointLedgerForUser(db, userId, code, ledger),
+      ]);
     })
   );
 
@@ -2155,7 +2202,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
   }
 }
 
-async function createSession(db, userId) {
+async function createSession(db, userId, userRecord = null) {
   const token = randomHex(24);
   const now = Date.now();
   const expiresAt = now + ACCOUNT_SESSION_MS;
@@ -2163,6 +2210,22 @@ async function createSession(db, userId) {
     .prepare("INSERT INTO ezra_sessions (token, user_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)")
     .bind(token, userId, new Date(now).toISOString(), expiresAt)
     .run();
+  // Prime the session cache immediately so the bootstrap request that always
+  // follows login/register/reset is a pure in-memory hit with no D1 JOIN.
+  if (userRecord) {
+    sessionMemCache.set(token, {
+      session: {
+        token,
+        expires_at: expiresAt,
+        user_id: userId,
+        name: userRecord.name || "",
+        email: userRecord.email || null,
+        email_verified_at: userRecord.email_verified_at || null,
+        avatar_json: userRecord.avatar_json || null,
+      },
+      cachedAt: now,
+    });
+  }
   return token;
 }
 
@@ -2540,7 +2603,7 @@ async function handleAccountRegister(db, request) {
   await upsertUserPreference(db, userId, false);
   await ensureDefaultLeagueForUser(db, userId);
 
-  const token = await createSession(db, userId);
+  const token = await createSession(db, userId, { name: valid.cleanName, email: emailCheck.clean || null, email_verified_at: null, avatar_json: avatarJson });
   const lifetimePoints = await getUserLifetimePoints(db, userId);
   return json(
     {
@@ -2574,7 +2637,7 @@ async function handleAccountLogin(db, request) {
   const checkHash = await sha256Hex(`${row.pin_salt}:${valid.cleanPin}`);
   if (checkHash !== row.pin_hash) return json({ error: "Invalid PIN." }, 401);
 
-  const token = await createSession(db, row.id);
+  const token = await createSession(db, row.id, row);
   const lifetimePoints = await getUserLifetimePoints(db, row.id);
   return json(
     {
@@ -2754,7 +2817,7 @@ async function handleAccountRecoveryComplete(db, request) {
     .prepare("UPDATE ezra_users SET pin_salt = ?2, pin_hash = ?3, updated_at = ?4 WHERE id = ?1")
     .bind(String(user.id), salt, pinHash, nowIso)
     .run();
-  const token = await createSession(db, String(user.id));
+  const token = await createSession(db, String(user.id), { name: String(user.name || cleanName), email: emailCheck.clean, email_verified_at: user.email_verified_at || null, avatar_json: user.avatar_json || null });
   const lifetimePoints = await getUserLifetimePoints(db, String(user.id));
   return json(
     {
@@ -3404,12 +3467,15 @@ async function handleLeagueDelete(db, request) {
     return json({ error: "Only league owner can delete this league." }, 403);
   }
 
-  await db.prepare("DELETE FROM ezra_league_season_points WHERE league_code = ?1").bind(code).run();
-  await db.prepare("DELETE FROM ezra_league_season_titles WHERE league_code = ?1").bind(code).run();
-  await db.prepare("DELETE FROM ezra_points_ledger WHERE league_code = ?1").bind(code).run();
-  await db.prepare("DELETE FROM ezra_league_seasons WHERE league_code = ?1").bind(code).run();
-  await db.prepare("DELETE FROM ezra_league_members WHERE league_code = ?1").bind(code).run();
-  await db.prepare("DELETE FROM ezra_leagues WHERE code = ?1").bind(code).run();
+  // One atomic batch instead of 6 sequential round trips.
+  await db.batch([
+    db.prepare("DELETE FROM ezra_league_season_points WHERE league_code = ?1").bind(code),
+    db.prepare("DELETE FROM ezra_league_season_titles WHERE league_code = ?1").bind(code),
+    db.prepare("DELETE FROM ezra_points_ledger WHERE league_code = ?1").bind(code),
+    db.prepare("DELETE FROM ezra_league_seasons WHERE league_code = ?1").bind(code),
+    db.prepare("DELETE FROM ezra_league_members WHERE league_code = ?1").bind(code),
+    db.prepare("DELETE FROM ezra_leagues WHERE code = ?1").bind(code),
+  ]);
 
   await ensureDefaultLeagueForUser(db, session.user_id);
   return json({ ok: true, code }, 200);
