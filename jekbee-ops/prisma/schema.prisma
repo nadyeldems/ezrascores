@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Discipline {
+  SEO
+  PPC
+  SocialAds
+  YouTubeAds
+  OrganicSocial
+  eCRM
+  CRO
+  UX
+  Design
+  Development
+}
+
+enum ClientStatus {
+  Active
+  Paused
+  Churned
+}
+
+enum EngagementType {
+  Retainer
+  Project
+  AdCampaign
+}
+
+enum EngagementStatus {
+  Active
+  Paused
+  Completed
+  Pipeline
+}
+
+enum FreelancerEngagementStatus {
+  Briefed
+  InProgress
+  Delivered
+  Approved
+}
+
+model Freelancer {
+  id                 String                 @id @default(cuid())
+  name               String
+  email              String                 @unique
+  discipline         Discipline
+  day_rate           Decimal                @db.Decimal(10, 2)
+  availability_notes String?                @db.Text
+  active             Boolean                @default(true)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  engagements        FreelancerEngagement[]
+  checkIns           WeeklyCheckIn[]
+}
+
+model Client {
+  id              String       @id @default(cuid())
+  name            String
+  account_manager String
+  status          ClientStatus @default(Active)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  engagements     Engagement[]
+}
+
+model Engagement {
+  id                    String                 @id @default(cuid())
+  client_id             String
+  title                 String
+  type                  EngagementType
+  service               Discipline
+  status                EngagementStatus       @default(Active)
+  start_date            DateTime?
+  end_date              DateTime?
+  brief                 String?                @db.Text
+  jekbee_margin_percent Decimal                @db.Decimal(5, 2) @default(30)
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  client                Client                 @relation(fields: [client_id], references: [id])
+  freelancers           FreelancerEngagement[]
+}
+
+model FreelancerEngagement {
+  id               String                     @id @default(cuid())
+  freelancer_id    String
+  engagement_id    String
+  days_allocated   Decimal                    @db.Decimal(5, 1)
+  scheduled_start  DateTime?
+  scheduled_end    DateTime?
+  freelancer_brief String?                    @db.Text
+  status           FreelancerEngagementStatus @default(Briefed)
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+  freelancer       Freelancer                 @relation(fields: [freelancer_id], references: [id])
+  engagement       Engagement                 @relation(fields: [engagement_id], references: [id])
+}
+
+model WeeklyCheckIn {
+  id            String     @id @default(cuid())
+  freelancer_id String
+  date          DateTime
+  notes         String?    @db.Text
+  attendees     String?
+  action_items  Json       @default("[]")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  freelancer    Freelancer @relation(fields: [freelancer_id], references: [id])
+}
