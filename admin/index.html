@@ -73,6 +73,36 @@
 
         <p id="dash-status" class="status"></p>
       </section>
+
+      <section class="admin-card hidden" id="leagues-card">
+        <header class="dash-head">
+          <h2>Leagues &amp; Winners</h2>
+          <button id="leagues-refresh-btn" type="button">Refresh</button>
+        </header>
+        <div class="leagues-layout">
+          <div class="leagues-list-wrap">
+            <ul id="leagues-list" class="leagues-list"></ul>
+          </div>
+          <div class="leagues-detail-wrap hidden" id="leagues-detail-wrap">
+            <h3 id="leagues-detail-title">Winners</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Season</th>
+                    <th>Winner</th>
+                    <th>Points</th>
+                    <th>Awarded</th>
+                  </tr>
+                </thead>
+                <tbody id="leagues-detail-tbody"></tbody>
+              </table>
+            </div>
+            <p id="leagues-detail-empty" class="status hidden">No winners recorded yet.</p>
+          </div>
+        </div>
+        <p id="leagues-status" class="status"></p>
+      </section>
     </main>
 
     <script src="/admin/admin.js" defer></script>

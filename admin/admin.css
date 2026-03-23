@@ -133,7 +133,56 @@ th, td {
 th { color: var(--accent); }
 tr:last-child td { border-bottom: none; }
 
+.admin-shell > * + * { margin-top: 20px; }
+
+.leagues-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.leagues-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.leagues-list li {
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.leagues-list li:last-child { border-bottom: none; }
+
+.leagues-list li button {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 10px 12px;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.leagues-list li.active button,
+.leagues-list li button:hover {
+  background: rgba(243, 154, 29, 0.1);
+  color: var(--accent);
+}
+
+.leagues-list-code { font-weight: bold; }
+.leagues-list-meta { color: var(--muted); font-size: 0.85em; }
+
 @media (max-width: 700px) {
   .stats { grid-template-columns: 1fr; }
   .dash-head { flex-direction: column; align-items: flex-start; }
+  .leagues-layout { grid-template-columns: 1fr; }
 }

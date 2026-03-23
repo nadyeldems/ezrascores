@@ -901,6 +901,13 @@ function extractPointsFromState(state, userId) {
   return 0;
 }
 
+function predictionAwardWithCombo(basePoints, comboCount) {
+  if (basePoints <= 0) return 0;
+  if (comboCount >= 3) return basePoints + 2;
+  if (comboCount === 2) return basePoints + 1;
+  return basePoints;
+}
+
 function numericScore(value) {
   if (value === null || value === undefined || value === "") return null;
   const n = Number(value);
@@ -1970,12 +1977,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
   await ensureLeagueSeason(db, code, season);
   await ensureAchievementCatalog(db);
 
-  const safePredictionAward = (basePoints, comboCount) => {
-    if (basePoints <= 0) return 0;
-    if (comboCount >= 3) return basePoints + 2;
-    if (comboCount === 2) return basePoints + 1;
-    return basePoints;
-  };
+  const safePredictionAward = predictionAwardWithCombo;
 
   const todayIso = todayIsoUtc();
   const yesterdayIso = addDaysIso(todayIso, -1);
@@ -2000,6 +2002,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
       let comboCount = 0;
       let bestCombo = 0;
       let totalExact = 0;
+      let hasScoredResult = false;
       const mastery = new Map();
       const ledger = [];
       // Pre-warm the shared resultCache with a bulk D1 read so that already-
@@ -2014,6 +2017,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
       for (const pick of ordered) {
         const result = await fetchEventResultById(sportsKey, pick.eventId, resultCache, db, { kickoffIso: pick.kickoffIso || "" });
         if (!result.final || result.home === null || result.away === null) continue;
+        hasScoredResult = true;
         const eventRow = fixtureMap.get(String(pick.eventId || "")) ?? null;
         const event = safeParseJsonText(eventRow?.payload_json || "{}");
         const leagueCode = leagueIdToCode(eventRow?.league_id);
@@ -2091,7 +2095,11 @@ async function syncLeagueScoresFromStates(db, code, key) {
       }
 
       const fallbackPoints = extractPointsFromState(state, userId);
-      const total = Math.max(predictionPoints + questBonusPoints, fallbackPoints);
+      // Only use the client-state fallback when no results have been resolved yet.
+      // If we scored at least one prediction from a final result, the computed
+      // total is authoritative — Math.max would otherwise lock in stale inflated
+      // scores that can never decrease after a re-settle.
+      const total = hasScoredResult ? predictionPoints + questBonusPoints : Math.max(predictionPoints + questBonusPoints, fallbackPoints);
 
       // Compute quest/streak flags synchronously so the ledger is fully built
       // before WAVE 1 fires (replacePointLedgerForUser needs the final ledger).
@@ -2568,6 +2576,59 @@ async function handleAdminRescoreAll(db, env, request, key) {
     },
     200
   );
+}
+
+async function handleAdminLeagues(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+
+  const leagueRows = await db
+    .prepare(
+      `SELECT l.code, l.name, l.created_at,
+              COUNT(lm.user_id) AS member_count
+       FROM ezra_leagues l
+       LEFT JOIN ezra_league_members lm ON lm.league_code = l.code
+       GROUP BY l.code
+       ORDER BY l.created_at DESC`
+    )
+    .all();
+
+  const leagues = await Promise.all(
+    (leagueRows?.results || []).map(async (league) => {
+      const code = normalizeLeagueCode(league.code);
+      const winnerRows = await db
+        .prepare(
+          `SELECT lst.season_id, lst.user_id, lst.awarded_at,
+                  u.name,
+                  COALESCE(lsp.points, 0) AS points
+           FROM ezra_league_season_titles lst
+           JOIN ezra_users u ON u.id = lst.user_id
+           LEFT JOIN ezra_league_season_points lsp
+             ON lsp.league_code = lst.league_code
+            AND lsp.season_id = lst.season_id
+            AND lsp.user_id = lst.user_id
+           WHERE lst.league_code = ?1
+           ORDER BY lst.season_id DESC`
+        )
+        .bind(code)
+        .all();
+      return {
+        code: league.code,
+        name: normalizeLeagueName(league.name, `League ${league.code}`),
+        memberCount: Number(league.member_count || 0),
+        createdAt: league.created_at || "",
+        winners: (winnerRows?.results || []).map((row) => ({
+          seasonId: String(row.season_id || ""),
+          userId: String(row.user_id || ""),
+          name: String(row.name || ""),
+          awardedAt: String(row.awarded_at || ""),
+          points: Math.max(0, Number(row.points || 0)),
+        })),
+      };
+    })
+  );
+
+  return json({ leagues }, 200, { "Cache-Control": "no-store" });
 }
 
 async function handleAdminLeagueVisibilityGet(db, env, request) {
@@ -3344,10 +3405,12 @@ async function recalcUserLifetimeScoreOnly(db, userId, userName, userState, spor
   // Score sequentially to preserve the combo chain ordering.
   let points = 0;
   let comboCount = 0;
+  let hasScoredResult = false;
   for (let i = 0; i < ordered.length; i++) {
     const pick = ordered[i];
     const result = fetchedResults[i];
     if (!result.final || result.home === null || result.away === null) continue;
+    hasScoredResult = true;
     const base =
       pick.home === result.home && pick.away === result.away
         ? 2
@@ -3360,7 +3423,7 @@ async function recalcUserLifetimeScoreOnly(db, userId, userName, userState, spor
     points += awarded;
   }
   const questBonusPoints = questBonusPointsFromState(userState, userId);
-  const total = Math.max(points + questBonusPoints, fallbackPoints);
+  const total = hasScoredResult ? points + questBonusPoints : Math.max(points + questBonusPoints, fallbackPoints);
   await upsertUserScore(db, userId, total);
   return total;
 }
@@ -3628,14 +3691,12 @@ async function handleLeagueMemberView(db, request, key) {
           const finalHome = result.final && result.home !== null ? result.home : Number.isFinite(Number(record.finalHome)) ? Number(record.finalHome) : null;
           const finalAway = result.final && result.away !== null ? result.away : Number.isFinite(Number(record.finalAway)) ? Number(record.finalAway) : null;
           const settled = Boolean(record.settled) || Boolean(result.final);
-          let awarded = Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0;
+          let base = 0;
           if (settled && pickHome !== null && pickAway !== null && finalHome !== null && finalAway !== null) {
             if (pickHome === finalHome && pickAway === finalAway) {
-              awarded = 2;
+              base = 2;
             } else if (predictionResultCode(pickHome, pickAway) === predictionResultCode(finalHome, finalAway)) {
-              awarded = 1;
-            } else {
-              awarded = 0;
+              base = 1;
             }
           }
           return {
@@ -3646,17 +3707,38 @@ async function handleLeagueMemberView(db, request, key) {
             settled,
             finalHome,
             finalAway,
+            base,
             pick: {
               home: pickHome,
               away: pickAway,
-              awarded,
               scored: settled,
               submittedAt: pick.submittedAt || "",
             },
           };
         })
     )
-  ).sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
+  )
+    // Sort ascending by kickoff so combo chain runs in chronological order.
+    .sort((a, b) => String(a.kickoff || "").localeCompare(String(b.kickoff || "")));
+
+  // Apply combo multiplier in kickoff order — same logic as the scoring cron.
+  let memberComboCount = 0;
+  for (const pred of predictions) {
+    if (!pred.settled) {
+      // Unsettled predictions don't count toward or break the chain.
+      pred.pick.awarded = null;
+      continue;
+    }
+    if (pred.base > 0) {
+      memberComboCount += 1;
+    } else {
+      memberComboCount = 0;
+    }
+    pred.pick.awarded = predictionAwardWithCombo(pred.base, memberComboCount);
+  }
+
+  // Reverse to descending kickoff order for the client.
+  predictions.sort((a, b) => String(b.kickoff || "").localeCompare(String(a.kickoff || "")));
 
   const dreamTeam = state?.dreamTeam && typeof state.dreamTeam === "object" ? state.dreamTeam : null;
   return json(
@@ -4149,6 +4231,9 @@ async function handleEzraAdminRoute(context, adminPath) {
     }
     if (route === "rescore-all" && request.method === "POST") {
       return handleAdminRescoreAll(db, env, request, key);
+    }
+    if (route === "leagues" && request.method === "GET") {
+      return handleAdminLeagues(db, env, request);
     }
     if (route === "league-visibility" && request.method === "GET") {
       return handleAdminLeagueVisibilityGet(db, env, request);

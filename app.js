@@ -3785,7 +3785,7 @@ function renderMissionsPanel() {
   const name = state.account.user?.name ? ` (${state.account.user.name})` : "";
   const dash = state.challengeDashboard;
   const streak = Number(dash?.progress?.currentStreak || 0);
-  const seasonPts = Number(dash?.currentSeason?.standings?.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0);
+  const seasonPts = Number((Array.isArray(dash?.currentSeason?.standings) ? dash.currentSeason.standings : []).find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0);
   const suffix = accountSignedIn() ? ` • Streak ${streak}d • Season ${seasonPts} pts` : "";
   el.missionsMeta.textContent = `Completed ${completedCount}/${quests.length} • Quest bonus +5 pts${name}${suffix}`;
   el.missionsList.innerHTML = "";
@@ -6270,7 +6270,7 @@ function dreamPoolByKey() {
 }
 
 function getDreamPlayerByKey(key) {
-  return state.dreamTeam.pool.find((player) => player.key === key) || null;
+  return (Array.isArray(state.dreamTeam.pool) ? state.dreamTeam.pool : []).find((player) => player.key === key) || null;
 }
 
 function normalizeDreamSelections() {
