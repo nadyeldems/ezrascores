@@ -462,6 +462,8 @@ body[data-theme="club"] .footer {
 }
 
 .hero-bar {
+  position: relative;   /* establish a positioned stacking context … */
+  z-index: 50;          /* … above all backdrop-filter panels below it */
   border-radius: 1.05rem;
   padding: 1rem 1rem 0.85rem;
   display: flex;
@@ -479,6 +481,8 @@ body[data-theme="club"] .footer {
 }
 
 .main-tabs-panel {
+  position: relative;
+  z-index: 40;          /* below hero-bar (50) but above plain panels (auto) */
   padding: 0.45rem;
   margin-bottom: 0.7rem;
   overflow: visible;
