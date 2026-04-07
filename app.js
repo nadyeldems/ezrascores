@@ -2810,6 +2810,7 @@ function updateAccountControlsState() {
 
 function setAccountRecoveryOpen(open) {
   if (accountSignedIn()) return;
+  const wasOpen = state.account.recoveryOpen;
   state.account.recoveryOpen = Boolean(open);
   el.accountRecoveryBox?.classList.toggle("hidden", !open);
   el.accountAuthSignedOut?.classList.toggle("hidden", open);
@@ -2817,8 +2818,10 @@ function setAccountRecoveryOpen(open) {
     el.accountForgotBtn.setAttribute("aria-expanded", String(open));
   }
   if (open) {
-    setRecoveryStep(1);
-    el.accountRecoveryNameInput?.focus();
+    if (!wasOpen) {
+      setRecoveryStep(1);
+      el.accountRecoveryNameInput?.focus();
+    }
   } else {
     [el.accountRecoveryNameInput, el.accountRecoveryEmailInput,
      el.accountRecoveryCodeInput, el.accountRecoveryNewPinInput].forEach((inp) => { if (inp) inp.value = ""; });
@@ -12500,7 +12503,15 @@ function renderLastRefreshed() {
 }
 
 function fixtureKickoffDate(event) {
-  const timestampCandidates = [event?.strTimestamp, event?.strTimestampUTC, event?.strTimestampLocal];
+  // Prefer strTimestampUTC to avoid UK local-time/DST ambiguity. TheSportsDB returns
+  // this as "YYYY-MM-DD HH:MM:SS" (UTC), so normalise to ISO+Z before parsing.
+  const utcRaw = String(event?.strTimestampUTC || "").trim();
+  if (utcRaw) {
+    const iso = utcRaw.replace(" ", "T");
+    const ts = Date.parse(iso.endsWith("Z") ? iso : iso + "Z");
+    if (Number.isFinite(ts)) return new Date(ts);
+  }
+  const timestampCandidates = [event?.strTimestamp, event?.strTimestampLocal];
   for (const raw of timestampCandidates) {
     const text = String(raw || "").trim();
     if (!text) continue;

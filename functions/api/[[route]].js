@@ -930,6 +930,13 @@ function isLiveEvent(event) {
 }
 
 function eventKickoffMs(event, fallbackKickoffIso = "") {
+  // Prefer strTimestampUTC to avoid local-time/DST ambiguity (strTime is UK local time).
+  const rawUtc = String(event?.strTimestampUTC || "").trim();
+  if (rawUtc) {
+    const iso = rawUtc.replace(" ", "T");
+    const ms = Date.parse(iso.endsWith("Z") ? iso : iso + "Z");
+    if (Number.isFinite(ms)) return ms;
+  }
   const date = String(event?.dateEvent || "").trim();
   const time = normalizeTime(event?.strTime || "");
   const fromEvent = date && time ? Date.parse(`${date}T${time}Z`) : Number.NaN;
@@ -1378,7 +1385,9 @@ async function fetchEventResultById(key, eventId, resultCache, db, options = {})
     const home = numericScore(event?.intHomeScore);
     const away = numericScore(event?.intAwayScore);
     const normalizedTime = normalizeTime(event?.strTime || "");
-    const kickoffAt = event?.dateEvent && normalizedTime ? `${String(event.dateEvent).trim()}T${normalizedTime}Z` : String(options?.kickoffIso || "");
+    const rawUtcTs = String(event?.strTimestampUTC || "").trim();
+    const utcIso = rawUtcTs ? rawUtcTs.replace(" ", "T") + (rawUtcTs.endsWith("Z") ? "" : "Z") : "";
+    const kickoffAt = utcIso || (event?.dateEvent && normalizedTime ? `${String(event.dateEvent).trim()}T${normalizedTime}Z` : String(options?.kickoffIso || ""));
     const final = eventLikelyFinal(event, options?.kickoffIso || "") && home !== null && away !== null;
     const result = { final, home, away, kickoffAt, event };
     await writeCachedEventResult(db, cacheKey, event, result);
