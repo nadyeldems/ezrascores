@@ -11,7 +11,28 @@
   --danger: #ff4a4a;
   --success: #78d47f;
   --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
   --island-clearance: calc(var(--safe-top) + 0.95rem);
+
+  /* === Glassmorphism surfaces === */
+  --surface-1: rgba(20, 10, 3, 0.78);
+  --surface-2: rgba(35, 18, 5, 0.62);
+
+  /* === Semantic amber expansion === */
+  --amber-vivid: #ff9a1f;
+  --amber-warm: #ffb84d;
+  --amber-glow: rgba(255, 154, 31, 0.12);
+  --amber-dim: #7a4a10;
+
+  /* === Font tokens === */
+  --font-display: "VT323", monospace;
+  --font-body: -apple-system, "Segoe UI", sans-serif;
+
+  /* === Motion tokens === */
+  --dur-fast: 100ms;
+  --dur-base: 180ms;
+  --dur-slow: 300ms;
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Total 90 extended mode: fixture structure, score typography, animation cadence */
@@ -226,7 +247,7 @@ body {
   margin: 0;
   color: var(--text);
   min-height: 100vh;
-  font-family: "VT323", monospace;
+  font-family: var(--font-display);
   font-size: 1.08rem;
   touch-action: manipulation;
   background:
@@ -374,15 +395,44 @@ img {
   max-width: 100%;
 }
 
+/* Body-weight text uses system font — VT323 hits harder when surrounded by neutral copy */
+.settings-note,
+.fun-guide,
+.mission-sub,
+.fixture-details,
+.muted,
+.account-input,
+.settings-toggle-row,
+.filter-label,
+.detail-value,
+.detail-label,
+.settings-panel p,
+.account-helper,
+.recovery-email-hint,
+.dream-team-hint,
+.family-season-countdown,
+.story-item p,
+.feed-card-message,
+.feed-card-detail,
+.feed-card-time {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
 .hero-bar,
 .panel,
 .favorite-banner,
 .footer {
   border: 1px solid var(--line);
   background:
-    linear-gradient(180deg, rgba(255, 153, 0, 0.04), transparent 34%),
-    var(--panel);
-  box-shadow: inset 0 0 0 1px rgba(255, 152, 17, 0.08);
+    linear-gradient(180deg, rgba(255, 153, 0, 0.06), transparent 38%),
+    var(--surface-1);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 152, 17, 0.10),
+    0 4px 24px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   min-width: 0;
 }
 
@@ -519,8 +569,12 @@ body[data-theme="club"] .footer {
   width: min(360px, calc(100vw - 1.2rem));
   border: 1px solid var(--line);
   border-radius: 0.85rem;
-  background: #090503;
-  box-shadow: inset 0 0 0 1px rgba(255, 152, 17, 0.08);
+  background: var(--surface-1);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 152, 17, 0.10),
+    0 8px 32px rgba(0, 0, 0, 0.48);
   padding: 0.55rem;
   z-index: 650;
 }
@@ -3020,8 +3074,38 @@ body[data-motion="minimal"] .avatar-hero-img {
   border: 1px solid var(--line-soft);
   border-radius: 0.8rem;
   padding: 0.55rem;
-  background: rgba(10, 6, 3, 0.56);
+  background: var(--surface-2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   position: relative;
+  transition:
+    border-color var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-spring),
+    opacity var(--dur-base) ease;
+}
+
+/* Featured card — full-width hero slot at top of Fun Zone grid */
+.fun-card.fun-featured {
+  grid-column: 1 / -1;
+  border-color: var(--amber-dim);
+  background:
+    linear-gradient(135deg, rgba(255, 154, 31, 0.10), rgba(35, 18, 5, 0.65) 60%),
+    var(--surface-2);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 154, 31, 0.18),
+    0 4px 20px rgba(0, 0, 0, 0.32);
+}
+
+/* Active state — card with work to do glows faintly */
+.fun-card.fun-active {
+  border-color: rgba(255, 154, 31, 0.35);
+  box-shadow: 0 0 0 1px rgba(255, 154, 31, 0.12), 0 2px 12px rgba(0, 0, 0, 0.28);
+}
+
+/* Completed state — dim and recede */
+.fun-card.fun-done {
+  opacity: 0.55;
+  border-color: rgba(78, 43, 8, 0.45);
 }
 
 .compact-head {
@@ -4072,13 +4156,18 @@ body[data-theme="club"] .favorite-picker-btn {
 .btn {
   padding: 0.45rem 0.8rem;
   cursor: pointer;
-  transition: transform 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition:
+    transform var(--dur-base) var(--ease-spring),
+    border-color var(--dur-base) var(--ease-spring),
+    color var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-spring);
 }
 
 .btn:hover {
   border-color: var(--amber-soft);
   color: #ffb251;
   transform: translateY(-1px);
+  box-shadow: 0 0 0 3px var(--amber-glow), 0 4px 12px rgba(0, 0, 0, 0.28);
 }
 
 .btn:active {
@@ -5088,14 +5177,39 @@ body[data-theme="t90"] .theme-btn.active {
 .fixture-item {
   border: 1px solid var(--line);
   border-radius: 0.85rem;
-  background: #080502;
-  transition: border-color 140ms ease, transform 140ms ease;
+  background: var(--surface-2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition:
+    border-color var(--dur-base) var(--ease-spring),
+    transform var(--dur-base) var(--ease-spring),
+    box-shadow var(--dur-base) var(--ease-spring);
   position: relative;
+  overflow: hidden;
+}
+
+.fixture-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 0.85rem 0 0 0.85rem;
+  background: transparent;
+  transition: background var(--dur-base) var(--ease-spring);
+}
+
+/* Live match accent bar */
+.fixture-item:has(.match-state.live)::before {
+  background: linear-gradient(180deg, #ff4a4a, #c8372b);
+  box-shadow: 0 0 8px rgba(255, 74, 74, 0.5);
 }
 
 .fixture-item:hover {
   border-color: #8f5411;
   transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.38);
 }
 
 .fixture-item.has-favorite {
@@ -5313,6 +5427,16 @@ body[data-theme="t90"] .match-state.final {
   100% { transform: scale(1); }
 }
 
+@keyframes score-flash {
+  0%   { border-color: var(--amber-warm); box-shadow: 0 0 0 3px rgba(255, 154, 31, 0.5); }
+  50%  { border-color: #ffcf8f; box-shadow: 0 0 0 6px rgba(255, 184, 77, 0.25); }
+  100% { border-color: #7a4810; box-shadow: none; }
+}
+
+.team-score.score-update {
+  animation: score-pop 780ms steps(6, end), score-flash 780ms ease-out;
+}
+
 .team-col {
   display: flex;
   align-items: center;
@@ -5356,16 +5480,18 @@ body[data-theme="t90"] .match-state.final {
 }
 
 .team-score {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 2rem;
+  height: 2rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
   border: 1px solid #7a4810;
-  color: var(--amber);
-  background: #170c03;
+  color: var(--amber-warm);
+  background: rgba(14, 8, 2, 0.85);
   font-weight: 700;
+  font-size: 1.1rem;
+  text-shadow: 0 0 6px rgba(255, 154, 31, 0.4);
 }
 
 .team-score-inline {
@@ -5377,9 +5503,7 @@ body[data-theme="t90"] .match-state.final {
   box-shadow: 0 0 0 1px rgba(255, 192, 95, 0.25);
 }
 
-.team-score.score-update {
-  animation: score-pop 780ms steps(6, end);
-}
+/* score-update animation defined after score-flash keyframe below */
 
 body[data-theme="t90"] .team-score.leading {
   border-color: #ffb04f;
@@ -6089,6 +6213,171 @@ body[data-motion="arcade"] .fixture-focus {
   50% {
     opacity: 0.72;
   }
+}
+
+/* ── Mobile Bottom Nav ─────────────────────────────────────────────
+   Shown only on mobile (<=720px). Fixed to bottom, 5 destinations.
+   Desktop keeps the existing .main-tabs-panel unchanged.
+───────────────────────────────────────────────────────────────── */
+
+.bottom-nav {
+  display: none; /* hidden on desktop */
+}
+
+@media (max-width: 720px) {
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 800;
+    padding-bottom: max(0.5rem, var(--safe-bottom));
+    background: var(--surface-1);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--line);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 152, 17, 0.12),
+      0 -4px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .bottom-nav-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.18rem;
+    padding: 0.52rem 0.25rem 0.28rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--font-display);
+    color: var(--text-soft);
+    transition:
+      color var(--dur-base) var(--ease-spring),
+      transform var(--dur-fast) var(--ease-spring);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bottom-nav-btn:active {
+    transform: scale(0.88);
+  }
+
+  .bottom-nav-btn.active {
+    color: var(--amber-warm);
+  }
+
+  .bottom-nav-btn.active .bnav-icon {
+    filter: drop-shadow(0 0 6px rgba(255, 184, 77, 0.55));
+  }
+
+  .bnav-icon {
+    font-size: 1.35rem;
+    line-height: 1;
+    display: block;
+    transition: filter var(--dur-base) ease;
+  }
+
+  .bnav-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+
+  /* Amber underline pill on the active tab */
+  .bottom-nav-btn.active::after {
+    content: "";
+    position: absolute;
+    bottom: calc(max(0.5rem, var(--safe-bottom)) + 0.18rem);
+    width: 1.4rem;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--amber-warm);
+    box-shadow: 0 0 6px rgba(255, 184, 77, 0.6);
+  }
+
+  .bottom-nav-btn {
+    position: relative;
+  }
+
+  /* The "You" tab shows account avatar icon when signed in */
+  .bottom-nav-you .bnav-icon {
+    font-size: 1.25rem;
+  }
+
+  /* Notifications badge on You button */
+  .bottom-nav-you .bnav-icon[data-badge]::after {
+    content: attr(data-badge);
+    position: absolute;
+    top: 0.3rem;
+    right: calc(50% - 1.1rem);
+    min-width: 1rem;
+    height: 1rem;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 0.6rem;
+    line-height: 1rem;
+    text-align: center;
+    padding: 0 0.2rem;
+    font-family: var(--font-body);
+  }
+
+  /* Push app-shell content up so bottom nav doesn't overlap */
+  .app-shell {
+    padding-bottom: calc(4.2rem + max(0.5rem, var(--safe-bottom)));
+  }
+
+  /* Hide desktop tab strip on mobile */
+  .main-tabs-panel {
+    display: none;
+  }
+}
+
+/* ── Game Day Mode ─────────────────────────────────────────────────
+   body[data-gameday="live"]     = matches are live right now
+   body[data-gameday="upcoming"] = kickoff within 120 min today
+   body[data-gameday="off"]      = no relevant action today
+───────────────────────────────────────────────────────────────── */
+
+@keyframes gameday-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%       { opacity: 0.80; transform: scale(1.04); }
+}
+
+/* Ambient live-match glow layer behind everything */
+body[data-gameday="live"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 74, 74, 0.07) 0%, transparent 60%),
+    radial-gradient(ellipse at 50% 100%, rgba(255, 154, 31, 0.06) 0%, transparent 50%);
+  animation: gameday-pulse 3.5s ease-in-out infinite;
+}
+
+/* Live fixture panel gets a hotter border + inner glow */
+body[data-gameday="live"] #fixtures-panel {
+  border-color: rgba(200, 55, 43, 0.45);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 74, 74, 0.14),
+    0 0 32px rgba(200, 55, 43, 0.14),
+    0 4px 24px rgba(0, 0, 0, 0.32);
+}
+
+/* Favourite banner gets a warmer presence on gameday */
+body[data-gameday="live"] .favorite-banner,
+body[data-gameday="upcoming"] .favorite-banner {
+  border-color: rgba(255, 154, 31, 0.45);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 154, 31, 0.20),
+    0 0 28px rgba(255, 154, 31, 0.10),
+    0 4px 24px rgba(0, 0, 0, 0.32);
 }
 
 @media (max-width: 1000px) {

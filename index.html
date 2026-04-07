@@ -52,7 +52,7 @@
       href="https://fonts.googleapis.com/css2?family=VT323&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260311e" />
+    <link rel="stylesheet" href="styles.css?v=20260407a" />
   </head>
   <body>
     <div id="app-splash" class="app-splash" aria-live="polite" role="status">
@@ -719,6 +719,29 @@
         </div>
       </article>
     </template>
+
+  <nav id="bottom-nav" class="bottom-nav" aria-label="Main navigation">
+    <button class="bottom-nav-btn active" type="button" data-main-tab="home" aria-label="Home">
+      <span class="bnav-icon" aria-hidden="true">⚽</span>
+      <span class="bnav-label">Home</span>
+    </button>
+    <button class="bottom-nav-btn" type="button" data-main-tab="predict" aria-label="Predict">
+      <span class="bnav-icon" aria-hidden="true">🎯</span>
+      <span class="bnav-label">Predict</span>
+    </button>
+    <button class="bottom-nav-btn" type="button" data-main-tab="tables" aria-label="Tables">
+      <span class="bnav-icon" aria-hidden="true">📊</span>
+      <span class="bnav-label">Tables</span>
+    </button>
+    <button class="bottom-nav-btn" type="button" data-main-tab="play" aria-label="Play">
+      <span class="bnav-icon" aria-hidden="true">🎮</span>
+      <span class="bnav-label">Play</span>
+    </button>
+    <button class="bottom-nav-btn bottom-nav-you" type="button" id="bottom-nav-you-btn" aria-label="Your account">
+      <span class="bnav-icon" id="bottom-nav-you-icon" aria-hidden="true">👤</span>
+      <span class="bnav-label">You</span>
+    </button>
+  </nav>
 
   <script src="app.js?v=20260311e"></script>
 </body>

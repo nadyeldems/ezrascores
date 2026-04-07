@@ -2338,6 +2338,9 @@ const el = {
   mobileTabButtons: [...document.querySelectorAll(".mobile-tab-btn")],
   mainTabsPanel: document.getElementById("main-tabs-panel"),
   mainTabButtons: [...document.querySelectorAll(".main-tab-btn")],
+  bottomNav: document.getElementById("bottom-nav"),
+  bottomNavBtns: [...document.querySelectorAll(".bottom-nav-btn[data-main-tab]")],
+  bottomNavYouBtn: document.getElementById("bottom-nav-you-btn"),
   playerDvdToggleMain: document.getElementById("player-dvd-toggle-main"),
   playerPopScoreBadge: document.getElementById("player-pop-score-badge"),
   playerSourceButtons: [...document.querySelectorAll(".player-source-btn")],
@@ -8295,6 +8298,9 @@ function setGameDayMessage(text, mode = "neutral") {
   el.gameDayMessage.textContent = text;
   el.gameDayMessage.classList.remove("neutral", "countdown", "gameday");
   el.gameDayMessage.classList.add(mode);
+  // Sync data-gameday on <body> for CSS emotional mode selectors
+  const gamedayAttr = mode === "gameday" ? "upcoming" : "off";
+  document.body.setAttribute("data-gameday", gamedayAttr);
 }
 
 function daysUntilDate(dateIso) {
@@ -11390,6 +11396,9 @@ function renderMainTabButtons() {
     btn.classList.toggle("active", active);
     btn.setAttribute("aria-selected", String(active));
   });
+  el.bottomNavBtns.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mainTab === state.mainTab);
+  });
   document.body.setAttribute("data-main-tab", state.mainTab);
   if (el.activeRouteIndicator) {
     const label = state.mainTab.charAt(0).toUpperCase() + state.mainTab.slice(1);
@@ -12706,6 +12715,14 @@ async function fullRefresh() {
     renderLastRefreshed();
     console.debug(`[perf] fullRefresh ${Math.round(performance.now() - perfStart)}ms`);
     nextContext = currentPollContext();
+    document.body.setAttribute(
+      "data-gameday",
+      nextContext.hasLive
+        ? "live"
+        : nextContext.minutesToNextKickoff !== null && nextContext.minutesToNextKickoff <= 120
+        ? "upcoming"
+        : "off"
+    );
   } catch (err) {
     console.error(err);
     const hasFixtureRows = Boolean(el.fixturesList?.querySelector(".fixture-item"));
@@ -13274,6 +13291,22 @@ function attachEvents() {
       setMainTab(btn.dataset.mainTab || "home");
     });
   });
+
+  el.bottomNavBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setMainTab(btn.dataset.mainTab || "home");
+    });
+  });
+
+  if (el.bottomNavYouBtn) {
+    el.bottomNavYouBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeFavoritePickerMenu();
+      setSettingsMenuOpen(false);
+      setNotificationsOpen(false);
+      setAccountMenuOpen(!state.accountOpen);
+    });
+  }
 
   if (el.settingsToggleBtn) {
     el.settingsToggleBtn.addEventListener("click", (event) => {
