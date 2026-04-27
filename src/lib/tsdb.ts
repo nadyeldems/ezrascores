@@ -85,12 +85,16 @@ export function isToday(dateYMD?: string) {
   return dateYMD === today;
 }
 
+const TIME_FMT: Intl.DateTimeFormatOptions = {
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: "Europe/London",
+};
+
 export function localTime(event: Event): string | undefined {
   if (event.strTimestamp) {
     const d = new Date(event.strTimestamp);
-    if (!isNaN(d.getTime())) {
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
+    if (!isNaN(d.getTime())) return d.toLocaleTimeString("en-GB", TIME_FMT);
   }
   if (event.strTime && event.dateEvent) {
     const t = event.strTime.trim();
@@ -98,9 +102,7 @@ export function localTime(event: Event): string | undefined {
       ? `${event.dateEvent}T${t}`
       : `${event.dateEvent}T${t}Z`;
     const d = new Date(iso);
-    if (!isNaN(d.getTime())) {
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    }
+    if (!isNaN(d.getTime())) return d.toLocaleTimeString("en-GB", TIME_FMT);
   }
   return event.strTime;
 }
