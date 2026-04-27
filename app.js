@@ -8713,7 +8713,7 @@ function sortEventsForColumn(events, columnMode) {
 function formatKickoffTime(event) {
   const kickoff = fixtureKickoffDate(event);
   if (kickoff && !Number.isNaN(kickoff.getTime())) {
-    return kickoff.toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
+    return kickoff.toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Europe/London" });
   }
   const time = String(event?.strTime || "").trim();
   // Only treat as a valid time if it looks like HH:MM
