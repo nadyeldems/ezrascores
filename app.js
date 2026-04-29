@@ -5152,7 +5152,7 @@ function renderPredictionCardsHtml(memberData, compareEnabled, showPreviousRound
   return scopedRows
     .slice(0, 24)
     .map((row) => {
-      const kickoffText = row.kickoff ? new Date(row.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "TBA";
+      const kickoffText = row.kickoff ? new Date(row.kickoff).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }) : "TBA";
       // Use live event state to prevent stale settlement data (e.g. 0-0) from showing for in-progress matches
       const liveEvent = (state.fixtures || []).find((e) => String(e.idEvent || "") === row.eventId);
       const liveState = liveEvent ? eventState(liveEvent) : null;
