@@ -638,6 +638,23 @@ body.account-modal-open .account-menu .settings-panel.account-drawer {
   animation: drawer-slide-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/*
+ * The account and settings drawers live inside .hero-bar (z-index:50), which
+ * creates a stacking context. The backdrop pseudo-element is at z-index:980 in
+ * the root context, so it covers the entire hero-bar stacking block and its
+ * position:fixed children, making drawer buttons un-clickable.
+ * Raise .hero-bar above the backdrop when a drawer is open so that the drawer
+ * (and only the drawer) receives pointer events.
+ */
+body.account-modal-open .hero-bar,
+body.settings-drawer-open .hero-bar {
+  z-index: 990; /* above backdrop (980) */
+}
+body.account-modal-open .hero-bar > :not(.account-menu),
+body.settings-drawer-open .hero-bar > :not(.settings-menu) {
+  pointer-events: none; /* block other hero-bar buttons while a drawer is open */
+}
+
 @keyframes drawer-slide-in {
   from { transform: translateX(100%); opacity: 0.7; }
   to   { transform: translateX(0);   opacity: 1;   }

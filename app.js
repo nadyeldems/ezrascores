@@ -4325,7 +4325,7 @@ function storyCardData() {
       text: todayEvent
         ? `${scoreLine(todayEvent)} • ${eventState(todayEvent).label}`
         : nextEvent
-          ? `${team.strTeam} vs ${nextEvent.strHomeTeam === team.strTeam ? nextEvent.strAwayTeam : nextEvent.strHomeTeam} on ${formatDateTime(nextEvent.dateEvent, nextEvent.strTime)}`
+          ? `${team.strTeam} vs ${nextEvent.strHomeTeam === team.strTeam ? nextEvent.strAwayTeam : nextEvent.strHomeTeam} on ${formatEventKickoff(nextEvent)}`
           : "No upcoming fixture found.",
     },
     {
@@ -8448,6 +8448,18 @@ function normalizeName(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function formatEventKickoff(event) {
+  const kickoff = fixtureKickoffDate(event);
+  if (kickoff && !Number.isNaN(kickoff.getTime())) {
+    return kickoff.toLocaleString("en-GB", {
+      weekday: "short", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true,
+      timeZone: "Europe/London",
+    });
+  }
+  return formatDateTime(event?.dateEvent, event?.strTime);
+}
+
 function formatDateTime(dateStr, timeStr) {
   if (!dateStr) return "TBA";
   const safeTime = String(timeStr || "").trim().slice(0, 8);
@@ -10364,7 +10376,7 @@ function buildPredictionModule(event, stateInfo) {
 function detailRowsFromEvent(event, stateInfo) {
   return [
     { label: "League", value: event.strLeague || "" },
-    { label: "Kickoff", value: formatDateTime(event.dateEvent, event.strTime) },
+    { label: "Kickoff", value: formatEventKickoff(event) },
     { label: "Venue", value: event.strVenue || "" },
     { label: "Round", value: event.intRound || "" },
     { label: "Referee", value: event.strReferee || "" },
@@ -12052,7 +12064,7 @@ function nextFixtureTickerText(team, nextEvent) {
   const isHome = nextEvent.idHomeTeam === team.idTeam;
   const opponent = isHome ? nextEvent.strAwayTeam : nextEvent.strHomeTeam;
   const where = isHome ? "Home" : "Away";
-  return `Next: ${team.strTeam} vs ${opponent}  |  ${where}  |  ${formatDateTime(nextEvent.dateEvent, nextEvent.strTime)}  |  ${nextEvent.strVenue || "Venue TBD"}`;
+  return `Next: ${team.strTeam} vs ${opponent}  |  ${where}  |  ${formatEventKickoff(nextEvent)}  |  ${nextEvent.strVenue || "Venue TBD"}`;
 }
 
 function nextFixtureSummary(team, nextEvent) {
@@ -12067,7 +12079,7 @@ function nextFixtureSummary(team, nextEvent) {
   const where = isHome ? "Home" : "Away";
   return {
     line: `Next: ${team.strTeam} vs ${opponent}`,
-    detail: `${where} | ${formatDateTime(nextEvent.dateEvent, nextEvent.strTime)} | ${nextEvent.strVenue || "Venue TBD"}`,
+    detail: `${where} | ${formatEventKickoff(nextEvent)} | ${nextEvent.strVenue || "Venue TBD"}`,
   };
 }
 
@@ -12346,7 +12358,7 @@ async function renderFavorite() {
     el.favoriteLiveStrip.classList.remove("ticker-static");
   } else if (lastCompleted) {
     el.favoriteFixtureLine.textContent = `Previous: ${scoreLine(lastCompleted)}`;
-    el.favoriteFixtureDetail.textContent = `Last played ${formatDateTime(lastCompleted.dateEvent, lastCompleted.strTime)}`;
+    el.favoriteFixtureDetail.textContent = `Last played ${formatEventKickoff(lastCompleted)}`;
     el.favoriteLiveStrip.classList.remove("ticker-static");
   } else {
     const upcoming = nextFixtureSummary(team, nextEvent);
