@@ -75,6 +75,33 @@
 
         <p id="dash-status" class="status"></p>
 
+        <details class="grant-panel" id="offset-panel">
+          <summary class="grant-summary">
+            <span>API Kickoff Time Offset</span>
+          </summary>
+          <div class="grant-body">
+            <p class="grant-desc">
+              Adjusts all kickoff times received from TheSportsDB by a fixed number of minutes.
+              Use this to correct for UK clock-change discrepancies — e.g. set <strong>+60</strong> if the API is
+              returning times 1 hour behind BST, or <strong>−60</strong> if it's 1 hour ahead.
+              Changes take effect on the next live data refresh (up to 30 s).
+            </p>
+            <div class="offset-row">
+              <span class="offset-label">Current offset:</span>
+              <strong id="offset-display" class="offset-value">—</strong>
+              <span class="offset-label">minutes</span>
+            </div>
+            <div class="offset-btns">
+              <button type="button" class="offset-btn" data-offset="-60">−60 min</button>
+              <button type="button" class="offset-btn" data-offset="-30">−30 min</button>
+              <button type="button" class="offset-btn offset-btn--reset" data-offset="0">Reset to 0</button>
+              <button type="button" class="offset-btn" data-offset="30">+30 min</button>
+              <button type="button" class="offset-btn" data-offset="60">+60 min</button>
+            </div>
+            <p id="offset-status" class="status"></p>
+          </div>
+        </details>
+
         <details class="grant-panel" id="grant-panel">
           <summary class="grant-summary">
             <span>Grant Points to a User</span>

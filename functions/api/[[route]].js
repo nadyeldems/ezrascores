@@ -2464,6 +2464,7 @@ async function accountAuth(db, request) {
 const ADMIN_SESSION_MS = 1000 * 60 * 60 * 12;
 const LEAGUE_VISIBILITY_KEY = "league_visibility_v1";
 const LEAGUE_VISIBILITY_CODES = ["EPL", "CHAMP", "LALIGA"];
+const KICKOFF_OFFSET_KEY = "api_kickoff_offset_minutes";
 
 function defaultLeagueVisibility() {
   return { EPL: true, CHAMP: true, LALIGA: true };
@@ -2504,6 +2505,18 @@ async function putLeagueVisibility(db, value) {
     .bind(LEAGUE_VISIBILITY_KEY, JSON.stringify(normalized), nowIso)
     .run();
   return normalized;
+}
+
+async function getKickoffOffset(db) {
+  const raw = await getAppSetting(db, KICKOFF_OFFSET_KEY);
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function setKickoffOffset(db, minutes) {
+  const clamped = Math.max(-720, Math.min(720, Math.round(Number(minutes) || 0)));
+  await setAppSetting(db, KICKOFF_OFFSET_KEY, String(clamped));
+  return clamped;
 }
 
 function adminConfig(env) {
@@ -2817,6 +2830,21 @@ async function handleAdminLeagueVisibilityPut(db, env, request) {
   const body = (await parseJson(request)) || {};
   const visibility = await putLeagueVisibility(db, body?.visibility);
   return json({ ok: true, visibility }, 200, { "Cache-Control": "no-store" });
+}
+
+async function handleAdminKickoffOffsetGet(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+  const offsetMinutes = await getKickoffOffset(db);
+  return json({ offsetMinutes }, 200, { "Cache-Control": "no-store" });
+}
+
+async function handleAdminKickoffOffsetPut(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status || 401);
+  const body = (await parseJson(request)) || {};
+  const offsetMinutes = await setKickoffOffset(db, body?.offsetMinutes);
+  return json({ ok: true, offsetMinutes }, 200, { "Cache-Control": "no-store" });
 }
 
 async function handleAccountRegister(db, request) {
@@ -4667,6 +4695,12 @@ async function handleEzraAdminRoute(context, adminPath) {
     if (route === "grant-points" && request.method === "POST") {
       return handleAdminGrantPoints(db, env, request);
     }
+    if (route === "kickoff-offset" && request.method === "GET") {
+      return handleAdminKickoffOffsetGet(db, env, request);
+    }
+    if (route === "kickoff-offset" && (request.method === "PUT" || request.method === "PATCH")) {
+      return handleAdminKickoffOffsetPut(db, env, request);
+    }
 
     return json({ error: "Unsupported admin route or method" }, 405);
   } catch (err) {
@@ -5488,7 +5522,7 @@ async function handleEzraFixturesRoute(context, key) {
   if (dateIso === todayIso) {
     try {
       const origin = `${url.protocol}//${url.host}`;
-      const live = await ensureLiveSnapshot(caches.default, origin, key);
+      const live = await ensureLiveSnapshot(caches.default, origin, key, db);
       const liveLeague = Array.isArray(live?.snapshot?.leagues?.[leagueId]) ? live.snapshot.leagues[leagueId] : [];
       if (liveLeague.length) {
         eventsOut = sortByDateTime(mergeEvents(eventsOut, liveLeague).map((event) => normalizeEventForCache(event)));
@@ -5889,9 +5923,18 @@ function sortEvents(events) {
   });
 }
 
-function toClientEvent(event) {
+function toClientEvent(event, offsetMinutes = 0) {
   if (!event || typeof event !== "object") return null;
   const normalized = normalizeEventForCache(event);
+  let strTimestampUTC = String(event?.strTimestampUTC || "").trim();
+  if (strTimestampUTC && offsetMinutes !== 0) {
+    const raw = strTimestampUTC.replace(" ", "T");
+    const iso = raw.endsWith("Z") ? raw : raw + "Z";
+    const adjusted = new Date(Date.parse(iso) + offsetMinutes * 60000);
+    if (!Number.isNaN(adjusted.getTime())) {
+      strTimestampUTC = adjusted.toISOString().replace("T", " ").slice(0, 19);
+    }
+  }
   return {
     idEvent: normalized.idEvent || "",
     dateEvent: normalized.dateEvent || "",
@@ -5908,7 +5951,7 @@ function toClientEvent(event) {
     strVenue: normalized.strVenue || "",
     strLeague: normalized.strLeague || "",
     strTimestamp: normalized.strTimestamp || "",
-    strTimestampUTC: String(event?.strTimestampUTC || "").trim(),
+    strTimestampUTC,
   };
 }
 
@@ -5922,9 +5965,10 @@ function payloadVersion(payload) {
   return `v${Math.abs(hash)}`;
 }
 
-async function buildLiveSnapshot(key) {
+async function buildLiveSnapshot(key, db) {
   const todayIso = new Date().toISOString().slice(0, 10);
   const leaguePayload = {};
+  const offsetMinutes = db ? await getKickoffOffset(db) : 0;
 
   for (const leagueId of TABLE_LEAGUE_IDS) {
     const [todayById, liveV2] = await Promise.all([
@@ -5933,7 +5977,7 @@ async function buildLiveSnapshot(key) {
     ]);
 
     const merged = mergeEvents(firstArray(todayById), firstArray(liveV2));
-    leaguePayload[leagueId] = sortEvents(merged).map(toClientEvent).filter(Boolean);
+    leaguePayload[leagueId] = sortEvents(merged).map((e) => toClientEvent(e, offsetMinutes)).filter(Boolean);
   }
 
   const output = {
@@ -5974,14 +6018,14 @@ async function readLiveSnapshot(cache, origin) {
   }
 }
 
-async function ensureLiveSnapshot(cache, origin, key) {
+async function ensureLiveSnapshot(cache, origin, key, db) {
   const cached = await readLiveSnapshot(cache, origin);
   const now = Date.now();
   if (cached && now - Number(cached.updatedAt || 0) < LIVE_SNAPSHOT_REFRESH_MS) {
     return { snapshot: cached, changedByLeague: {}, refreshed: false };
   }
 
-  const next = await buildLiveSnapshot(key);
+  const next = await buildLiveSnapshot(key, db);
   const changedByLeague = diffLiveSnapshots(cached || { leagues: {} }, next);
   await cache.put(
     liveSnapshotCacheKey(origin),
@@ -6001,6 +6045,7 @@ function streamFrame(eventName, data) {
 
 async function handleEzraLiveStreamRoute(context, key) {
   const { request } = context;
+  const db = context.env?.EZRA_DB;
   const url = new URL(request.url);
   const origin = `${url.protocol}//${url.host}`;
   const cache = caches.default;
@@ -6012,7 +6057,7 @@ async function handleEzraLiveStreamRoute(context, key) {
       controller.enqueue(encoder.encode(`retry: 4000\n\n`));
       while (Date.now() - startedAt < LIVE_STREAM_MAX_MS && !request.signal.aborted) {
         try {
-          const { snapshot, changedByLeague, refreshed } = await ensureLiveSnapshot(cache, origin, key);
+          const { snapshot, changedByLeague, refreshed } = await ensureLiveSnapshot(cache, origin, key, db);
           if (snapshot?.version && snapshot.version !== lastVersion) {
             const isFirst = !lastVersion;
             const payload = {

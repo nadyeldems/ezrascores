@@ -18,6 +18,11 @@ const el = {
   searchInput: document.getElementById("search-input"),
   leagueFilterBtns: Array.from(document.querySelectorAll(".league-filter-btn")),
   dashStatus: document.getElementById("dash-status"),
+  // Kickoff offset panel
+  offsetPanel: document.getElementById("offset-panel"),
+  offsetDisplay: document.getElementById("offset-display"),
+  offsetBtns: Array.from(document.querySelectorAll(".offset-btn")),
+  offsetStatus: document.getElementById("offset-status"),
   // Grant panel
   grantPanel: document.getElementById("grant-panel"),
   grantUserInput: document.getElementById("grant-user-input"),
@@ -41,6 +46,7 @@ const state = {
     CHAMP: true,
     LALIGA: true,
   },
+  kickoffOffsetMinutes: 0,
   grant: {
     selectedUser: null,   // { id, username, totalPoints }
     grantLog: [],         // session-scoped audit log
@@ -178,12 +184,58 @@ function setLeagueVisibility(nextVisibility) {
   }
 }
 
+async function fetchKickoffOffset() {
+  const res = await fetch(`${API}/kickoff-offset`, { headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Offset fetch failed (${res.status})`);
+  return Number.isFinite(data?.offsetMinutes) ? data.offsetMinutes : 0;
+}
+
+async function saveKickoffOffset(minutes) {
+  const res = await fetch(`${API}/kickoff-offset`, {
+    method: "PUT",
+    headers: authHeaders(),
+    body: JSON.stringify({ offsetMinutes: minutes }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Offset save failed (${res.status})`);
+  return Number.isFinite(data?.offsetMinutes) ? data.offsetMinutes : 0;
+}
+
+function renderKickoffOffset(minutes) {
+  state.kickoffOffsetMinutes = minutes;
+  const sign = minutes > 0 ? "+" : "";
+  el.offsetDisplay.textContent = `${sign}${minutes}`;
+  for (const btn of el.offsetBtns) {
+    btn.classList.toggle("offset-btn--active", Number(btn.dataset.offset) === minutes);
+  }
+}
+
+for (const btn of el.offsetBtns) {
+  btn.addEventListener("click", async () => {
+    const target = parseInt(btn.dataset.offset, 10);
+    if (!Number.isFinite(target)) return;
+    try {
+      for (const b of el.offsetBtns) b.disabled = true;
+      setStatus(el.offsetStatus, "Saving…");
+      const saved = await saveKickoffOffset(target);
+      renderKickoffOffset(saved);
+      setStatus(el.offsetStatus, `Offset set to ${saved >= 0 ? "+" : ""}${saved} min. Takes effect on next live refresh.`, "ok");
+    } catch (err) {
+      setStatus(el.offsetStatus, String(err?.message || err), "error");
+    } finally {
+      for (const b of el.offsetBtns) b.disabled = false;
+    }
+  });
+}
+
 async function refreshDashboard() {
   try {
     setStatus(el.dashStatus, "Loading users and league visibility...");
-    const [data, visibility] = await Promise.all([fetchUsers(), fetchLeagueVisibility()]);
+    const [data, visibility, offsetMinutes] = await Promise.all([fetchUsers(), fetchLeagueVisibility(), fetchKickoffOffset()]);
     state.users = Array.isArray(data.users) ? data.users : [];
     setLeagueVisibility(visibility);
+    renderKickoffOffset(offsetMinutes);
     el.usersCount.textContent = String(data?.summary?.usersCount ?? state.users.length ?? 0);
     el.active24h.textContent = String(data?.summary?.active24h ?? 0);
     renderUsers();
