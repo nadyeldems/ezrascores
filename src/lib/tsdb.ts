@@ -18,6 +18,7 @@ export type Event = {
   dateEvent?: string;
   strTime?: string;
   strTimestamp?: string;
+  strTimestampUTC?: string;
   strVenue?: string;
   strLeague?: string;
 
@@ -92,19 +93,19 @@ const TIME_FMT: Intl.DateTimeFormatOptions = {
 };
 
 export function localTime(event: Event): string | undefined {
+  // Prefer strTimestampUTC — reliable UTC from TheSportsDB, no DST ambiguity.
+  if (event.strTimestampUTC) {
+    const raw = event.strTimestampUTC.trim().replace(" ", "T");
+    const iso = raw.endsWith("Z") ? raw : raw + "Z";
+    const d = new Date(iso);
+    if (!isNaN(d.getTime())) return d.toLocaleTimeString("en-GB", TIME_FMT);
+  }
   if (event.strTimestamp) {
     const d = new Date(event.strTimestamp);
     if (!isNaN(d.getTime())) return d.toLocaleTimeString("en-GB", TIME_FMT);
   }
-  if (event.strTime && event.dateEvent) {
-    const t = event.strTime.trim();
-    const iso = t.includes("+") || t.endsWith("Z")
-      ? `${event.dateEvent}T${t}`
-      : `${event.dateEvent}T${t}Z`;
-    const d = new Date(iso);
-    if (!isNaN(d.getTime())) return d.toLocaleTimeString("en-GB", TIME_FMT);
-  }
-  return event.strTime;
+  // strTime is already UK local time — return it directly without UTC conversion.
+  return event.strTime?.slice(0, 5) || event.strTime;
 }
 
 export function formatKickoff(dateYMD?: string, time?: string) {

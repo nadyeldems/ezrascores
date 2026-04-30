@@ -5908,6 +5908,7 @@ function toClientEvent(event) {
     strVenue: normalized.strVenue || "",
     strLeague: normalized.strLeague || "",
     strTimestamp: normalized.strTimestamp || "",
+    strTimestampUTC: String(event?.strTimestampUTC || "").trim(),
   };
 }
 
@@ -6072,6 +6073,13 @@ function isTableLiveStatus(event) {
 }
 
 function parseEventKickoffMs(event) {
+  // Prefer strTimestampUTC to avoid UK local-time/DST ambiguity (strTime is UK local time).
+  const rawUtc = String(event?.strTimestampUTC || "").trim();
+  if (rawUtc) {
+    const iso = rawUtc.replace(" ", "T");
+    const ms = Date.parse(iso.endsWith("Z") ? iso : iso + "Z");
+    if (Number.isFinite(ms)) return ms;
+  }
   const date = String(event?.dateEvent || "").trim();
   if (!date) return Number.NaN;
   const time = String(event?.strTime || "12:00:00")
