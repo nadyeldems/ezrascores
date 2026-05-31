@@ -1068,6 +1068,7 @@ function leagueIdToCode(value) {
   if (v === "4328") return "EPL";
   if (v === "4329") return "CHAMP";
   if (v === "4335") return "LALIGA";
+  if (v === "4429") return "WC";
   return "";
 }
 
@@ -2604,6 +2605,7 @@ async function handleAdminUsersOverview(db, env, request) {
     EPL: "4328",
     CHAMP: "4329",
     LALIGA: "4335",
+    WC: "4429",
   };
   const leagueId = leagueIdByCode[leagueCode] || "";
   const isLeagueFiltered = Boolean(leagueId);
@@ -4382,7 +4384,7 @@ async function handleUsersSearch(db, request) {
 // Shared helper: pick a featured fixture from ezra_fixtures_cache (no TheSportsDB call).
 // datesToTry is an array of ISO date strings to attempt in order (e.g. [today, tomorrow]).
 async function selectFeaturedFixtureFromCache(db, datesToTry) {
-  const leagueIds = ["4328", "4329", "4335"];
+  const leagueIds = ["4328", "4329", "4335", "4429"];
   const shuffle = (arr) => {
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) {
@@ -4922,7 +4924,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
   }
 }
 
-const TABLE_LEAGUE_IDS = ["4328", "4329", "4335"];
+const TABLE_LEAGUE_IDS = ["4328", "4329", "4335", "4429"];
 const TABLE_REFRESH_LIVE_MS = 60 * 1000;
 const TABLE_REFRESH_MATCHDAY_MS = 2 * 60 * 1000;
 const TABLE_REFRESH_IDLE_MS = 15 * 60 * 1000;
@@ -4994,6 +4996,7 @@ async function handleEzraClubQuizRoute(context, key) {
     "4328": "English Premier League",
     "4329": "English League Championship",
     "4335": "Spanish La Liga",
+    "4429": "FIFA World Cup",
   };
 
   const tablePayloads = await Promise.all(
@@ -5463,7 +5466,7 @@ async function handleEzraFixturesRoute(context, key) {
   const leagueId = String(url.searchParams.get("l") || "").trim();
   const dateIso = normalizeEventDate(url.searchParams.get("d"));
   if (!TABLE_LEAGUE_IDS.includes(leagueId) || !dateIso) {
-    return json({ error: "Missing or invalid parameters. Use l=4328|4329|4335 and d=YYYY-MM-DD" }, 400);
+    return json({ error: "Missing or invalid parameters. Use l=4328|4329|4335|4429 and d=YYYY-MM-DD" }, 400);
   }
   const todayIso = new Date().toISOString().slice(0, 10);
   if (!fixtureDateInWindow(dateIso, todayIso)) {
@@ -5739,6 +5742,7 @@ function normalizeLeagueId(value) {
   if (lowered.includes("premier")) return "4328";
   if (lowered.includes("championship")) return "4329";
   if (lowered.includes("la liga") || lowered.includes("laliga")) return "4335";
+  if (lowered.includes("world cup") || lowered.includes("fifa")) return "4429";
   return "";
 }
 

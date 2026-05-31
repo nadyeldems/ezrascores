@@ -26,17 +26,19 @@ const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
   CHAMP: { id: "4329", name: "English League Championship" },
   LALIGA: { id: "4335", name: "Spanish La Liga" },
+  WC: { id: "4429", name: "FIFA World Cup", season: "2026-2027" },
 };
 const LEAGUE_CODES = Object.keys(LEAGUES);
-const DEFAULT_LEAGUE_VISIBILITY = { EPL: true, CHAMP: true, LALIGA: true };
+const DEFAULT_LEAGUE_VISIBILITY = { EPL: true, CHAMP: true, LALIGA: true, WC: true };
 
 function normalizeLeagueVisibility(input) {
   const next = {
     EPL: Boolean(input?.EPL),
     CHAMP: Boolean(input?.CHAMP),
     LALIGA: Boolean(input?.LALIGA),
+    WC: Boolean(input?.WC ?? true),
   };
-  if (!next.EPL && !next.CHAMP && !next.LALIGA) {
+  if (!next.EPL && !next.CHAMP && !next.LALIGA && !next.WC) {
     next.EPL = true;
   }
   return next;
