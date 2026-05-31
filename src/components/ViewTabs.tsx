@@ -1,17 +1,33 @@
-export type ViewKey = "LIVE" | "YDAY" | "TODAY" | "TMRW" | "TABLE";
+export type ViewKey = "LIVE" | "YDAY" | "TODAY" | "TMRW" | "TABLE" | "SQUAD" | "PREDICT";
 
-const TABS: { key: ViewKey; label: string }[] = [
-  { key: "LIVE", label: "Live" },
-  { key: "YDAY", label: "Yday" },
-  { key: "TODAY", label: "Today" },
-  { key: "TMRW", label: "Tmrw" },
-  { key: "TABLE", label: "Table" },
-];
+type TabDef = { key: ViewKey; label: string };
 
-export function ViewTabs({ view, onChange }: { view: ViewKey; onChange: (v: ViewKey) => void }) {
+function getTabs(leagueType: "league" | "tournament"): TabDef[] {
+  return [
+    { key: "LIVE",    label: "Live" },
+    { key: "YDAY",    label: "Yday" },
+    { key: "TODAY",   label: "Today" },
+    { key: "TMRW",    label: "Tmrw" },
+    { key: "TABLE",   label: leagueType === "tournament" ? "Groups" : "Table" },
+    { key: "SQUAD",   label: "Squad" },
+    { key: "PREDICT", label: "Predict" },
+  ];
+}
+
+export function ViewTabs({
+  view,
+  onChange,
+  leagueType,
+}: {
+  view: ViewKey;
+  onChange: (v: ViewKey) => void;
+  leagueType: "league" | "tournament";
+}) {
+  const tabs = getTabs(leagueType);
+
   return (
     <div className="flex flex-wrap gap-2">
-      {TABS.map((t) => {
+      {tabs.map((t) => {
         const active = view === t.key;
         return (
           <button

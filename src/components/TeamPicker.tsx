@@ -7,10 +7,12 @@ export function TeamPicker({
   open,
   onClose,
   onPick,
+  mode = "club",
 }: {
   open: boolean;
   onClose: () => void;
   onPick: (t: Team) => void;
+  mode?: "club" | "nation";
 }) {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,6 +20,11 @@ export function TeamPicker({
   const [error, setError] = useState<string | null>(null);
 
   const canSearch = useMemo(() => q.trim().length >= 3, [q]);
+
+  const title = mode === "nation" ? "Choose Favourite Nation" : "Choose Favourite Team";
+  const placeholder = mode === "nation"
+    ? "e.g. England, France, Brazil"
+    : "e.g. Leeds, Arsenal, Sunderland";
 
   useEffect(() => {
     if (!open) return;
@@ -42,6 +49,10 @@ export function TeamPicker({
     }
   }
 
+  function handleKey(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && canSearch) search();
+  }
+
   if (!open) return null;
 
   return (
@@ -50,10 +61,13 @@ export function TeamPicker({
       <div className="relative w-full sm:max-w-xl panel glow rounded-t-3xl sm:rounded-3xl p-4 sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="dot text-xs" style={{ color: "var(--muted)" }}>Choose Favourite Team</div>
-            <div className="mt-1 text-lg sm:text-xl font-semibold">Search by team name</div>
+            <div className="dot text-xs" style={{ color: "var(--muted)" }}>{title}</div>
+            <div className="mt-1 text-lg sm:text-xl font-semibold">Search by name</div>
           </div>
-          <button onClick={onClose} className="dot rounded-xl px-3 py-2 text-xs panel-strong glow border border-[rgba(255,255,255,0.12)]">
+          <button
+            onClick={onClose}
+            className="dot rounded-xl px-3 py-2 text-xs panel-strong glow border border-[rgba(255,255,255,0.12)]"
+          >
             Close
           </button>
         </div>
@@ -62,7 +76,8 @@ export function TeamPicker({
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="e.g. Leeds, Arsenal, Sunderland"
+            onKeyDown={handleKey}
+            placeholder={placeholder}
             className="w-full rounded-2xl px-4 py-3 bg-black/25 border border-[rgba(255,255,255,0.10)] outline-none"
           />
           <button
@@ -75,21 +90,21 @@ export function TeamPicker({
         </div>
 
         <div className="mt-3 text-xs" style={{ color: "var(--muted)" }}>
-          Tip: type at least 3 characters, then hit Search.
+          Type at least 3 characters, then hit Search or press Enter.
         </div>
 
-        {error ? (
+        {error && (
           <div className="mt-3 rounded-2xl px-4 py-3 panel-strong glow text-sm" style={{ color: "var(--danger)" }}>
             {error}
           </div>
-        ) : null}
+        )}
 
         <div className="mt-4 space-y-2 max-h-[55vh] overflow-auto pr-1">
           {teams.map((t) => (
             <button key={t.idTeam} onClick={() => onPick(t)} className="w-full text-left rounded-2xl panel-strong glow px-4 py-3">
               <div className="flex items-center gap-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 {t.strTeamBadge ? (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={t.strTeamBadge} alt="" className="h-10 w-10 rounded-xl bg-black/25 p-1" />
                 ) : (
                   <div className="h-10 w-10 rounded-xl bg-black/25" />
@@ -102,11 +117,11 @@ export function TeamPicker({
             </button>
           ))}
 
-          {teams.length === 0 ? (
+          {teams.length === 0 && (
             <div className="rounded-2xl panel-strong glow px-4 py-6 text-sm" style={{ color: "var(--muted)" }}>
-              No results yet. Search for your team above.
+              No results yet. Search above.
             </div>
-          ) : null}
+          )}
         </div>
       </div>
     </div>

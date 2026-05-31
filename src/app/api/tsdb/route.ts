@@ -5,7 +5,14 @@ const API_KEY = process.env.TSDB_API_KEY;
 const V1_BASE = "https://www.thesportsdb.com/api/v1/json";
 const V2_BASE = "https://www.thesportsdb.com/api/v2/json";
 
-type Endpoint = "eventsday" | "lookuptable" | "livescore" | "searchteams" | "lookupteam" | "eventsnext";
+type Endpoint =
+  | "eventsday"
+  | "lookuptable"
+  | "livescore"
+  | "searchteams"
+  | "lookupteam"
+  | "eventsnext"
+  | "lookupsquad";
 
 function bad(msg: string, code = 400) {
   return NextResponse.json({ error: msg }, { status: code });
@@ -18,7 +25,10 @@ export async function GET(req: Request) {
   const endpoint = searchParams.get("endpoint") as Endpoint | null;
   if (!endpoint) return bad("Missing endpoint.");
 
-  const allowed: Endpoint[] = ["eventsday", "lookuptable", "livescore", "searchteams", "lookupteam", "eventsnext"];
+  const allowed: Endpoint[] = [
+    "eventsday", "lookuptable", "livescore",
+    "searchteams", "lookupteam", "eventsnext", "lookupsquad",
+  ];
   if (!allowed.includes(endpoint)) return bad("Endpoint not allowed.");
 
   let url: URL;
@@ -47,7 +57,6 @@ export async function GET(req: Request) {
         const l = searchParams.get("l");
         if (!l) return bad("livescore requires l.");
 
-        // Try v2 livescore first; if it fails, fall back to v1.
         const v2 = new URL(`${V2_BASE}/${API_KEY}/livescore/${l}`);
         const v2Res = await fetch(v2.toString(), { next: { revalidate: 15 } });
         if (v2Res.ok) {
@@ -77,6 +86,13 @@ export async function GET(req: Request) {
         const id = searchParams.get("id");
         if (!id) return bad("eventsnext requires id.");
         url = new URL(`${V1_BASE}/${API_KEY}/eventsnext.php`);
+        url.searchParams.set("id", id);
+        break;
+      }
+      case "lookupsquad": {
+        const id = searchParams.get("id");
+        if (!id) return bad("lookupsquad requires id.");
+        url = new URL(`${V1_BASE}/${API_KEY}/lookup_all_players.php`);
         url.searchParams.set("id", id);
         break;
       }
