@@ -7185,7 +7185,7 @@ function renderSquadPanel() {
   if (!favorite?.idTeam) {
     state.squadOpen = squadTabActive;
     state.selectedSquadPlayerKey = "";
-    el.squadPanel.classList.toggle("hidden", !squadTabActive);
+    setPanelVisible(el.squadPanel, squadTabActive);
     el.squadBody.classList.toggle("hidden", !squadTabActive);
     el.squadTitle.textContent = "Squad";
     el.squadList.innerHTML = "";
@@ -7202,7 +7202,7 @@ function renderSquadPanel() {
     state.selectedSquadPlayerKey = "";
   }
   state.squadOpen = squadTabActive;
-  el.squadPanel.classList.toggle("hidden", !squadTabActive);
+  setPanelVisible(el.squadPanel, squadTabActive);
   el.squadBody.classList.toggle("hidden", !state.squadOpen);
   el.squadTitle.textContent = `${favorite.strTeam} Squad`;
   el.squadList.innerHTML = "";
@@ -11428,6 +11428,12 @@ function renderMainTabButtons() {
 function setPanelVisible(panel, visible) {
   if (!panel) return;
   panel.classList.toggle("hidden", !visible);
+  if (visible) {
+    // Tab panels are display:none when initRevealOnScroll first observes them, so
+    // the observer can never hand them .in-view and they would stay at opacity 0.
+    // Content revealed by a tab switch should appear at once regardless.
+    panel.classList.add("in-view");
+  }
 }
 
 function renderMobileSectionLayout() {
@@ -11615,15 +11621,21 @@ function initRevealOnScroll() {
     item.style.setProperty("--reveal-delay", `${idx * 35}ms`);
   });
 
+  // Panels taller than 5x the viewport can never reach a 0.2 ratio, so they would
+  // stay at opacity 0 until scrolled far enough to fill the screen. Treat "20% of
+  // the viewport is covered" as in-view too, so tall panels reveal when shown.
   const observer = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("in-view");
-        }
+        if (!entry.isIntersecting) return;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        const bigEnough =
+          entry.intersectionRatio >= 0.2 || entry.intersectionRect.height >= viewportHeight * 0.2;
+        if (!bigEnough) return;
+        entry.target.classList.add("in-view");
       });
     },
-    { threshold: 0.2 }
+    { threshold: [0, 0.2] }
   );
 
   revealTargets.forEach((item) => observer.observe(item));
