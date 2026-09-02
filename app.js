@@ -79,10 +79,6 @@ const STORED_PENDING_LEAGUE_INVITE = parseStoredJson("ezra_pending_league_invite
 const STORED_LAST_REFRESH_ISO = localStorage.getItem("ezra_last_refresh_iso") || "";
 let STORED_MAIN_TAB = localStorage.getItem("ezra_main_tab") || "home";
 STORED_MAIN_TAB = String(STORED_MAIN_TAB || "").trim().toLowerCase();
-if (STORED_MAIN_TAB === "squad") {
-  localStorage.setItem("ezra_main_tab", "home");
-  STORED_MAIN_TAB = "home";
-}
 const STORED_MOBILE_TAB = localStorage.getItem("ezra_mobile_tab") || "fixtures";
 const DREAM_TEAM_FORMATIONS = {
   "4-3-3": { DEF: 4, MID: 3, FWD: 3 },
@@ -1965,7 +1961,7 @@ function loadDreamTeamState() {
 
 const SAFE_MAIN_TABS = ["home", "play", "predict", "squad", "tables"];
 const SAFE_STORED_MAIN_TAB = SAFE_MAIN_TABS.includes(STORED_MAIN_TAB) ? STORED_MAIN_TAB : "home";
-const INITIAL_MAIN_TAB = SAFE_STORED_MAIN_TAB === "squad" ? "home" : SAFE_STORED_MAIN_TAB;
+const INITIAL_MAIN_TAB = SAFE_STORED_MAIN_TAB;
 
 const state = {
   selectedLeague: "ALL",
@@ -7184,20 +7180,29 @@ function sortSquadByRole(list) {
 
 function renderSquadPanel() {
   if (!el.squadPanel || !el.squadList || !el.squadTitle || !el.squadBody) return;
+  const squadTabActive = state.mainTab === "squad";
   const favorite = state.favoriteTeam;
   if (!favorite?.idTeam) {
-    state.squadOpen = false;
+    state.squadOpen = squadTabActive;
     state.selectedSquadPlayerKey = "";
-    el.squadPanel.classList.add("hidden");
-    el.squadBody.classList.add("hidden");
+    el.squadPanel.classList.toggle("hidden", !squadTabActive);
+    el.squadBody.classList.toggle("hidden", !squadTabActive);
+    el.squadTitle.textContent = "Squad";
     el.squadList.innerHTML = "";
+    if (squadTabActive) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "Pick a favourite team first — use the team button at the top to choose one, then their full squad shows up here.";
+      el.squadList.appendChild(empty);
+    }
     return;
   }
   const squad = state.squadByTeamId[favorite.idTeam] || [];
   if (state.selectedSquadPlayerKey && !squad.some((p) => p.key === state.selectedSquadPlayerKey)) {
     state.selectedSquadPlayerKey = "";
   }
-  state.squadOpen = state.mainTab === "squad";
+  state.squadOpen = squadTabActive;
+  el.squadPanel.classList.toggle("hidden", !squadTabActive);
   el.squadBody.classList.toggle("hidden", !state.squadOpen);
   el.squadTitle.textContent = `${favorite.strTeam} Squad`;
   el.squadList.innerHTML = "";
@@ -11380,7 +11385,7 @@ function setMainTab(tab) {
     return;
   }
   state.mainTab = safe;
-  localStorage.setItem("ezra_main_tab", safe === "squad" ? "home" : safe);
+  localStorage.setItem("ezra_main_tab", safe);
   closeFavoritePickerMenu();
   setSettingsMenuOpen(false);
   setAccountMenuOpen(false);
@@ -11440,7 +11445,6 @@ function renderMobileSectionLayout() {
   const home = state.mainTab === "home";
   const play = state.mainTab === "play";
   const predict = state.mainTab === "predict";
-  const squadTab = state.mainTab === "squad";
   const tablesTab = state.mainTab === "tables";
 
   setPanelVisible(controls, predict || tablesTab);
@@ -11457,9 +11461,7 @@ function renderMobileSectionLayout() {
     el.avatarBuilderCard.classList.toggle("hidden", !play);
   }
   if (squad) {
-    setPanelVisible(squad, squadTab);
-    state.squadOpen = squadTab;
-    if (el.squadBody) el.squadBody.classList.toggle("hidden", !squadTab);
+    renderSquadPanel();
   }
   fun.classList.toggle("home-focus", home);
   fun.classList.toggle("play-focus", play);
