@@ -18,6 +18,9 @@ const el = {
   searchInput: document.getElementById("search-input"),
   leagueFilterBtns: Array.from(document.querySelectorAll(".league-filter-btn")),
   dashStatus: document.getElementById("dash-status"),
+  // Client errors panel
+  errorsList: document.getElementById("errors-list"),
+  errorsCount: document.getElementById("errors-count"),
   // Kickoff offset panel
   offsetPanel: document.getElementById("offset-panel"),
   offsetDisplay: document.getElementById("offset-display"),
@@ -186,6 +189,42 @@ function setLeagueVisibility(nextVisibility) {
   }
 }
 
+async function fetchClientErrors() {
+  const res = await fetch(`${API}/client-errors`, { headers: authHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Error log fetch failed (${res.status})`);
+  return Array.isArray(data?.errors) ? data.errors : [];
+}
+
+function renderClientErrors(errors) {
+  if (!el.errorsList) return;
+  el.errorsCount.textContent = errors.length ? `(${errors.length})` : "(none)";
+  el.errorsList.replaceChildren();
+  if (!errors.length) {
+    const empty = document.createElement("p");
+    empty.className = "grant-desc";
+    empty.textContent = "No errors reported.";
+    el.errorsList.appendChild(empty);
+    return;
+  }
+  for (const row of errors) {
+    const item = document.createElement("details");
+    item.className = "error-item";
+    const summary = document.createElement("summary");
+    const when = new Date(row.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const where = row.source ? ` — ${row.source}:${row.line ?? "?"}` : "";
+    summary.textContent = `${when} · ×${row.count} · ${row.message}${where}`;
+    const meta = document.createElement("p");
+    meta.className = "grant-desc";
+    meta.textContent = `Build ${row.app_version || "?"} · ${row.browser || "?"} · tab ${row.page || "?"}`;
+    const stack = document.createElement("pre");
+    stack.className = "error-stack";
+    stack.textContent = row.stack || "(no stack)";
+    item.append(summary, meta, stack);
+    el.errorsList.appendChild(item);
+  }
+}
+
 async function fetchKickoffOffset() {
   const res = await fetch(`${API}/kickoff-offset`, { headers: authHeaders() });
   const data = await res.json().catch(() => ({}));
@@ -241,6 +280,7 @@ async function refreshDashboard() {
     el.usersCount.textContent = String(data?.summary?.usersCount ?? state.users.length ?? 0);
     el.active24h.textContent = String(data?.summary?.active24h ?? 0);
     renderUsers();
+    fetchClientErrors().then(renderClientErrors).catch(() => renderClientErrors([]));
     setStatus(el.dashStatus, `Updated ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`, "ok");
   } catch (err) {
     setStatus(el.dashStatus, String(err?.message || err), "error");

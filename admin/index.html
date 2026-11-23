@@ -76,6 +76,19 @@
 
         <p id="dash-status" class="status"></p>
 
+        <details class="grant-panel" id="errors-panel">
+          <summary class="grant-summary">
+            <span>Recent App Errors <span id="errors-count"></span></span>
+          </summary>
+          <div class="grant-body">
+            <p class="grant-desc">
+              Uncaught errors reported by visitors' browsers (newest first, last 100).
+              The same error from the same build within an hour is counted rather than repeated.
+            </p>
+            <div id="errors-list" class="errors-list"></div>
+          </div>
+        </details>
+
         <details class="grant-panel" id="offset-panel">
           <summary class="grant-summary">
             <span>API Kickoff Time Offset</span>

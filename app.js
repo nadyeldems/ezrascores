@@ -21,6 +21,60 @@ const LIVE_PROBE_IDLE_MS = THREE_HOURS_MS;
 const STATIC_REFRESH_MS = THREE_HOURS_MS;
 const API_FETCH_TIMEOUT_MS = 12000;
 const API_FETCH_RETRIES = 1;
+// ---- Error reporting --------------------------------------------------------
+// Uncaught errors from this app are sent to /api/v1/ezra/client-error (stored in
+// D1, visible in the admin tool). At most 5 per page load; extension noise and
+// cross-origin "Script error." are ignored.
+(function setupClientErrorReporting() {
+  if (typeof window === "undefined") return;
+  const MAX_REPORTS = 5;
+  let sent = 0;
+  const appVersion = (document.currentScript?.src.match(/[?&]v=([^&]+)/) || [])[1] || "";
+  const report = (payload) => {
+    if (sent >= MAX_REPORTS) return;
+    const message = String(payload.message || "").trim();
+    if (!message || message === "Script error.") return;
+    const source = String(payload.source || "");
+    if (source && !source.startsWith(window.location.origin)) return;
+    sent += 1;
+    const body = JSON.stringify({
+      ...payload,
+      message,
+      source: source.replace(window.location.origin, ""),
+      page: (() => {
+        try {
+          return String(state?.mainTab || "");
+        } catch {
+          return "";
+        }
+      })(),
+      appVersion,
+    });
+    try {
+      fetch("/api/v1/ezra/client-error", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+    } catch {
+      /* never let reporting break the app */
+    }
+  };
+  window.addEventListener("error", (event) => {
+    report({
+      message: event.message,
+      source: event.filename,
+      line: event.lineno,
+      col: event.colno,
+      stack: event.error?.stack || "",
+    });
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    const stack = String(reason?.stack || "");
+    const ownFile = stack.match(/https?:\/\/[^\s)]+\/app\.js[^\s):]*/)?.[0] || "";
+    // Network failures are retried and shown in the UI already; only report code errors.
+    if (reason instanceof TypeError && /fetch|network|load failed/i.test(String(reason.message))) return;
+    report({ message: `Unhandled promise: ${String(reason?.message || reason)}`, source: ownFile || window.location.origin + "/app.js", stack });
+  });
+})();
+
 // A match still marked live this long after kickoff is treated as over.
 const STALE_LIVE_AFTER_MS = 4 * 60 * 60 * 1000;
 
@@ -419,142 +473,6 @@ const AVATAR_3D = {
   pending: new Map(),
 };
 
-const AVATAR_MODEL_VARIANTS = [
-  { id: "steady-boy", path: "/assets/avatar/models/steady-boy.glb", type: "boy", pose: "steady" },
-  { id: "cute-girl", path: "/assets/avatar/models/cute-girl.glb", type: "girl", pose: "steady" },
-  { id: "dribbling-girl", path: "/assets/avatar/models/dribbling-girl.glb", type: "girl", pose: "dribble" },
-  { id: "shooting-girl", path: "/assets/avatar/models/shooting-girl.glb", type: "girl", pose: "shoot" },
-  { id: "heading-girl", path: "/assets/avatar/models/heading-girl.glb", type: "girl", pose: "header" },
-  { id: "celebrate-girl", path: "/assets/avatar/models/celebrate-girl.glb", type: "girl", pose: "celebrate" },
-  { id: "tackle-boy", path: "/assets/avatar/models/tackle-boy.glb", type: "boy", pose: "tackle" },
-  { id: "heading-boy", path: "/assets/avatar/models/heading-boy.glb", type: "boy", pose: "header" },
-  { id: "catching-boy", path: "/assets/avatar/models/catching-boy.glb", type: "boy", pose: "catch" },
-  { id: "winning-boy", path: "/assets/avatar/models/winning-boy.glb", type: "boy", pose: "celebrate" },
-  { id: "slide-winning-boy", path: "/assets/avatar/models/slide-winning-boy.glb", type: "boy", pose: "celebrate" },
-  { id: "celebrate-boy", path: "/assets/avatar/models/celebrate-boy.glb", type: "boy", pose: "celebrate" },
-];
-
-const AVATAR_SPRITE_ATLAS = {
-  src: "/assets/avatar/sprites/source.png",
-  image: null,
-  loading: null,
-  bodies: {
-    "steady-boy": { x: 36, y: 176, w: 112, h: 196 },
-    "cute-girl": { x: 114, y: 545, w: 48, h: 100 },
-    "dribbling-girl": { x: 151, y: 401, w: 42, h: 84 },
-    "shooting-girl": { x: 116, y: 401, w: 42, h: 82 },
-    "heading-girl": { x: 74, y: 401, w: 39, h: 80 },
-    "celebrate-girl": { x: 233, y: 556, w: 42, h: 96 },
-    "tackle-boy": { x: 168, y: 497, w: 54, h: 102 },
-    "heading-boy": { x: 82, y: 545, w: 44, h: 96 },
-    "catching-boy": { x: 208, y: 498, w: 56, h: 104 },
-    "winning-boy": { x: 42, y: 536, w: 52, h: 126 },
-    "slide-winning-boy": { x: 32, y: 393, w: 38, h: 82 },
-    "celebrate-boy": { x: 208, y: 498, w: 56, h: 104 },
-  },
-};
-
-function loadAvatarSpriteAtlas() {
-  if (AVATAR_SPRITE_ATLAS.image) return Promise.resolve(AVATAR_SPRITE_ATLAS.image);
-  if (AVATAR_SPRITE_ATLAS.loading) return AVATAR_SPRITE_ATLAS.loading;
-  AVATAR_SPRITE_ATLAS.loading = new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      AVATAR_SPRITE_ATLAS.image = img;
-      resolve(img);
-    };
-    img.onerror = () => reject(new Error("Failed to load avatar sprite atlas"));
-    img.src = AVATAR_SPRITE_ATLAS.src;
-  }).finally(() => {
-    AVATAR_SPRITE_ATLAS.loading = null;
-  });
-  return AVATAR_SPRITE_ATLAS.loading;
-}
-
-function hexToRgba(hex, alpha = 1) {
-  const raw = String(hex || "").replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(raw)) return `rgba(255,255,255,${alpha})`;
-  const r = parseInt(raw.slice(0, 2), 16);
-  const g = parseInt(raw.slice(2, 4), 16);
-  const b = parseInt(raw.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-function applySpriteChromaKey(ctx, w, h) {
-  const imgData = ctx.getImageData(0, 0, w, h);
-  const data = imgData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    if (r > 242 && g > 242 && b > 242) {
-      data[i + 3] = 0;
-    }
-  }
-  ctx.putImageData(imgData, 0, 0);
-}
-
-function renderAvatarSpriteCanvas(ctx, avatar, seed, size, atlasImage) {
-  const variantId = chooseAvatarModelVariant(avatar, seed);
-  const rect = AVATAR_SPRITE_ATLAS.bodies[variantId] || AVATAR_SPRITE_ATLAS.bodies["steady-boy"];
-  if (!rect) return false;
-
-  const sourceCanvas = document.createElement("canvas");
-  sourceCanvas.width = rect.w;
-  sourceCanvas.height = rect.h;
-  const sctx = sourceCanvas.getContext("2d");
-  sctx.imageSmoothingEnabled = false;
-  sctx.drawImage(atlasImage, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
-  applySpriteChromaKey(sctx, rect.w, rect.h);
-
-  const fit = Math.min((size * 0.82) / rect.w, (size * 0.88) / rect.h);
-  const dw = Math.max(1, Math.round(rect.w * fit));
-  const dh = Math.max(1, Math.round(rect.h * fit));
-  const dx = Math.round((size - dw) * 0.5);
-  const dy = Math.round((size - dh) * 0.56);
-
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(sourceCanvas, dx, dy, dw, dh);
-
-  ctx.globalCompositeOperation = "source-atop";
-  ctx.fillStyle = hexToRgba(avatar.kitColor1, 0.22);
-  ctx.fillRect(dx, dy, dw, dh);
-  ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.12);
-  ctx.fillRect(dx, dy + Math.round(dh * 0.36), dw, Math.round(dh * 0.34));
-  ctx.fillStyle = hexToRgba(avatar.hairColor, 0.12);
-  ctx.fillRect(dx, dy, dw, Math.round(dh * 0.24));
-  ctx.fillStyle = hexToRgba(avatar.bootsColor, 0.2);
-  ctx.fillRect(dx, dy + Math.round(dh * 0.84), dw, Math.round(dh * 0.16));
-
-  if (avatar.kitStyle === "stripes") {
-    ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.24);
-    const stripeW = Math.max(2, Math.floor(dw / 10));
-    for (let x = dx; x < dx + dw; x += stripeW * 2) {
-      ctx.fillRect(x, dy + Math.round(dh * 0.28), stripeW, Math.round(dh * 0.34));
-    }
-  } else if (avatar.kitStyle === "hoops") {
-    ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.24);
-    const h = Math.max(2, Math.floor(dh / 18));
-    for (let y = dy + Math.round(dh * 0.3); y < dy + Math.round(dh * 0.62); y += h * 2) {
-      ctx.fillRect(dx, y, dw, h);
-    }
-  } else if (avatar.kitStyle === "diamond") {
-    ctx.fillStyle = hexToRgba(avatar.kitColor2, 0.24);
-    const cx = dx + Math.round(dw * 0.5);
-    const cy = dy + Math.round(dh * 0.42);
-    const r = Math.max(4, Math.round(Math.min(dw, dh) * 0.1));
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - r);
-    ctx.lineTo(cx + r, cy);
-    ctx.lineTo(cx, cy + r);
-    ctx.lineTo(cx - r, cy);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.globalCompositeOperation = "source-over";
-  return true;
-}
-
 function encodeAvatarData(value) {
   try {
     return btoa(JSON.stringify(value));
@@ -571,744 +489,8 @@ function decodeAvatarData(value) {
   }
 }
 
-async function ensureThree() {
-  if (AVATAR_3D.ready || AVATAR_3D.failed) return AVATAR_3D.THREE;
-  if (AVATAR_3D.loading) {
-    return new Promise((resolve) => {
-      const timer = setInterval(() => {
-        if (!AVATAR_3D.loading) {
-          clearInterval(timer);
-          resolve(AVATAR_3D.THREE);
-        }
-      }, 40);
-    });
-  }
-  AVATAR_3D.loading = true;
-  try {
-    const mod = await import("https://unpkg.com/three@0.162.0/build/three.module.js");
-    const gltfModule = await import("https://unpkg.com/three@0.162.0/examples/jsm/loaders/GLTFLoader.js");
-    const skeletonModule = await import("https://unpkg.com/three@0.162.0/examples/jsm/utils/SkeletonUtils.js");
-    AVATAR_3D.THREE = mod;
-    AVATAR_3D.GLTFLoader = gltfModule.GLTFLoader;
-    AVATAR_3D.SkeletonUtils = skeletonModule;
-    AVATAR_3D.ready = true;
-    AVATAR_3D.loading = false;
-    return mod;
-  } catch (err) {
-    console.warn("Avatar 3D: failed to load Three.js", err);
-    AVATAR_3D.failed = true;
-    AVATAR_3D.loading = false;
-    return null;
-  }
-}
-
-function normalizeAvatarBaseModel(THREE, root) {
-  const box = new THREE.Box3().setFromObject(root);
-  const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
-  if (size.y <= 0.0001) return root;
-
-  root.position.sub(center);
-  const targetHeight = 2.34;
-  const scale = targetHeight / size.y;
-  root.scale.setScalar(scale);
-
-  const finalBox = new THREE.Box3().setFromObject(root);
-  const minY = finalBox.min.y;
-  root.position.y += -0.84 - minY;
-  root.position.z += 0.02;
-  return root;
-}
-
-function chooseAvatarModelVariant(avatar, seed = "") {
-  const safe = sanitizeAvatarConfig(avatar, seed);
-  if (AVATAR_OPTIONS.variant.includes(String(safe.variant || ""))) return safe.variant;
-  return AVATAR_PRESET_FILES[0];
-}
-
-function recolorAvatarBaseModel(model, avatar) {
-  const skin = new AVATAR_3D.THREE.Color(avatar.skinColor);
-  const hair = new AVATAR_3D.THREE.Color(avatar.hairColor);
-  const boots = new AVATAR_3D.THREE.Color(avatar.bootsColor);
-  const kit1 = new AVATAR_3D.THREE.Color(avatar.kitColor1);
-  const kit2 = new AVATAR_3D.THREE.Color(avatar.kitColor2);
-  const shorts = new AVATAR_3D.THREE.Color(avatar.shortsColor || avatar.kitColor2);
-  const socks = new AVATAR_3D.THREE.Color(avatar.socksColor || avatar.kitColor1);
-
-  const setMatColor = (mat, color, roughness = null, metalness = null) => {
-    if (!mat || !mat.color) return;
-    mat.color.copy(color);
-    if (roughness !== null) mat.roughness = roughness;
-    if (metalness !== null) mat.metalness = metalness;
-    mat.needsUpdate = true;
-  };
-
-  model.traverse((node) => {
-    if (!node.isMesh && !node.isSkinnedMesh) return;
-    if (!node.material) return;
-
-    const mats = Array.isArray(node.material) ? node.material : [node.material];
-    const lower = `${node.name || ""} ${node.material?.name || ""}`.toLowerCase();
-    mats.forEach((srcMat, idx) => {
-      const mat = srcMat?.clone ? srcMat.clone() : srcMat;
-      if (!mat) return;
-      mat.skinning = Boolean(node.isSkinnedMesh);
-
-      if (/(hair|brow|beard)/.test(lower)) setMatColor(mat, hair, 0.58, 0.04);
-      else if (/(face|head|skin|arm|hand|leg|ear|neck)/.test(lower)) setMatColor(mat, skin, 0.44, 0.03);
-      else if (/(boot|shoe|cleat)/.test(lower)) setMatColor(mat, boots, 0.5, 0.16);
-      else if (/(short)/.test(lower)) setMatColor(mat, shorts, 0.36, 0.07);
-      else if (/(sock)/.test(lower)) setMatColor(mat, socks, 0.43, 0.04);
-      else if (/(stripe|trim|accent|sleeve|collar)/.test(lower)) setMatColor(mat, kit2, 0.35, 0.07);
-      else if (/(shirt|jersey|kit|torso|body|top)/.test(lower)) setMatColor(mat, kit1, 0.35, 0.07);
-      else if (!mat.map) setMatColor(mat, kit1, 0.38, 0.06);
-
-      mats[idx] = mat;
-    });
-    node.material = Array.isArray(node.material) ? mats : mats[0];
-  });
-}
-
-async function ensureAvatarBaseModel(variantId = "steady-boy") {
-  if (AVATAR_3D.models.has(variantId)) return AVATAR_3D.models.get(variantId);
-  if (AVATAR_3D.failedModels.has(variantId)) return null;
-  if (AVATAR_3D.loadingModels.has(variantId)) return AVATAR_3D.loadingModels.get(variantId);
-
-  const THREE = await ensureThree();
-  if (!THREE || !AVATAR_3D.GLTFLoader) return null;
-  const variant = AVATAR_MODEL_VARIANTS.find((v) => v.id === variantId) || AVATAR_MODEL_VARIANTS[0];
-  if (!variant) return null;
-
-  const task = (async () => {
-    try {
-      const loader = new AVATAR_3D.GLTFLoader();
-      const gltf = await loader.loadAsync(variant.path);
-      const root = gltf?.scene || gltf?.scenes?.[0] || null;
-      if (!root) throw new Error("GLB has no scene");
-      const normalized = normalizeAvatarBaseModel(THREE, root);
-      AVATAR_3D.models.set(variant.id, normalized);
-      return normalized;
-    } catch (err) {
-      console.warn(`Avatar 3D: failed to load GLB ${variant.id}`, err);
-      AVATAR_3D.failedModels.add(variant.id);
-      return null;
-    } finally {
-      AVATAR_3D.loadingModels.delete(variant.id);
-    }
-  })();
-  AVATAR_3D.loadingModels.set(variant.id, task);
-  return task;
-}
-
-function buildAvatarBaseModelInstance(avatar, variantId = "steady-boy") {
-  const model = AVATAR_3D.models.get(variantId);
-  if (!model) return null;
-  const cloneFn = AVATAR_3D.SkeletonUtils?.clone;
-  const clone = typeof cloneFn === "function" ? cloneFn(model) : model.clone(true);
-  recolorAvatarBaseModel(clone, avatar);
-  // Mild personality cues without deforming rig.
-  const moodTilt = avatar.brow === "focused" ? 0.02 : avatar.brow === "cheeky" ? -0.018 : 0;
-  clone.rotation.z = moodTilt;
-  clone.rotation.y = avatar.brow === "cheeky" ? -0.05 : 0;
-  return clone;
-}
-
 function avatar3DKey(avatar, seed, size) {
   return `${seed}:${size}:${JSON.stringify(avatar)}`;
-}
-
-function dispose3DObject(obj) {
-  if (!obj) return;
-  obj.traverse?.((child) => {
-    if (child.geometry) child.geometry.dispose();
-    if (child.material) {
-      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose && m.dispose());
-      else if (child.material.dispose) child.material.dispose();
-    }
-  });
-}
-
-function createFabricTexture(THREE, baseColor, accentColor = "", style = "plain") {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = baseColor;
-  ctx.fillRect(0, 0, size, size);
-
-  const accent = accentColor || baseColor;
-  if (style === "stripes") {
-    ctx.fillStyle = accent;
-    for (let x = 0; x < size; x += 40) ctx.fillRect(x, 0, 16, size);
-  } else if (style === "hoops") {
-    ctx.fillStyle = accent;
-    for (let y = 0; y < size; y += 42) ctx.fillRect(0, y, size, 14);
-  } else if (style === "diamond") {
-    ctx.fillStyle = accent;
-    for (let y = 32; y < size; y += 64) {
-      for (let x = 32; x < size; x += 64) {
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(Math.PI / 4);
-        ctx.fillRect(-12, -12, 24, 24);
-        ctx.restore();
-      }
-    }
-  } else if (style === "total90") {
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2 + 20, 70, Math.PI * 1.05, Math.PI * 1.95);
-    ctx.stroke();
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2 + 20, 10, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (style === "sleeves") {
-    ctx.fillStyle = accent;
-    ctx.fillRect(0, 24, size, 18);
-    ctx.fillRect(0, size - 42, size, 18);
-  }
-
-  // subtle fabric noise
-  ctx.globalAlpha = 0.08;
-  for (let i = 0; i < 4000; i += 1) {
-    const x = Math.random() * size;
-    const y = Math.random() * size;
-    ctx.fillStyle = Math.random() > 0.5 ? "#000" : "#fff";
-    ctx.fillRect(x, y, 1, 1);
-  }
-  ctx.globalAlpha = 1;
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function createHairTexture(THREE, baseColor) {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = baseColor;
-  ctx.fillRect(0, 0, size, size);
-  const grad = ctx.createLinearGradient(0, 0, 0, size);
-  grad.addColorStop(0, "rgba(255,255,255,0.22)");
-  grad.addColorStop(0.38, "rgba(255,255,255,0.05)");
-  grad.addColorStop(1, "rgba(0,0,0,0.34)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-
-  // Hair strand bands to avoid flat plastic look.
-  ctx.lineWidth = 1.35;
-  for (let i = 0; i < 68; i += 1) {
-    const t = i / 67;
-    const x = t * size;
-    const wave = Math.sin(t * Math.PI * 5.5) * 5;
-    ctx.strokeStyle = i % 3 === 0 ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)";
-    ctx.beginPath();
-    ctx.moveTo(x + wave, -2);
-    ctx.bezierCurveTo(x + 11, size * 0.24, x - 7, size * 0.68, x + 3, size + 2);
-    ctx.stroke();
-  }
-
-  // Small clump micro-contrast.
-  ctx.globalAlpha = 0.1;
-  for (let y = 0; y < size; y += 4) {
-    for (let x = 0; x < size; x += 4) {
-      const v = ((x * 13 + y * 7) % 19) / 18;
-      ctx.fillStyle = v > 0.56 ? "#fff" : "#000";
-      ctx.fillRect(x, y, 1, 1);
-    }
-  }
-  ctx.globalAlpha = 1;
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function createSkinTexture(THREE, skinColor) {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = skinColor;
-  ctx.fillRect(0, 0, size, size);
-
-  const lightGrad = ctx.createRadialGradient(size * 0.32, size * 0.25, size * 0.05, size * 0.56, size * 0.72, size * 0.8);
-  lightGrad.addColorStop(0, "rgba(255,255,255,0.2)");
-  lightGrad.addColorStop(0.62, "rgba(255,255,255,0.04)");
-  lightGrad.addColorStop(1, "rgba(0,0,0,0.16)");
-  ctx.fillStyle = lightGrad;
-  ctx.fillRect(0, 0, size, size);
-
-  // Tiny pores/freckle-like breakup for higher fidelity.
-  for (let y = 0; y < size; y += 3) {
-    for (let x = 0; x < size; x += 3) {
-      const n = ((x * 11 + y * 17) % 37) / 36;
-      if (n > 0.8) {
-        ctx.fillStyle = "rgba(255,255,255,0.08)";
-        ctx.fillRect(x, y, 1, 1);
-      } else if (n < 0.08) {
-        ctx.fillStyle = "rgba(0,0,0,0.08)";
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function createTorsoTexture(THREE, kitColor1, kitColor2, style, shortsColor) {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = kitColor1;
-  ctx.fillRect(0, 0, size, size);
-  const accent = kitColor2 || kitColor1;
-
-  if (style === "stripes") {
-    ctx.fillStyle = accent;
-    for (let x = 0; x < size; x += 40) ctx.fillRect(x, 0, 16, Math.round(size * 0.62));
-  } else if (style === "hoops") {
-    ctx.fillStyle = accent;
-    for (let y = 0; y < size * 0.62; y += 42) ctx.fillRect(0, y, size, 14);
-  } else if (style === "diamond") {
-    ctx.fillStyle = accent;
-    for (let y = 34; y < size * 0.62; y += 64) {
-      for (let x = 34; x < size; x += 64) {
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(Math.PI / 4);
-        ctx.fillRect(-12, -12, 24, 24);
-        ctx.restore();
-      }
-    }
-  } else if (style === "total90") {
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2 + 10, 66, Math.PI * 1.05, Math.PI * 1.95);
-    ctx.stroke();
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.arc(size / 2, size / 2 + 10, 8, 0, Math.PI * 2);
-    ctx.fill();
-  } else if (style === "sleeves") {
-    ctx.fillStyle = accent;
-    ctx.fillRect(0, 24, size, 18);
-    ctx.fillRect(0, Math.round(size * 0.58), size, 18);
-  }
-
-  // Fabric lighting and panel seams.
-  const chestShade = ctx.createLinearGradient(0, 0, size, 0);
-  chestShade.addColorStop(0, "rgba(0,0,0,0.12)");
-  chestShade.addColorStop(0.18, "rgba(255,255,255,0.08)");
-  chestShade.addColorStop(0.82, "rgba(255,255,255,0.02)");
-  chestShade.addColorStop(1, "rgba(0,0,0,0.16)");
-  ctx.fillStyle = chestShade;
-  ctx.fillRect(0, 0, size, Math.round(size * 0.62));
-
-  ctx.strokeStyle = "rgba(255,255,255,0.16)";
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(size * 0.16, 10);
-  ctx.lineTo(size * 0.08, Math.round(size * 0.56));
-  ctx.moveTo(size * 0.84, 10);
-  ctx.lineTo(size * 0.92, Math.round(size * 0.56));
-  ctx.stroke();
-
-  // Shorts section as texture (bottom part), not separate geometry.
-  const shortsStart = Math.round(size * 0.62);
-  ctx.fillStyle = shortsColor || accent;
-  ctx.fillRect(0, shortsStart, size, size - shortsStart);
-  const topLight = ctx.createLinearGradient(0, 0, 0, shortsStart);
-  topLight.addColorStop(0, "rgba(255,255,255,0.18)");
-  topLight.addColorStop(0.4, "rgba(255,255,255,0.04)");
-  topLight.addColorStop(1, "rgba(0,0,0,0.1)");
-  ctx.fillStyle = topLight;
-  ctx.fillRect(0, 0, size, shortsStart);
-  ctx.fillStyle = "rgba(255,255,255,0.1)";
-  ctx.fillRect(0, shortsStart + 2, size, 3);
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
-  ctx.fillRect(0, shortsStart + Math.round((size - shortsStart) * 0.5), size, 2);
-  ctx.strokeStyle = "rgba(255,255,255,0.14)";
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.moveTo(size * 0.5, shortsStart + 4);
-  ctx.lineTo(size * 0.5, size - 6);
-  ctx.stroke();
-
-  // Knit-like micro texture.
-  for (let y = 0; y < size; y += 3) {
-    for (let x = 0; x < size; x += 3) {
-      const n = ((x * 5 + y * 9) % 23) / 22;
-      if (n > 0.84) {
-        ctx.fillStyle = "rgba(255,255,255,0.08)";
-        ctx.fillRect(x, y, 1, 1);
-      } else if (n < 0.08) {
-        ctx.fillStyle = "rgba(0,0,0,0.08)";
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function createLegTexture(THREE, skinColor, socksColor) {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-
-  const sockStart = Math.round(size * 0.64);
-  ctx.fillStyle = skinColor;
-  ctx.fillRect(0, 0, size, sockStart);
-  const kneeShade = ctx.createLinearGradient(0, sockStart * 0.2, 0, sockStart);
-  kneeShade.addColorStop(0, "rgba(255,255,255,0.15)");
-  kneeShade.addColorStop(0.7, "rgba(0,0,0,0.08)");
-  kneeShade.addColorStop(1, "rgba(0,0,0,0.16)");
-  ctx.fillStyle = kneeShade;
-  ctx.fillRect(0, 0, size, sockStart);
-  ctx.fillStyle = socksColor;
-  ctx.fillRect(0, sockStart, size, size - sockStart);
-  ctx.fillStyle = "rgba(255,255,255,0.18)";
-  ctx.fillRect(0, sockStart + 2, size, 2);
-  ctx.fillRect(0, sockStart + 12, size, 1.5);
-  ctx.globalAlpha = 0.18;
-  for (let x = 0; x < size; x += 14) {
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(x, sockStart, 2, size - sockStart);
-  }
-  // Ankle shadow and calf contour.
-  const calfShade = ctx.createLinearGradient(0, sockStart - 40, 0, size);
-  calfShade.addColorStop(0, "rgba(0,0,0,0.05)");
-  calfShade.addColorStop(0.55, "rgba(0,0,0,0.12)");
-  calfShade.addColorStop(1, "rgba(0,0,0,0.22)");
-  ctx.fillStyle = calfShade;
-  ctx.fillRect(0, sockStart - 40, size, size - sockStart + 40);
-  ctx.globalAlpha = 1;
-
-  for (let y = 0; y < size; y += 3) {
-    for (let x = 0; x < size; x += 3) {
-      const n = ((x * 3 + y * 11) % 31) / 30;
-      if (n > 0.84) {
-        ctx.fillStyle = "rgba(255,255,255,0.06)";
-        ctx.fillRect(x, y, 1, 1);
-      } else if (n < 0.06) {
-        ctx.fillStyle = "rgba(0,0,0,0.06)";
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 4;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-function buildAvatar3DGroup(THREE, avatar) {
-  const group = new THREE.Group();
-  const browTilt = avatar.brow === "focused" ? 0.2 : avatar.brow === "cheeky" ? -0.08 : -0.12;
-  const skin = new THREE.Color(avatar.skinColor);
-  const hair = new THREE.Color(avatar.hairColor);
-  const eye = new THREE.Color(avatar.eyeColor);
-  const boots = new THREE.Color(avatar.bootsColor);
-  const shortsColorHex = avatar.shortsColor || avatar.kitColor2;
-  const socksColorHex = avatar.socksColor || avatar.kitColor1;
-  const facePresetByBrow = {
-    soft: { eyeScale: 1.0, eyeYOffset: 0.01, browYOffset: 0.0, mouthYOffset: 0.0, mouthScale: 1.0, noseScale: 1.0 },
-    focused: { eyeScale: 0.95, eyeYOffset: 0.0, browYOffset: 0.015, mouthYOffset: 0.01, mouthScale: 0.9, noseScale: 1.02 },
-    cheeky: { eyeScale: 1.03, eyeYOffset: 0.005, browYOffset: -0.008, mouthYOffset: -0.008, mouthScale: 1.07, noseScale: 0.96 },
-  };
-  const hairStylePreset = {
-    bald: { capScale: [1, 1, 1], capY: 1.38 },
-    short: { capScale: [1.03, 0.95, 0.94], capY: 1.36 },
-    fade: { capScale: [1.01, 0.9, 0.93], capY: 1.34 },
-    spike: { capScale: [1.02, 0.95, 0.94], capY: 1.36 },
-    curly: { capScale: [1.08, 1.02, 1.0], capY: 1.4 },
-    long: { capScale: [1.08, 1.02, 0.98], capY: 1.39 },
-    bun: { capScale: [1.03, 0.94, 0.94], capY: 1.35 },
-  };
-  const facePreset = facePresetByBrow[avatar.brow] || facePresetByBrow.soft;
-  const hairPreset = hairStylePreset[avatar.hairStyle] || hairStylePreset.short;
-
-  const skinTex = createSkinTexture(THREE, avatar.skinColor);
-  const skinMat = new THREE.MeshStandardMaterial({ color: skin, map: skinTex, roughness: 0.42, metalness: 0.03 });
-  const hairMat = new THREE.MeshPhysicalMaterial({ color: hair, roughness: 0.55, metalness: 0.03, clearcoat: 0.25, clearcoatRoughness: 0.5 });
-  const eyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.16, metalness: 0.05 });
-  const irisMat = new THREE.MeshStandardMaterial({ color: eye, roughness: 0.2, metalness: 0.08 });
-  const pupilMat = new THREE.MeshStandardMaterial({ color: 0x131313, roughness: 0.24, metalness: 0.03 });
-  const mouthMat = new THREE.MeshStandardMaterial({ color: 0x2a1309, roughness: 0.45 });
-
-  const torsoTex = createTorsoTexture(THREE, avatar.kitColor1, avatar.kitColor2, avatar.kitStyle, shortsColorHex);
-  const legTex = createLegTexture(THREE, avatar.skinColor, socksColorHex);
-  const torsoMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.34, metalness: 0.08, map: torsoTex });
-  const pelvisMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(shortsColorHex), roughness: 0.34, metalness: 0.08 });
-  const legMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.05, map: legTex });
-  const bootsMat = new THREE.MeshStandardMaterial({ color: boots, roughness: 0.48, metalness: 0.15 });
-  const sleeveMat = new THREE.MeshStandardMaterial({
-    color: avatar.kitStyle === "sleeves" ? new THREE.Color(avatar.kitColor2) : new THREE.Color(avatar.kitColor1),
-    roughness: 0.35,
-    metalness: 0.07,
-  });
-
-  const rig = new THREE.Group();
-
-  // Head + neck
-  const headGeo = new THREE.SphereGeometry(0.34, 28, 28);
-  const head = new THREE.Mesh(headGeo, skinMat);
-  if (avatar.headShape === "oval") head.scale.set(0.96, 1.16, 0.92);
-  else if (avatar.headShape === "square") head.scale.set(1.03, 1.0, 0.88);
-  else head.scale.set(1, 1.05, 0.92);
-  head.position.set(0, 1.26, 0.02);
-  rig.add(head);
-
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.082, 0.12, 14), skinMat);
-  neck.position.set(0, 0.92, 0);
-  rig.add(neck);
-
-  const earGeo = new THREE.SphereGeometry(0.05, 12, 12);
-  const earL = new THREE.Mesh(earGeo, skinMat);
-  const earR = new THREE.Mesh(earGeo, skinMat);
-  earL.position.set(-0.33, 1.24, 0.01);
-  earR.position.set(0.33, 1.24, 0.01);
-  rig.add(earL, earR);
-
-  // Hair shells + style shapes anchored to scalp.
-  if (avatar.hairStyle !== "bald") {
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.355, 30, 22, 0, Math.PI * 2, 0, Math.PI * 0.62), hairMat);
-    cap.position.set(0, hairPreset.capY, 0.01);
-    cap.scale.set(hairPreset.capScale[0], hairPreset.capScale[1], hairPreset.capScale[2]);
-    rig.add(cap);
-
-    if (avatar.hairStyle === "spike") {
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.24, 6), hairMat);
-      spike.position.set(0, 1.64, 0.08);
-      spike.rotation.x = -0.2;
-      rig.add(spike);
-    } else if (avatar.hairStyle === "fade") {
-      const fadeBandMat = hairMat.clone();
-      fadeBandMat.transparent = true;
-      fadeBandMat.opacity = 0.6;
-      const fadeBand = new THREE.Mesh(new THREE.SphereGeometry(0.35, 24, 18), fadeBandMat);
-      fadeBand.scale.set(1.05, 0.36, 0.95);
-      fadeBand.position.set(0, 1.18, 0.01);
-      rig.add(fadeBand);
-    } else if (avatar.hairStyle === "curly") {
-      const curlGeo = new THREE.SphereGeometry(0.075, 14, 12);
-      for (let r = 0; r < 3; r += 1) {
-        const radius = 0.12 + r * 0.065;
-        const count = 8 + r * 2;
-        for (let i = 0; i < count; i += 1) {
-          const a = (i / count) * Math.PI * 2;
-          const c = new THREE.Mesh(curlGeo, hairMat);
-          c.position.set(Math.cos(a) * radius, 1.49 + r * 0.034 + Math.sin(a * 2) * 0.012, 0.06 + Math.sin(a) * 0.1);
-          c.scale.set(1, 1 + (r <= 1 ? 0.16 : 0.08), 1);
-          rig.add(c);
-        }
-      }
-    } else if (avatar.hairStyle === "long") {
-      const back = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.19, 0.52, 22), hairMat);
-      back.position.set(0, 0.98, -0.2);
-      back.rotation.x = 0.05;
-      rig.add(back);
-      const sideGeo = new THREE.CapsuleGeometry(0.075, 0.27, 8, 10);
-      const sideL = new THREE.Mesh(sideGeo, hairMat);
-      const sideR = new THREE.Mesh(sideGeo, hairMat);
-      sideL.position.set(-0.23, 1.08, -0.03);
-      sideR.position.set(0.23, 1.08, -0.03);
-      sideL.rotation.z = -0.08;
-      sideR.rotation.z = 0.08;
-      rig.add(sideL, sideR);
-    } else if (avatar.hairStyle === "bun") {
-      const bun = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 14), hairMat);
-      bun.position.set(0, 1.63, -0.08);
-      rig.add(bun);
-    } else {
-      const fringe = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 12), hairMat);
-      fringe.scale.set(1.1, 0.34, 0.56);
-      fringe.position.set(0, 1.36, 0.2);
-      rig.add(fringe);
-    }
-  }
-
-  // Face
-  const eyeWhiteGeo = new THREE.SphereGeometry(0.042, 14, 14);
-  const irisGeo = new THREE.SphereGeometry(0.021, 12, 12);
-  const pupilGeo = new THREE.SphereGeometry(0.011, 10, 10);
-  const eyeY = 1.28 + facePreset.eyeYOffset;
-  const eyeZ = 0.31;
-  const eyeX = 0.11;
-  const eyeL = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
-  const eyeR = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
-  eyeL.scale.setScalar(facePreset.eyeScale);
-  eyeR.scale.setScalar(facePreset.eyeScale);
-  eyeL.position.set(-eyeX, eyeY, eyeZ);
-  eyeR.position.set(eyeX, eyeY, eyeZ);
-  const irisL = new THREE.Mesh(irisGeo, irisMat);
-  const irisR = new THREE.Mesh(irisGeo, irisMat);
-  irisL.position.set(-eyeX, eyeY, eyeZ + 0.02);
-  irisR.position.set(eyeX, eyeY, eyeZ + 0.02);
-  const pupilL = new THREE.Mesh(pupilGeo, pupilMat);
-  const pupilR = new THREE.Mesh(pupilGeo, pupilMat);
-  pupilL.position.set(-eyeX, eyeY, eyeZ + 0.028);
-  pupilR.position.set(eyeX, eyeY, eyeZ + 0.028);
-  rig.add(eyeL, eyeR, irisL, irisR, pupilL, pupilR);
-
-  const browGeo = new THREE.BoxGeometry(0.11, 0.016, 0.015);
-  const browL = new THREE.Mesh(browGeo, hairMat);
-  const browR = new THREE.Mesh(browGeo, hairMat);
-  browL.position.set(-eyeX, 1.36 + facePreset.browYOffset, 0.3);
-  browR.position.set(eyeX, 1.36 + facePreset.browYOffset, 0.3);
-  browL.rotation.z = -0.06 + browTilt;
-  browR.rotation.z = 0.06 - browTilt;
-  rig.add(browL, browR);
-
-  let noseGeo;
-  if (avatar.noseStyle === "straight") noseGeo = new THREE.CapsuleGeometry(0.012, 0.06, 4, 8);
-  else if (avatar.noseStyle === "round") noseGeo = new THREE.SphereGeometry(0.03, 12, 12);
-  else noseGeo = new THREE.SphereGeometry(0.024, 12, 12);
-  const nose = new THREE.Mesh(noseGeo, skinMat);
-  nose.scale.setScalar(facePreset.noseScale);
-  nose.position.set(0, 1.2, 0.32);
-  if (avatar.noseStyle === "straight") nose.rotation.x = Math.PI / 2.8;
-  rig.add(nose);
-
-  const mouthGroup = new THREE.Group();
-  if (avatar.mouth === "flat") {
-    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.014, 0.01), mouthMat);
-    mouth.scale.set(facePreset.mouthScale, 1, 1);
-    mouthGroup.add(mouth);
-  } else {
-    const arc = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.01, 8, 16, avatar.mouth === "open" ? Math.PI : Math.PI * 0.78), mouthMat);
-    arc.scale.set(facePreset.mouthScale, facePreset.mouthScale, 1);
-    arc.rotation.set(Math.PI, 0, 0);
-    mouthGroup.add(arc);
-    if (avatar.mouth === "open") {
-      const tongue = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 10), new THREE.MeshStandardMaterial({ color: 0xda5f54, roughness: 0.3 }));
-      tongue.position.set(0, -0.016, 0.012);
-      mouthGroup.add(tongue);
-    }
-  }
-  mouthGroup.position.set(0, 1.1 + facePreset.mouthYOffset, 0.32);
-  rig.add(mouthGroup);
-
-  // Torso + pelvis
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.5, 8, 18), torsoMat);
-  torso.position.set(0, 0.4, 0);
-  torso.scale.set(1.02, 1.02, 0.82);
-  rig.add(torso);
-
-  const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.21, 0.16, 18), pelvisMat);
-  pelvis.position.set(0, 0.03, 0);
-  rig.add(pelvis);
-
-  // Arms
-  const shoulderL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), sleeveMat);
-  const shoulderR = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), sleeveMat);
-  shoulderL.position.set(-0.3, 0.61, 0);
-  shoulderR.position.set(0.3, 0.61, 0);
-  rig.add(shoulderL, shoulderR);
-
-  const upperArmGeo = new THREE.CapsuleGeometry(0.05, 0.22, 6, 10);
-  const foreArmGeo = new THREE.CapsuleGeometry(0.043, 0.2, 6, 10);
-  const handGeo = new THREE.SphereGeometry(0.045, 12, 12);
-  const uaL = new THREE.Mesh(upperArmGeo, skinMat);
-  const uaR = new THREE.Mesh(upperArmGeo, skinMat);
-  uaL.position.set(-0.37, 0.42, 0.01);
-  uaR.position.set(0.37, 0.42, 0.01);
-  uaL.rotation.z = 0.11;
-  uaR.rotation.z = -0.11;
-  rig.add(uaL, uaR);
-  const faL = new THREE.Mesh(foreArmGeo, skinMat);
-  const faR = new THREE.Mesh(foreArmGeo, skinMat);
-  faL.position.set(-0.39, 0.17, 0.01);
-  faR.position.set(0.39, 0.17, 0.01);
-  faL.rotation.z = 0.03;
-  faR.rotation.z = -0.03;
-  rig.add(faL, faR);
-  const handL = new THREE.Mesh(handGeo, skinMat);
-  const handR = new THREE.Mesh(handGeo, skinMat);
-  handL.position.set(-0.39, -0.02, 0.03);
-  handR.position.set(0.39, -0.02, 0.03);
-  rig.add(handL, handR);
-
-  // Legs
-  const thighGeo = new THREE.CapsuleGeometry(0.065, 0.31, 8, 12);
-  const shinGeo = new THREE.CapsuleGeometry(0.058, 0.29, 8, 12);
-  const legX = 0.11;
-
-  const thighL = new THREE.Mesh(thighGeo, legMat);
-  const thighR = new THREE.Mesh(thighGeo, legMat);
-  thighL.position.set(-legX, -0.2, 0);
-  thighR.position.set(legX, -0.2, 0);
-  rig.add(thighL, thighR);
-
-  const shinL = new THREE.Mesh(shinGeo, legMat);
-  const shinR = new THREE.Mesh(shinGeo, legMat);
-  shinL.position.set(-legX, -0.56, 0.01);
-  shinR.position.set(legX, -0.56, 0.01);
-  rig.add(shinL, shinR);
-
-  const bootGeo = avatar.bootsStyle === "high"
-    ? new THREE.BoxGeometry(0.15, 0.12, 0.24)
-    : avatar.bootsStyle === "speed"
-      ? new THREE.BoxGeometry(0.17, 0.09, 0.27)
-      : new THREE.BoxGeometry(0.16, 0.1, 0.25);
-  const bootL = new THREE.Mesh(bootGeo, bootsMat);
-  const bootR = new THREE.Mesh(bootGeo, bootsMat);
-  bootL.position.set(-legX, -0.8, 0.06);
-  bootR.position.set(legX, -0.8, 0.06);
-  rig.add(bootL, bootR);
-
-  // Subtle depth-card style lighting cue.
-  const torsoRim = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.248, 0.248, 0.44, 20, 1, true),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.08, side: THREE.BackSide, roughness: 0.3 })
-  );
-  torsoRim.position.copy(torso.position);
-  torsoRim.scale.set(1.04, 1.04, 0.86);
-  rig.add(torsoRim);
-
-  // Subtle contrapposto for "alive" idle feel in static render.
-  rig.rotation.z = 0.01;
-  rig.position.set(0, 0.02, 0);
-  group.add(rig);
-  return group;
 }
 
 async function renderAvatar3DDataUri(avatar, seed, size) {
@@ -1729,7 +911,7 @@ function renderAvatarPresetGrid() {
                 : `${label} (locked)`
         )}"
       >
-        <img src="/assets/avatar/presets/${escapeHtml(variant)}" alt="${escapeHtml(label)}" data-pin-nopin="true" />
+        <img loading="lazy" decoding="async" src="/assets/avatar/presets/${escapeHtml(variant)}" alt="${escapeHtml(label)}" data-pin-nopin="true" />
         <span class="avatar-preset-card-label">${escapeHtml(label)}</span>
         <span class="avatar-preset-card-badge">${badgeLabel}</span>
       </button>
@@ -2478,6 +1660,9 @@ function setSettingsMenuOpen(open) {
   el.settingsPanel.classList.toggle("hidden", !state.settingsOpen);
   el.settingsToggleBtn.setAttribute("aria-expanded", String(state.settingsOpen));
   document.body.classList.toggle("settings-drawer-open", state.settingsOpen);
+  if (state.settingsOpen && typeof renderMatchAlerts === "function") {
+    renderMatchAlerts().catch(() => null);
+  }
 }
 
 function setAccountMenuOpen(open) {
@@ -2563,6 +1748,155 @@ function notificationTimeLabel(item) {
   if (daysAgo === 1) return `Yesterday ${time}`;
   if (daysAgo < 7) return `${at.toLocaleDateString("en-GB", { weekday: "short" })} ${time}`;
   return at.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+// ---- Service worker and match alerts ----------------------------------------
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+const PUSH_TEAM_KEY = "ezra_push_team_id";
+
+function pushSupportStatus() {
+  const hasApis = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  if (hasApis) return { supported: true };
+  const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  if (isIos && !standalone) {
+    return { supported: false, message: "On iPhone or iPad, add EZRASCORES to your Home Screen first (Share → Add to Home Screen), then open it from there to turn on alerts." };
+  }
+  return { supported: false, message: "This browser can't show match alerts." };
+}
+
+function base64UrlToUint8Array(value) {
+  const s = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(s + "===".slice((s.length + 3) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function pushConfig() {
+  if (state.pushConfig) return state.pushConfig;
+  const data = await apiGetV1("ezra/push/config");
+  state.pushConfig = { enabled: Boolean(data?.enabled), publicKey: String(data?.publicKey || "") };
+  return state.pushConfig;
+}
+
+async function currentPushSubscription() {
+  if (!("serviceWorker" in navigator)) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function postPushSubscription(subscription) {
+  const team = state.favoriteTeam;
+  if (!team?.idTeam) throw new Error("Pick a favourite team first.");
+  const prefs = getNotifPrefs();
+  const res = await fetch(`${API_PROXY_BASE}/v1/ezra/push/subscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      subscription: subscription.toJSON(),
+      teamId: team.idTeam,
+      teamName: team.strTeam || "",
+      prefs: { goals: prefs.goals !== false, kickoff: true, fulltime: true },
+    }),
+  });
+  if (!res.ok) throw new Error("Couldn't save alerts. Try again in a moment.");
+  localStorage.setItem(PUSH_TEAM_KEY, String(team.idTeam));
+}
+
+async function renderMatchAlerts() {
+  const group = document.getElementById("push-settings-group");
+  const statusEl = document.getElementById("push-status");
+  const btn = document.getElementById("push-toggle-btn");
+  if (!group || !statusEl || !btn) return;
+  const cfg = await pushConfig().catch(() => ({ enabled: false }));
+  if (!cfg.enabled) {
+    group.classList.add("hidden");
+    return;
+  }
+  group.classList.remove("hidden");
+  const support = pushSupportStatus();
+  if (!support.supported) {
+    statusEl.textContent = support.message;
+    btn.classList.add("hidden");
+    return;
+  }
+  btn.classList.remove("hidden");
+  if (Notification.permission === "denied") {
+    statusEl.textContent = "Alerts are blocked for this site. Allow notifications in your browser settings to turn them on.";
+    btn.disabled = true;
+    return;
+  }
+  btn.disabled = false;
+  const sub = await currentPushSubscription().catch(() => null);
+  const teamName = state.favoriteTeam?.strTeam || "your team";
+  if (sub) {
+    statusEl.textContent = `Alerts are on for ${teamName}: kick-off, goals and full time.`;
+    btn.textContent = "Turn off match alerts";
+    btn.dataset.on = "1";
+  } else {
+    statusEl.textContent = `Get kick-off, goal and full-time alerts for ${teamName} on this device, even when the app is closed.`;
+    btn.textContent = "Turn on match alerts";
+    btn.dataset.on = "";
+  }
+}
+
+async function toggleMatchAlerts() {
+  const btn = document.getElementById("push-toggle-btn");
+  const statusEl = document.getElementById("push-status");
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  try {
+    if (btn.dataset.on) {
+      const sub = await currentPushSubscription();
+      if (sub) {
+        await fetch(`${API_PROXY_BASE}/v1/ezra/push/unsubscribe`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        }).catch(() => null);
+        await sub.unsubscribe();
+      }
+      localStorage.removeItem(PUSH_TEAM_KEY);
+      showRewardToast("Match alerts off", "neutral");
+    } else {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        if (statusEl) statusEl.textContent = "Alerts need notification permission. You can turn them on any time.";
+        return;
+      }
+      const cfg = await pushConfig();
+      const reg = await navigator.serviceWorker.ready;
+      const sub =
+        (await reg.pushManager.getSubscription()) ||
+        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToUint8Array(cfg.publicKey) }));
+      await postPushSubscription(sub);
+      showRewardToast(`Match alerts on for ${state.favoriteTeam?.strTeam || "your team"}`, "neutral");
+    }
+  } catch (err) {
+    if (statusEl) statusEl.textContent = String(err?.message || "Couldn't change alerts. Try again.");
+  } finally {
+    btn.disabled = false;
+    await renderMatchAlerts().catch(() => null);
+  }
+}
+
+// Keep the device's alert team in step with the favourite team.
+async function syncMatchAlertsTeam() {
+  const saved = localStorage.getItem(PUSH_TEAM_KEY);
+  if (!saved || saved === String(state.favoriteTeam?.idTeam || "")) return;
+  const sub = await currentPushSubscription();
+  if (sub) await postPushSubscription(sub);
+  await renderMatchAlerts();
+}
+
+async function initMatchAlerts() {
+  document.getElementById("push-toggle-btn")?.addEventListener("click", () => {
+    toggleMatchAlerts();
+  });
+  await renderMatchAlerts();
 }
 
 function getNotifPrefs() {
@@ -5020,9 +4354,9 @@ function renderMiniPitchHtml(summary, heading) {
             ? `
               <div class="member-pitch-slot filled" title="${escapeHtml(player.name || "Player")}">
                 <span class="member-pitch-avatar-ring">
-                  <img class="member-pitch-avatar ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${escapeHtml(player.name || "Player")} cutout" />
+                  <img loading="lazy" decoding="async" class="member-pitch-avatar ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${escapeHtml(player.name || "Player")} cutout" />
                   <span class="member-pitch-avatar-fallback ${player.image ? "hidden" : ""}">${escapeHtml((player.name || "?").slice(0, 1))}</span>
-                  <img class="member-pitch-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${escapeHtml(player.teamName || "Club")} badge" />
+                  <img loading="lazy" decoding="async" class="member-pitch-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${escapeHtml(player.teamName || "Club")} badge" />
                 </span>
                 <span class="member-pitch-name">${escapeHtml(player.name || "Unknown")}</span>
               </div>
@@ -6108,7 +5442,7 @@ function renderHigherLowerPanel() {
       ${game.feedback ? `<span class="family-points ${game.feedbackMode === "correct" ? "hl-correct" : "hl-wrong"}">${escapeHtml(game.feedback)}</span>` : ""}
     </div>
     <div class="higher-lower-player top">
-      <img class="higher-lower-cutout ${top.image ? "" : "hidden"}" src="${top.image || ""}" alt="${escapeHtml(top.name)} cutout" />
+      <img loading="lazy" decoding="async" class="higher-lower-cutout ${top.image ? "" : "hidden"}" src="${top.image || ""}" alt="${escapeHtml(top.name)} cutout" />
       <div class="higher-lower-meta">
         <strong>${escapeHtml(top.name)}</strong>
         <span>#${escapeHtml(top.number || "—")} • ${top.goals} goals</span>
@@ -6119,7 +5453,7 @@ function renderHigherLowerPanel() {
       <button class="btn higher-lower-arrow down" type="button" data-hl="down" aria-label="Bottom player has fewer goals">▼</button>
     </div>
     <div class="higher-lower-player bottom">
-      <img class="higher-lower-cutout ${bottom.image ? "" : "hidden"}" src="${bottom.image || ""}" alt="${escapeHtml(bottom.name)} cutout" />
+      <img loading="lazy" decoding="async" class="higher-lower-cutout ${bottom.image ? "" : "hidden"}" src="${bottom.image || ""}" alt="${escapeHtml(bottom.name)} cutout" />
       <div class="higher-lower-meta">
         <strong>${escapeHtml(bottom.name)}</strong>
         <span>#${escapeHtml(bottom.number || "—")}</span>
@@ -6783,7 +6117,7 @@ function renderPlayerQuiz(player) {
     el.playerQuizFocus.classList.add("active");
   }
   if (el.playerQuizFocusImage) {
-    setImgSrc(el.playerQuizFocusImage, player.image, `${player.name} cutout`);
+    setImgSrc(el.playerQuizFocusImage, player.image, `${player.name} cutout`, true, "small");
   }
 
   const options = quizOptionsForPlayer(player);
@@ -7275,7 +6609,7 @@ function renderSquadPanel() {
       <div class="squad-main">
         <div class="squad-line">
           <span class="player-no-circle ${player.number ? "" : "missing"}">${shirtNo}</span>
-          <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
+          <img loading="lazy" decoding="async" class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
           <span class="squad-name">${player.name}</span>
         </div>
         <span class="squad-meta">${nationalityWithFlag(player.nationality)} • ${player.position}</span>
@@ -7502,9 +6836,9 @@ function renderDreamTeamPanel(reason = "default") {
       if (player) {
         slot.innerHTML = `
           <span class="pitch-avatar-ring">
-            <img class="pitch-avatar ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
+            <img loading="lazy" decoding="async" class="pitch-avatar ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
             <span class="pitch-avatar-fallback ${player.image ? "hidden" : ""}">${(player.name || "").slice(0, 1)}</span>
-            <img class="pitch-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
+            <img loading="lazy" decoding="async" class="pitch-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
           </span>
           <span class="pitch-player-name">${player.name}</span>
         `;
@@ -7556,8 +6890,8 @@ function renderDreamTeamPanel(reason = "default") {
       row.innerHTML = `
         <div class="dream-main">
           <span class="player-no-circle ${player.number ? "" : "missing"}">${player.number || "—"}</span>
-          <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
-          <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
+          <img loading="lazy" decoding="async" class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
+          <img loading="lazy" decoding="async" class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
           <div class="dream-text">
             <span class="dream-name">${player.name}</span>
             <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.position || "Unknown"} • ${player.teamName}</span>
@@ -7649,8 +6983,8 @@ function renderDreamTeamPanel(reason = "default") {
       row.innerHTML = `
         <div class="dream-main">
           <span class="player-no-circle ${player.number ? "" : "missing"}">${player.number || "—"}</span>
-          <img class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
-          <img class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
+          <img loading="lazy" decoding="async" class="player-cutout ${player.image ? "" : "hidden"}" src="${player.image || ""}" alt="${player.name} cutout" />
+          <img loading="lazy" decoding="async" class="dream-badge ${player.teamBadge ? "" : "hidden"}" src="${player.teamBadge || ""}" alt="${player.teamName} badge" />
           <div class="dream-text">
             <span class="dream-name">${player.name}</span>
             <span class="dream-meta">${nationalityWithFlag(player.nationality)} • ${player.position || "Unknown"} • ${player.teamName}</span>
@@ -7708,8 +7042,8 @@ function renderDreamTeamPanel(reason = "default") {
       row.innerHTML = `
         <div class="dream-main">
           <span class="player-no-circle missing">—</span>
-          <img class="player-cutout ${item.player.image ? "" : "hidden"}" src="${item.player.image || ""}" alt="${item.player.name} cutout" />
-          <img class="dream-badge ${item.player.teamBadge ? "" : "hidden"}" src="${item.player.teamBadge || ""}" alt="${item.player.teamName} badge" />
+          <img loading="lazy" decoding="async" class="player-cutout ${item.player.image ? "" : "hidden"}" src="${item.player.image || ""}" alt="${item.player.name} cutout" />
+          <img loading="lazy" decoding="async" class="dream-badge ${item.player.teamBadge ? "" : "hidden"}" src="${item.player.teamBadge || ""}" alt="${item.player.teamName} badge" />
           <div class="dream-text">
             <span class="dream-name">${item.player.name}</span>
             <span class="dream-meta">${item.label} • ${item.player.teamName}</span>
@@ -7857,7 +7191,7 @@ function drawWrappedText(ctx, text, x, startY, maxWidth, lineHeight = 22, maxLin
 }
 
 function loadCanvasImage(url) {
-  const proxyUrl = proxiedImageUrl(url);
+  const proxyUrl = largeImageUrl(url);
   return new Promise((resolve) => {
     if (!proxyUrl) {
       resolve(null);
@@ -7882,21 +7216,41 @@ function loadCanvasImage(url) {
   });
 }
 
-function proxiedImageUrl(url) {
+// TheSportsDB serves resized copies of its media at "<url>/tiny" (100px) and
+// "<url>/small" (200px). Badges and list cutouts never show above ~60px, so the
+// 100px copy (about 14 KB instead of 60-130 KB) is the default.
+function sportsDbRendition(url, size) {
+  if (!size || size === "full") return url;
+  if (!/^https?:\/\/[^/]*thesportsdb\.com\/images\/media\//i.test(url)) return url;
+  if (/\/(tiny|small|medium|preview)$/i.test(url)) return url;
+  return `${url}/${size}`;
+}
+
+function proxiedImageUrl(url, size = "tiny") {
   const raw = String(url || "").trim();
   if (!raw) return "";
   if (raw.startsWith("/api/image?url=")) return raw;
   if (/^https?:\/\//i.test(raw)) {
-    return `/api/image?url=${encodeURIComponent(raw)}`;
+    return `/api/image?url=${encodeURIComponent(sportsDbRendition(raw, size))}`;
   }
   return raw;
 }
 
-function setImgSrc(imgEl, url, alt = "", allowDirectFallback = true) {
+// Larger copy for images shown big (pop quiz, player focus, Dream Team export).
+function largeImageUrl(url) {
+  const raw = String(url || "").trim();
+  const match = raw.match(/^\/api\/image\?url=(.+)$/);
+  const source = match ? decodeURIComponent(match[1]).replace(/\/(tiny|small|medium|preview)$/i, "") : raw;
+  return proxiedImageUrl(source, "small");
+}
+
+function setImgSrc(imgEl, url, alt = "", allowDirectFallback = true, size = "tiny") {
   if (!imgEl) return;
   const raw = String(url || "").trim();
-  const proxied = proxiedImageUrl(raw);
+  const proxied = size === "small" ? largeImageUrl(raw) : proxiedImageUrl(raw, size);
   imgEl.alt = alt || "";
+  imgEl.loading = "lazy";
+  imgEl.decoding = "async";
   imgEl.src = proxied;
   imgEl.onerror = () => {
     if (allowDirectFallback && raw && raw !== proxied) {
@@ -8313,7 +7667,7 @@ async function showRandomPlayerPop(forceNew = false) {
     pop.vx = (Math.random() > 0.5 ? 1 : -1) * (130 + Math.random() * 50);
     pop.vy = (Math.random() > 0.5 ? 1 : -1) * (112 + Math.random() * 48);
 
-    setImgSrc(el.playerDvdImage, player.image, `${player.name} cutout`);
+    setImgSrc(el.playerDvdImage, player.image, `${player.name} cutout`, true, "small");
     el.playerDvdName.textContent = player.name;
     el.playerDvdLayer.classList.remove("hidden");
     el.playerDvdLayer.classList.remove("revealed");
@@ -11759,7 +11113,7 @@ function buildFavoriteOptions() {
     btn.className = "favorite-option";
     btn.dataset.teamId = team.idTeam;
     btn.innerHTML = `
-      <img class="option-logo ${team.strBadge ? "" : "hidden"}" src="" alt="${team.strTeam} badge" />
+      <img loading="lazy" decoding="async" class="option-logo ${team.strBadge ? "" : "hidden"}" src="" alt="${team.strTeam} badge" />
       <span class="option-text">
         <span class="option-team">${team.strTeam}</span>
         <span class="option-league">${team.strLeague || "League"}</span>
@@ -11776,6 +11130,7 @@ function buildFavoriteOptions() {
       state.favoriteTeam = team;
       applyClubThemeFromFavoriteTeam();
       localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
+      safeLoad(() => syncMatchAlertsTeam(), null);
       if (!localStorage.getItem("ezra_player_pop_scope")) {
         setPlayerPopScope("favorite");
       }
@@ -13836,3 +13191,5 @@ safeLoad(() => handleInviteUrlOnLoad(), null).finally(() => {
     fullRefresh();
   });
 });
+registerServiceWorker();
+safeLoad(() => initMatchAlerts(), null);

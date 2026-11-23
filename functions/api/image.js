@@ -74,7 +74,8 @@ export async function onRequest(context) {
 
     const headers = new Headers();
     headers.set("Content-Type", contentType);
-    headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+    // Badges and player cutouts almost never change: keep them for 30 days.
+    headers.set("Cache-Control", "public, max-age=2592000, s-maxage=2592000");
     headers.set("X-EZRA-Cache", "MISS");
 
     const response = new Response(upstream.body, {

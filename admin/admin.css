@@ -378,3 +378,8 @@ tr:last-child td { border-bottom: none; }
   .offset-btns { gap: 6px; }
   .offset-btn { padding: 6px 12px; font-size: 0.95em; }
 }
+
+/* Recent app errors */
+.errors-list { display: grid; gap: 0.4rem; }
+.error-item summary { cursor: pointer; font-size: 0.85rem; word-break: break-word; }
+.error-stack { white-space: pre-wrap; font-size: 0.75rem; max-height: 14rem; overflow: auto; opacity: 0.85; }

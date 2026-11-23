@@ -1,3 +1,5 @@
+import { sendWebPush, isAllowedPushEndpoint } from "../_lib/webpush.js";
+
 function ttlForPath(path) {
   const p = path.toLowerCase();
   if (p.includes("livescore")) return 15;
@@ -4702,6 +4704,305 @@ async function handleCronNormalizePredictions(db, request, env) {
   return json({ ok: true, predictionKeyNormalizer: result, at: new Date().toISOString() }, 200);
 }
 
+// ---- Push alerts -----------------------------------------------------------
+// Devices subscribe for one team. Every minute (via the settle cron) the live
+// snapshot is compared with the last state we saw for each of today's matches,
+// and kickoff, goal and full-time alerts go to that team's subscribers.
+// Needs EZRA_VAPID_PUBLIC_KEY, EZRA_VAPID_PRIVATE_KEY and EZRA_VAPID_SUBJECT.
+
+function vapidConfig(env) {
+  const publicKey = String(env?.EZRA_VAPID_PUBLIC_KEY || "").trim();
+  const privateKey = String(env?.EZRA_VAPID_PRIVATE_KEY || "").trim();
+  const subject = String(env?.EZRA_VAPID_SUBJECT || "").trim() || "mailto:alerts@ezrascores.pages.dev";
+  return publicKey && privateKey ? { publicKey, privateKey, subject } : null;
+}
+
+async function ensurePushTables(db) {
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS ezra_push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        team_id TEXT NOT NULL,
+        team_name TEXT,
+        prefs_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        fail_count INTEGER NOT NULL DEFAULT 0
+      )`
+    )
+    .run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS ezra_push_subscriptions_team ON ezra_push_subscriptions (team_id)").run();
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS ezra_push_event_state (
+        event_id TEXT PRIMARY KEY,
+        home INTEGER,
+        away INTEGER,
+        phase TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`
+    )
+    .run();
+}
+
+function normalizePushPrefs(input) {
+  return {
+    goals: input?.goals !== false,
+    kickoff: input?.kickoff !== false,
+    fulltime: input?.fulltime !== false,
+  };
+}
+
+async function handlePushConfig(context) {
+  const cfg = vapidConfig(context.env);
+  return json({ enabled: Boolean(cfg), publicKey: cfg?.publicKey || "" }, 200, { "Cache-Control": "public, max-age=300" });
+}
+
+async function handlePushSubscribe(context) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  if (!db || !vapidConfig(env)) return json({ error: "Alerts are not set up yet." }, 503);
+  let body = null;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+  const endpoint = String(body?.subscription?.endpoint || "");
+  const p256dh = String(body?.subscription?.keys?.p256dh || "");
+  const auth = String(body?.subscription?.keys?.auth || "");
+  const teamId = String(body?.teamId || "").replace(/[^0-9]/g, "").slice(0, 12);
+  const teamName = String(body?.teamName || "").slice(0, 80);
+  if (!isAllowedPushEndpoint(endpoint) || !p256dh || !auth || !teamId) {
+    return json({ error: "Invalid subscription" }, 400);
+  }
+  await ensurePushTables(db);
+  const now = new Date().toISOString();
+  await db
+    .prepare(
+      `INSERT INTO ezra_push_subscriptions (endpoint, p256dh, auth, team_id, team_name, prefs_json, created_at, updated_at, fail_count)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 0)
+       ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, team_id = excluded.team_id,
+         team_name = excluded.team_name, prefs_json = excluded.prefs_json, updated_at = excluded.updated_at, fail_count = 0`
+    )
+    .bind(endpoint, p256dh, auth, teamId, teamName, JSON.stringify(normalizePushPrefs(body?.prefs)), now)
+    .run();
+  return json({ ok: true, teamId }, 200, { "Cache-Control": "no-store" });
+}
+
+async function handlePushUnsubscribe(context) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  if (!db) return json({ ok: true }, 200);
+  let body = null;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+  const endpoint = String(body?.endpoint || "");
+  if (!endpoint) return json({ error: "Missing endpoint" }, 400);
+  await ensurePushTables(db);
+  await db.prepare("DELETE FROM ezra_push_subscriptions WHERE endpoint = ?1").bind(endpoint).run();
+  return json({ ok: true }, 200, { "Cache-Control": "no-store" });
+}
+
+function pushPhase(event) {
+  if (isFinalEvent(event)) return "ft";
+  if (isLiveEvent(event)) return "live";
+  return "pre";
+}
+
+function scoreLineText(event, home, away) {
+  return `${event.strHomeTeam} ${home}-${away} ${event.strAwayTeam}`;
+}
+
+// Work out which alerts one match needs, given what we saw last time.
+function pushAlertsForEvent(event, prev) {
+  const home = numericScore(event.intHomeScore);
+  const away = numericScore(event.intAwayScore);
+  const phase = pushPhase(event);
+  const alerts = [];
+  if (!prev) return { alerts, home, away, phase };
+  const minute = String(event.strProgress || event.strMinute || "").replace(/[^0-9+]/g, "");
+  if (prev.phase === "pre" && phase !== "pre") {
+    alerts.push({ kind: "kickoff", title: "Kick-off!", body: `${event.strHomeTeam} v ${event.strAwayTeam} has started.` });
+  }
+  if (home !== null && away !== null) {
+    const prevHome = Number.isFinite(Number(prev.home)) ? Number(prev.home) : 0;
+    const prevAway = Number.isFinite(Number(prev.away)) ? Number(prev.away) : 0;
+    if (home > prevHome) {
+      alerts.push({ kind: "goal", side: "home", title: `GOAL! ${event.strHomeTeam}`, body: `${scoreLineText(event, home, away)}${minute ? ` (${minute}')` : ""}` });
+    }
+    if (away > prevAway) {
+      alerts.push({ kind: "goal", side: "away", title: `GOAL! ${event.strAwayTeam}`, body: `${scoreLineText(event, home, away)}${minute ? ` (${minute}')` : ""}` });
+    }
+  }
+  if (prev.phase !== "ft" && phase === "ft" && home !== null && away !== null) {
+    alerts.push({ kind: "fulltime", title: "Full time", body: scoreLineText(event, home, away) });
+  }
+  return { alerts, home, away, phase };
+}
+
+async function runPushAlerts(db, key, env, origin) {
+  const vapid = vapidConfig(env);
+  if (!db || !vapid) return { skipped: "not configured" };
+  await ensurePushTables(db);
+  const subCount = await db.prepare("SELECT COUNT(*) AS n FROM ezra_push_subscriptions").first();
+  if (!Number(subCount?.n || 0)) return { skipped: "no subscribers" };
+
+  const { snapshot } = await ensureLiveSnapshot(caches.default, origin, key, db);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const events = Object.values(snapshot?.leagues || {})
+    .flat()
+    .filter((event) => event && event.idEvent && event.dateEvent === todayIso);
+  let sent = 0;
+  for (const event of events) {
+    const prev = await db
+      .prepare("SELECT home, away, phase FROM ezra_push_event_state WHERE event_id = ?1")
+      .bind(String(event.idEvent))
+      .first();
+    const { alerts, home, away, phase } = pushAlertsForEvent(event, prev);
+    const changed = !prev || prev.phase !== phase || Number(prev.home) !== Number(home ?? 0) || Number(prev.away) !== Number(away ?? 0);
+    if (changed) {
+      await db
+        .prepare(
+          `INSERT INTO ezra_push_event_state (event_id, home, away, phase, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+           ON CONFLICT(event_id) DO UPDATE SET home = excluded.home, away = excluded.away, phase = excluded.phase, updated_at = excluded.updated_at`
+        )
+        .bind(String(event.idEvent), home ?? 0, away ?? 0, phase, Date.now())
+        .run();
+    }
+    if (!alerts.length) continue;
+    const teamIds = [String(event.idHomeTeam || ""), String(event.idAwayTeam || "")].filter(Boolean);
+    if (!teamIds.length) continue;
+    const subs = await db
+      .prepare(`SELECT endpoint, p256dh, auth, team_id, prefs_json FROM ezra_push_subscriptions WHERE team_id IN (${teamIds.map((_, i) => `?${i + 1}`).join(", ")})`)
+      .bind(...teamIds)
+      .all();
+    for (const alert of alerts) {
+      const prefKey = alert.kind === "goal" ? "goals" : alert.kind;
+      const targets = (subs?.results || []).filter((sub) => normalizePushPrefs(safeParseJsonText(sub.prefs_json))[prefKey]);
+      const results = await Promise.allSettled(
+        targets.map((sub) =>
+          sendWebPush(
+            sub,
+            { title: alert.title, body: alert.body, tag: `${alert.kind}-${event.idEvent}`, url: "/" },
+            vapid,
+            { ttl: alert.kind === "fulltime" ? 6 * 3600 : 1800, topic: `${alert.kind}${event.idEvent}` }
+          )
+        )
+      );
+      for (let i = 0; i < results.length; i += 1) {
+        const result = results[i];
+        const endpoint = targets[i].endpoint;
+        if (result.status === "fulfilled" && result.value.ok) {
+          sent += 1;
+        } else if (result.status === "fulfilled" && result.value.gone) {
+          await db.prepare("DELETE FROM ezra_push_subscriptions WHERE endpoint = ?1").bind(endpoint).run();
+        } else {
+          await db.prepare("UPDATE ezra_push_subscriptions SET fail_count = fail_count + 1 WHERE endpoint = ?1").bind(endpoint).run();
+        }
+      }
+    }
+  }
+  await db.prepare("DELETE FROM ezra_push_subscriptions WHERE fail_count >= 20").run();
+  await db.prepare("DELETE FROM ezra_push_event_state WHERE updated_at < ?1").bind(Date.now() - 3 * 86400000).run();
+  return { events: events.length, sent };
+}
+
+// ---- Client error logging -------------------------------------------------
+// Browsers report uncaught errors here so problems are visible without a
+// third-party service. No personal data is stored: message, location, app
+// version and a coarse browser string only. Keeps the newest 500 rows.
+const CLIENT_ERROR_KEEP = 500;
+
+async function ensureClientErrorTable(db) {
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS ezra_client_errors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        message TEXT NOT NULL,
+        source TEXT,
+        line INTEGER,
+        col INTEGER,
+        stack TEXT,
+        page TEXT,
+        app_version TEXT,
+        browser TEXT,
+        count INTEGER NOT NULL DEFAULT 1
+      )`
+    )
+    .run();
+}
+
+function coarseBrowser(ua) {
+  const s = String(ua || "");
+  const os = /iPhone|iPad/.test(s) ? "iOS" : /Android/.test(s) ? "Android" : /Mac OS X/.test(s) ? "macOS" : /Windows/.test(s) ? "Windows" : "Other";
+  const browser = /Edg\//.test(s) ? "Edge" : /CriOS|Chrome\//.test(s) ? "Chrome" : /FxiOS|Firefox\//.test(s) ? "Firefox" : /Safari\//.test(s) ? "Safari" : "Other";
+  return `${browser} on ${os}`;
+}
+
+async function handleClientErrorReport(context) {
+  const { request, env } = context;
+  const db = env.EZRA_DB;
+  if (!db) return new Response(null, { status: 204 });
+  let body = null;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+  const clip = (v, n) => String(v ?? "").slice(0, n);
+  const message = clip(body?.message, 300).trim();
+  if (!message) return json({ error: "Missing message" }, 400);
+  const row = {
+    message,
+    source: clip(body?.source, 200),
+    line: Number.isFinite(Number(body?.line)) ? Number(body.line) : null,
+    col: Number.isFinite(Number(body?.col)) ? Number(body.col) : null,
+    stack: clip(body?.stack, 1500),
+    page: clip(body?.page, 60),
+    appVersion: clip(body?.appVersion, 30),
+    browser: coarseBrowser(request.headers.get("User-Agent")),
+  };
+  await ensureClientErrorTable(db);
+  // Same error from the same build within the last hour: bump a counter instead of a new row.
+  const recent = await db
+    .prepare(
+      "SELECT id FROM ezra_client_errors WHERE message = ?1 AND COALESCE(source,'') = ?2 AND COALESCE(app_version,'') = ?3 AND at > ?4 ORDER BY id DESC LIMIT 1"
+    )
+    .bind(row.message, row.source, row.appVersion, new Date(Date.now() - 3600 * 1000).toISOString())
+    .first();
+  if (recent?.id) {
+    await db.prepare("UPDATE ezra_client_errors SET count = count + 1, at = ?2 WHERE id = ?1").bind(recent.id, new Date().toISOString()).run();
+  } else {
+    await db
+      .prepare(
+        "INSERT INTO ezra_client_errors (at, message, source, line, col, stack, page, app_version, browser) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+      )
+      .bind(new Date().toISOString(), row.message, row.source, row.line, row.col, row.stack, row.page, row.appVersion, row.browser)
+      .run();
+    await db
+      .prepare(`DELETE FROM ezra_client_errors WHERE id NOT IN (SELECT id FROM ezra_client_errors ORDER BY id DESC LIMIT ${CLIENT_ERROR_KEEP})`)
+      .run();
+  }
+  return new Response(null, { status: 204 });
+}
+
+async function handleAdminClientErrors(db, env, request) {
+  const auth = await adminAuth(request, env);
+  if (!auth.ok) return json({ error: auth.error }, auth.status);
+  await ensureClientErrorTable(db);
+  const rows = await db
+    .prepare("SELECT id, at, message, source, line, col, stack, page, app_version, browser, count FROM ezra_client_errors ORDER BY at DESC LIMIT 100")
+    .all();
+  return json({ errors: Array.isArray(rows?.results) ? rows.results : [] }, 200, { "Cache-Control": "no-store" });
+}
+
 async function handleEzraAdminRoute(context, adminPath) {
   const { request, env } = context;
   const db = env.EZRA_DB;
@@ -4736,6 +5037,9 @@ async function handleEzraAdminRoute(context, adminPath) {
     }
     if (route === "kickoff-offset" && request.method === "GET") {
       return handleAdminKickoffOffsetGet(db, env, request);
+    }
+    if (route === "client-errors" && request.method === "GET") {
+      return handleAdminClientErrors(db, env, request);
     }
     if (route === "kickoff-offset" && (request.method === "PUT" || request.method === "PATCH")) {
       return handleAdminKickoffOffsetPut(db, env, request);
@@ -4869,7 +5173,17 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       return handleChallengeDashboard(db, request, key);
     }
     if (route === "cron/settle" && (request.method === "POST" || request.method === "GET")) {
-      return await handleCronSettle(db, request, key, env);
+      const settled = await handleCronSettle(db, request, key, env);
+      // The settle job runs every minute, so it also drives push alerts.
+      if (settled.ok) {
+        try {
+          const url = new URL(request.url);
+          await runPushAlerts(db, key, env, `${url.protocol}//${url.host}`);
+        } catch {
+          // Alerts must never break settlement.
+        }
+      }
+      return settled;
     }
     if (route === "cron/normalize-predictions" && (request.method === "POST" || request.method === "GET")) {
       return await handleCronNormalizePredictions(db, request, env);
@@ -6360,6 +6674,19 @@ export async function onRequest(context) {
     if (version === "v1" && lowerPath.startsWith("ezra/admin")) {
       const adminPath = upstreamPath.slice("ezra/admin".length).replace(/^\/+/, "");
       return await handleEzraAdminRoute(context, adminPath);
+    }
+
+    if (version === "v1" && lowerPath === "ezra/client-error" && request.method === "POST") {
+      return handleClientErrorReport(context);
+    }
+    if (version === "v1" && lowerPath === "ezra/push/config" && request.method === "GET") {
+      return handlePushConfig(context);
+    }
+    if (version === "v1" && lowerPath === "ezra/push/subscribe" && request.method === "POST") {
+      return handlePushSubscribe(context);
+    }
+    if (version === "v1" && lowerPath === "ezra/push/unsubscribe" && request.method === "POST") {
+      return handlePushUnsubscribe(context);
     }
 
     if (request.method !== "GET") {
