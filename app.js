@@ -1785,7 +1785,7 @@ function base64UrlToUint8Array(value) {
 }
 
 async function pushConfig() {
-  if (state.pushConfig) return state.pushConfig;
+  if (state.pushConfig?.enabled) return state.pushConfig;
   const data = await apiGetV1("ezra/push/config");
   state.pushConfig = { enabled: Boolean(data?.enabled), publicKey: String(data?.publicKey || "") };
   return state.pushConfig;

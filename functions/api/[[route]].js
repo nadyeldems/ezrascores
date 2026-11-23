@@ -4757,7 +4757,10 @@ function normalizePushPrefs(input) {
 
 async function handlePushConfig(context) {
   const cfg = vapidConfig(context.env);
-  return json({ enabled: Boolean(cfg), publicKey: cfg?.publicKey || "" }, 200, { "Cache-Control": "public, max-age=300" });
+  // Never cache "off", so switching alerts on takes effect straight away.
+  return json({ enabled: Boolean(cfg), publicKey: cfg?.publicKey || "" }, 200, {
+    "Cache-Control": cfg ? "public, max-age=300" : "no-store",
+  });
 }
 
 async function handlePushSubscribe(context) {
