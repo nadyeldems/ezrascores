@@ -5,7 +5,14 @@ This follows a Keep-a-Changelog style with product-friendly language.
 
 ## [Unreleased]
 ### Added
-- 
+- A new look: My Team, Matches, Play, Leagues and Me tabs, with clearer text and a much slimmer header on phones.
+- Pick your team when you first open the app, then a quick how-to-play.
+- Today card on My Team: your daily quests in one checklist with a button for each.
+- Higher or Lower is back: guess which team has more league points, and beat your best score.
+- Goal, kick-off and full-time alerts for your team, even when the app is closed (turn on in Settings).
+- A full-time result card for your team's match, showing how your prediction did, plus last week's league champion on the Leagues tab.
+- Matches grouped by competition with your team first, and each match opens in its own panel.
+- Faster loading on phones and works offline with the last scores you saw.
 
 ### Improved
 - You can pinch to zoom again, secondary text is easier to read, and animations calm down when your device asks for reduced motion.

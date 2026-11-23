@@ -2970,9 +2970,14 @@ body[data-motion="minimal"] .avatar-hero-img {
   display: none;
 }
 
+#fun-zone-panel.home-focus #today-panel,
 #fun-zone-panel.home-focus #story-panel,
 #fun-zone-panel.home-focus #rivalry-panel {
   display: block;
+}
+
+#fun-zone-panel.home-focus #today-panel {
+  grid-column: 1 / -1;
 }
 
 /* Leagues tab: family mini-league, social feed, rivalry. Me tab: progress. */
@@ -3012,7 +3017,7 @@ body[data-motion="minimal"] .avatar-hero-img {
 #fun-zone-panel.play-focus #quests-panel,
 #fun-zone-panel.play-focus #pop-quiz-panel,
 #fun-zone-panel.play-focus #club-quiz-panel,
-#fun-zone-panel.play-focus #club-quiz-panel {
+#fun-zone-panel.play-focus #higher-lower-panel {
   display: block;
 }
 
@@ -7262,4 +7267,189 @@ body.onboarding-open {
     min-height: 2.5rem;
     min-width: 2.5rem;
   }
+}
+
+/* Today card */
+.today-progress {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--amber-warm);
+}
+
+.today-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.4rem 0 0.6rem;
+}
+
+.today-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.7rem;
+}
+
+.today-row.done {
+  opacity: 0.7;
+}
+
+.today-tick {
+  flex: none;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  border: 2px solid var(--amber-soft);
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--bg);
+}
+
+.today-row.done .today-tick {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.today-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.today-pts {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.today-go {
+  flex: none;
+  min-width: 3.4rem;
+}
+
+.today-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.today-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--amber-warm);
+  transition: width var(--dur-slow) var(--ease-spring);
+}
+
+.today-foot {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+
+.fun-intro {
+  margin: 0.2rem 0 0.55rem;
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+
+.avatar-unlock-bar {
+  margin: 0.35rem 0 0.2rem;
+}
+
+/* Weekly champion banner */
+.league-champion-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0.4rem 0 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--amber-soft);
+  border-radius: 0.8rem;
+  background: var(--amber-glow);
+  font-weight: 600;
+}
+
+.league-champion-banner.hidden {
+  display: none;
+}
+
+/* Full-time reveal */
+.fulltime-reveal {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(5, 3, 2, 0.8);
+}
+
+.fulltime-reveal.hidden {
+  display: none;
+}
+
+.fulltime-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 420px;
+  padding: 1.4rem;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--amber-soft);
+  border-radius: 1.1rem;
+  box-shadow: 0 0 40px rgba(255, 154, 31, 0.25);
+}
+
+.fulltime-kicker {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.fulltime-score {
+  margin: 0.4rem 0;
+  font-size: clamp(1.6rem, 6vw, 2.2rem);
+}
+
+.fulltime-verdict {
+  margin: 0 0 0.4rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.fulltime-pick {
+  margin: 0 0 1rem;
+  color: var(--text-soft);
+}
+
+.fulltime-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  display: none;
+}
+
+.fulltime-reveal.is-win .fulltime-confetti {
+  display: block;
+  background-image:
+    radial-gradient(circle, #ffb84d 2px, transparent 3px),
+    radial-gradient(circle, #78d47f 2px, transparent 3px),
+    radial-gradient(circle, #ff9a1f 2px, transparent 3px);
+  background-size: 60px 60px, 90px 90px, 120px 120px;
+  animation: ezra-confetti 2.4s linear infinite;
+}
+
+@keyframes ezra-confetti {
+  from { background-position: 0 -120px, 30px -90px, 60px -60px; }
+  to { background-position: 0 100vh, 30px 100vh, 60px 100vh; }
 }

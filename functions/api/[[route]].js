@@ -6588,8 +6588,36 @@ async function refreshTablesServerSide(cache, origin, key) {
   return { tables, meta };
 }
 
+// Last good table per league, kept in D1 so a TheSportsDB outage or rate
+// limit serves slightly old data instead of an error.
+async function saveLastGoodTable(db, leagueId, response) {
+  if (!db || !response) return;
+  try {
+    const text = await response.clone().text();
+    if (!text.includes('"table"')) return;
+    await setAppSetting(db, `tables_last_good_${leagueId}`, text);
+  } catch {
+    // best effort
+  }
+}
+
+async function lastGoodTableResponse(db, leagueId) {
+  if (!db) return null;
+  const text = await getAppSetting(db, `tables_last_good_${leagueId}`).catch(() => "");
+  if (!text) return null;
+  return new Response(text, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "public, max-age=30, s-maxage=30",
+      "X-EZRA-Cache": "D1-STALE",
+      "X-EZRA-Tables-Source": "SERVER",
+    },
+  });
+}
+
 async function handleEzraTablesRoute(context, key) {
   const { request } = context;
+  const db = context.env?.EZRA_DB;
   const cache = caches.default;
   const url = new URL(request.url);
   const leagueId = (url.searchParams.get("l") || "").trim();
@@ -6615,6 +6643,9 @@ async function handleEzraTablesRoute(context, key) {
 
   try {
     const refreshed = await refreshTablesServerSide(cache, origin, key);
+    for (const [id, response] of refreshed.tables) {
+      context.waitUntil(saveLastGoodTable(db, id, response));
+    }
     const nextResponse = refreshed.tables.get(leagueId);
     if (!nextResponse) {
       const stale = await cache.match(dataKey);
@@ -6644,6 +6675,8 @@ async function handleEzraTablesRoute(context, key) {
       headers.set("X-EZRA-Tables-Source", "SERVER");
       return new Response(cachedData.body, { status: cachedData.status, headers });
     }
+    const lastGood = await lastGoodTableResponse(db, leagueId);
+    if (lastGood) return lastGood;
     return Response.json({ error: "Unable to refresh table data", detail: String(err?.message || err) }, { status: 502 });
   }
 }

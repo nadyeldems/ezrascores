@@ -867,7 +867,12 @@ function renderAvatarUnlockMeta() {
   }
   const nextAt = Number(unlockState.nextMilestoneAt || 0);
   const remaining = Math.max(0, nextAt - unlockState.points);
-  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${creditText}. ${remaining} pts to next credit (+1 per ${AVATAR_UNLOCK_EVERY_POINTS} pts).`;
+  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. Next new avatar in ${remaining} pts. ${creditText}.`;
+  const fill = document.getElementById("avatar-unlock-bar-fill");
+  if (fill) {
+    const into = AVATAR_UNLOCK_EVERY_POINTS - remaining;
+    fill.style.width = `${Math.max(0, Math.min(100, Math.round((into / AVATAR_UNLOCK_EVERY_POINTS) * 100)))}%`;
+  }
 }
 
 function renderAvatarPresetGrid() {
@@ -3477,7 +3482,52 @@ function formatArchiveDate(isoDate) {
   return `${day} ${months[month - 1]} ${year}`;
 }
 
+// Weekly award: the latest finished season's winner, shown for 7 days on the
+// Leagues tab with a share button.
+function renderLeagueChampionBanner() {
+  const banner = document.getElementById("league-champion-banner");
+  if (!banner) return;
+  const latest = state.leagueArchive?.seasons?.[0];
+  const endsAt = Date.parse(String(latest?.endsAt || latest?.ends_at || ""));
+  const startsAt = Date.parse(String(latest?.startsAt || latest?.starts_at || ""));
+  const finishedAt = Number.isFinite(endsAt) ? endsAt : Number.isFinite(startsAt) ? startsAt + 7 * 86400000 : NaN;
+  if (!latest || !accountSignedIn() || !Number.isFinite(finishedAt) || Date.now() - finishedAt > 7 * 86400000) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const winner = String(latest.userName || latest.winnerName || latest.winner_name || "").trim();
+  if (!winner) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const pts = Number(latest.points ?? latest.winnerPoints ?? latest.winner_points ?? 0);
+  const leagueName = currentSelectedLeagueRecord()?.name || "our league";
+  banner.replaceChildren();
+  const text = document.createElement("span");
+  text.className = "league-champion-text";
+  text.textContent = `🏆 Last week's champion: ${winner}${pts ? ` with ${pts} pts` : ""}`;
+  const share = document.createElement("button");
+  share.type = "button";
+  share.className = "btn btn-inline";
+  share.textContent = "Share";
+  share.addEventListener("click", async () => {
+    const message = `🏆 ${winner} won the week in ${leagueName} on EZRASCORES${pts ? ` with ${pts} points` : ""}!`;
+    try {
+      if (navigator.share) await navigator.share({ text: message });
+      else {
+        await navigator.clipboard.writeText(message);
+        showRewardToast("Copied to share", "neutral");
+      }
+    } catch {
+      /* share cancelled */
+    }
+  });
+  banner.append(text, share);
+  banner.classList.remove("hidden");
+}
+
 function renderLeagueArchive() {
+  renderLeagueChampionBanner();
   const section = el.leagueArchiveSection;
   const list = el.leagueArchiveList;
   if (!section || !list) return;
@@ -5393,10 +5443,7 @@ function renderChallengeDashboardPanels() {
 function renderHigherLowerPanel() {
   if (!el.higherLowerBody || !el.higherLowerStartBtn) return;
   const game = state.higherLower;
-  const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
-  const sourceLabel = favorite?.strTeam
-    ? `${favorite.strTeam} players`
-    : "Premier League + Championship players";
+  const best = Number(localStorage.getItem("ezra_hl_best") || 0);
   el.higherLowerStartBtn.disabled = game.loading;
   el.higherLowerStartBtn.textContent = game.active ? "Restart Game" : game.completed ? "Play Again" : "Start 10-Question Game";
   el.higherLowerBody.innerHTML = "";
@@ -5418,7 +5465,7 @@ function renderHigherLowerPanel() {
   }
 
   if (!game.active && !game.completed) {
-    el.higherLowerBody.innerHTML = `<p class="muted">10 questions. Pick whether the bottom player has more or fewer current-season goals than the top player. Source: ${escapeHtml(sourceLabel)}.</p>`;
+    el.higherLowerBody.innerHTML = `<p class="muted">10 rounds. Has the bottom team got more or fewer league points than the top team?${best ? ` Your best: ${best}/10.` : ""}</p>`;
     return;
   }
 
@@ -5426,8 +5473,9 @@ function renderHigherLowerPanel() {
     el.higherLowerBody.innerHTML = `
       <div class="higher-lower-status">
         <span class="family-points">Final Score ${game.correct}/${game.total}</span>
+        ${game.newBest ? `<span class="family-points hl-correct">New best!</span>` : ""}
       </div>
-      <p class="muted">Great run. Start again for a new random set.</p>
+      <p class="muted">${game.correct >= 8 ? "Superb! You know your tables." : game.correct >= 5 ? "Nice work. Can you beat it?" : "Tricky one. Have another go!"} Best: ${Math.max(best, game.correct)}/10.</p>
     `;
     return;
   }
@@ -5449,18 +5497,18 @@ function renderHigherLowerPanel() {
       <img loading="lazy" decoding="async" class="higher-lower-cutout ${top.image ? "" : "hidden"}" src="${top.image || ""}" alt="${escapeHtml(top.name)} cutout" />
       <div class="higher-lower-meta">
         <strong>${escapeHtml(top.name)}</strong>
-        <span>#${escapeHtml(top.number || "—")} • ${top.goals} goals</span>
+        <span>${escapeHtml(top.league)} • ${top.goals} pts</span>
       </div>
     </div>
     <div class="higher-lower-controls">
-      <button class="btn higher-lower-arrow up" type="button" data-hl="up" aria-label="Bottom player has more goals">▲</button>
-      <button class="btn higher-lower-arrow down" type="button" data-hl="down" aria-label="Bottom player has fewer goals">▼</button>
+      <button class="btn higher-lower-arrow up" type="button" data-hl="up" aria-label="Bottom team has more points">▲ More</button>
+      <button class="btn higher-lower-arrow down" type="button" data-hl="down" aria-label="Bottom team has fewer points">▼ Fewer</button>
     </div>
     <div class="higher-lower-player bottom">
       <img loading="lazy" decoding="async" class="higher-lower-cutout ${bottom.image ? "" : "hidden"}" src="${bottom.image || ""}" alt="${escapeHtml(bottom.name)} cutout" />
       <div class="higher-lower-meta">
         <strong>${escapeHtml(bottom.name)}</strong>
-        <span>#${escapeHtml(bottom.number || "—")}</span>
+        <span>${escapeHtml(bottom.league)} • ? pts</span>
       </div>
     </div>
   `;
@@ -5484,6 +5532,65 @@ function renderFunZone() {
   void refreshSocialLayer(false);
   renderChallengeDashboardPanels();
   renderHigherLowerPanel();
+  renderTodayPanel();
+}
+
+// "Today" card on My Team: the daily quests as one short checklist with a
+// button that takes you straight to each one.
+function renderTodayPanel() {
+  const list = document.getElementById("today-list");
+  if (!list) return;
+  const quests = dailyQuestList();
+  const done = quests.filter((q) => q.done).length;
+  const progress = document.getElementById("today-progress");
+  if (progress) progress.textContent = `${done}/${quests.length} done`;
+  const fill = document.getElementById("today-bar-fill");
+  if (fill) fill.style.width = `${Math.round((done / Math.max(1, quests.length)) * 100)}%`;
+  list.replaceChildren();
+  quests.forEach((quest) => {
+    const row = document.createElement("div");
+    row.className = `today-row${quest.done ? " done" : ""}`;
+    const tick = document.createElement("span");
+    tick.className = "today-tick";
+    tick.setAttribute("aria-hidden", "true");
+    tick.textContent = quest.done ? "✓" : "";
+    const text = document.createElement("div");
+    text.className = "today-text";
+    const title = document.createElement("strong");
+    title.textContent = quest.title;
+    const pts = document.createElement("span");
+    pts.className = "today-pts";
+    pts.textContent = `+${quest.points} pts`;
+    title.append(" ", pts);
+    text.appendChild(title);
+    row.append(tick, text);
+    if (!quest.done) {
+      const go = document.createElement("button");
+      go.type = "button";
+      go.className = "btn today-go";
+      go.textContent = quest.id === "quest-predict-fixture" && !accountSignedIn() ? "Sign in" : "Go";
+      go.addEventListener("click", async () => {
+        if (quest.id === "quest-random-player") {
+          document.getElementById("squad-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (quest.onClick) await quest.onClick();
+          return;
+        }
+        if (quest.id !== "quest-predict-fixture") setMainTab("play");
+        if (quest.onClick) await quest.onClick();
+      });
+      row.appendChild(go);
+    }
+    list.appendChild(row);
+  });
+  const foot = document.getElementById("today-foot");
+  if (foot) {
+    foot.textContent =
+      done >= quests.length
+        ? `All done for today. Nice! Come back tomorrow for new quests.`
+        : accountSignedIn()
+        ? `Finish all ${quests.length} for a +${QUEST_ALL_DONE_BONUS} bonus.`
+        : `Finish all ${quests.length} for a +${QUEST_ALL_DONE_BONUS} bonus. Sign in to keep your points.`;
+  }
 }
 
 function normalizeHexColor(value) {
@@ -5810,47 +5917,29 @@ function normalizeHigherLowerPlayer(raw, team) {
 }
 
 function higherLowerPoolKey() {
-  const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
-  if (favorite?.idTeam) return `team:${favorite.idTeam}`;
-  return "all-leagues";
+  return `tables:${getVisibleLeagueCodes().join(",")}:${state.lastTablesAt || ""}`;
 }
 
+// Higher or Lower uses the league tables the app has already loaded: league
+// points per team. (TheSportsDB has no per-player goal counts, and fetching
+// squads for many clubs would burn through its 100-calls-a-minute limit.)
 async function buildHigherLowerPool() {
-  const favorite = getTeamById(state.favoriteTeamId) || state.favoriteTeam;
-  const teams = favorite ? [favorite] : shuffleList(allLeagueTeams()).slice(0, 10);
-  const poolByKey = new Map();
-  const hydrateFromTeams = async (teamsToUse) => {
-    for (const team of teamsToUse) {
-      const rows = await fetchPlayersForTeam(team);
-      const normalized = rows
-        .map((raw) => normalizeHigherLowerPlayer(raw, team))
-        .filter((player) => player && player.name);
-      const unresolved = normalized.filter((player) => player.goals === null && player.idPlayer).slice(0, 20);
-      if (unresolved.length) {
-        const profiles = await Promise.all(
-          unresolved.map((player) => safeLoad(() => fetchPlayerProfile(player.idPlayer), null))
-        );
-        unresolved.forEach((player, idx) => {
-          const goals = extractPlayerGoals(profiles[idx] || {});
-          if (goals !== null) player.goals = goals;
-        });
-      }
-      normalized
-        .filter((player) => player.goals !== null)
-        .forEach((player) => {
-          if (!poolByKey.has(player.key)) poolByKey.set(player.key, player);
-        });
-      if (poolByKey.size >= 70) break;
-    }
-  };
-
-  await hydrateFromTeams(teams);
-
-  if (poolByKey.size < 12 && favorite) {
-    await hydrateFromTeams(shuffleList(allLeagueTeams()).slice(0, 18));
-  }
-
-  return shuffleList([...poolByKey.values()]);
+  const pool = [];
+  getVisibleLeagueCodes().forEach((code) => {
+    (state.tables[code] || []).forEach((row) => {
+      const points = Number(row?.intPoints);
+      if (!row?.strTeam || !Number.isFinite(points)) return;
+      pool.push({
+        key: `${code}:${row.idTeam || row.strTeam}`,
+        name: row.strTeam,
+        image: proxiedImageUrl(row.strBadge || ""),
+        goals: points,
+        league: LEAGUES[code]?.name || "",
+        rank: Number(row.intRank) || null,
+      });
+    });
+  });
+  return shuffleList(pool);
 }
 
 function pickHigherLowerCandidate(topPlayer, pool, usedKeys = []) {
@@ -5877,7 +5966,7 @@ async function startHigherLowerGame(forceRebuild = false) {
       game.poolKey = key;
     }
     if (!Array.isArray(game.pool) || game.pool.length < 2) {
-      throw new Error("Not enough player data yet. Try again in a moment.");
+      throw new Error("League tables are still loading. Try again in a moment.");
     }
     game.total = 10;
     game.asked = 0;
@@ -5888,7 +5977,7 @@ async function startHigherLowerGame(forceRebuild = false) {
     game.usedKeys = game.top?.key ? [game.top.key] : [];
     game.bottom = pickHigherLowerCandidate(game.top, game.pool, game.usedKeys);
     if (!game.bottom) {
-      throw new Error("Not enough players available for this round.");
+      throw new Error("Not enough teams available for this round.");
     }
     game.usedKeys.push(game.bottom.key);
   } catch (err) {
@@ -5918,6 +6007,9 @@ function handleHigherLowerAnswer(direction) {
   if (game.asked >= game.total) {
     game.active = false;
     game.completed = true;
+    const previousBest = Number(localStorage.getItem("ezra_hl_best") || 0);
+    game.newBest = game.correct > previousBest;
+    if (game.newBest) localStorage.setItem("ezra_hl_best", String(game.correct));
     renderHigherLowerPanel();
     return;
   }
@@ -11629,7 +11721,65 @@ function scorePair(event) {
   return { home, away };
 }
 
+// ---- Full-time reveal ---------------------------------------------------------
+// When your team's match finishes while the app is open, show the result and
+// how your prediction did. Once per match.
+const fullTimeWatch = new Map();
+
+function detectFavouriteFullTime() {
+  const favName = state.favoriteTeam?.strTeam;
+  if (!favName) return;
+  const today = concatLeagueBuckets(state.fixtures.today, getVisibleLeagueCodes());
+  const match = today.find((e) => e.strHomeTeam === favName || e.strAwayTeam === favName);
+  if (!match?.idEvent) return;
+  const id = String(match.idEvent);
+  const info = eventState(match);
+  const previous = fullTimeWatch.get(id);
+  fullTimeWatch.set(id, info.key);
+  if (info.key !== "final" || info.pending || previous !== "live") return;
+  if (localStorage.getItem(`ezra_ft_shown_${id}`)) return;
+  localStorage.setItem(`ezra_ft_shown_${id}`, "1");
+  showFullTimeReveal(match, favName);
+}
+
+function showFullTimeReveal(event, favName) {
+  const overlay = document.getElementById("fulltime-reveal");
+  const pair = scorePair(event);
+  if (!overlay || !pair) return;
+  const home = Number(pair.home);
+  const away = Number(pair.away);
+  const favIsHome = event.strHomeTeam === favName;
+  const favGoals = favIsHome ? home : away;
+  const oppGoals = favIsHome ? away : home;
+  const outcome = favGoals > oppGoals ? "win" : favGoals < oppGoals ? "loss" : "draw";
+  document.getElementById("fulltime-title").textContent = `${event.strHomeTeam} ${home}-${away} ${event.strAwayTeam}`;
+  document.getElementById("fulltime-verdict").textContent =
+    outcome === "win" ? `${favName} win! 🎉` : outcome === "draw" ? `Honours even for ${favName}.` : `Not ${favName}'s day. Next time!`;
+  const record = state.familyLeague?.predictions?.[event.idEvent];
+  const { pick } = resolveMemberPickForRecord(record);
+  const pickEl = document.getElementById("fulltime-pick");
+  if (pick && Number.isFinite(Number(pick.home)) && Number.isFinite(Number(pick.away))) {
+    const ph = Number(pick.home);
+    const pa = Number(pick.away);
+    const exact = ph === home && pa === away;
+    const result = Math.sign(ph - pa) === Math.sign(home - away);
+    pickEl.textContent = `You predicted ${ph}-${pa}: ${exact ? "spot on! +2 pts" : result ? "right result, +1 pt" : "no points this time"}.`;
+  } else {
+    pickEl.textContent = "Predict the next one before kick-off to score points.";
+  }
+  overlay.classList.toggle("is-win", outcome === "win");
+  overlay.classList.remove("hidden");
+  const close = document.getElementById("fulltime-close-btn");
+  const hide = () => overlay.classList.add("hidden");
+  close.onclick = hide;
+  overlay.onclick = (e) => {
+    if (e.target === overlay) hide();
+  };
+  close.focus({ preventScroll: true });
+}
+
 function detectGoalFlashes() {
+  detectFavouriteFullTime();
   const now = Date.now();
 
   for (const [key, flash] of state.goalFlashes.entries()) {

@@ -52,7 +52,7 @@
       href="https://fonts.googleapis.com/css2?family=VT323&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20261123c" />
+    <link rel="stylesheet" href="styles.css?v=20261123d" />
   </head>
   <body>
     <div id="app-splash" class="app-splash" aria-live="polite" role="status">
@@ -360,6 +360,15 @@
             <h3 id="fun-zone-title">Fun Zone</h3>
           </div>
           <div id="fun-zone-body" class="fun-grid">
+            <article class="fun-card" id="today-panel">
+              <div class="panel-head compact-head">
+                <h4>Today</h4>
+                <span id="today-progress" class="today-progress"></span>
+              </div>
+              <div id="today-list" class="today-list"></div>
+              <div class="today-bar" aria-hidden="true"><span id="today-bar-fill"></span></div>
+              <p id="today-foot" class="today-foot"></p>
+            </article>
             <article class="fun-card" id="quests-panel">
               <div class="panel-head compact-head">
                 <h4>Daily Quests</h4>
@@ -379,10 +388,23 @@
               <div class="fun-guide hidden">
                 Tap start to launch the bouncing player quiz. Build your daily 5/5 quest and streak bonuses.
               </div>
+              <p class="fun-intro">Catch the bouncing player, then name them. 5 right = +5 pts.</p>
               <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop Quiz">
                 Start Pop Quiz
                 <span id="player-pop-score-badge" class="player-pop-score-badge">0</span>
               </button>
+            </article>
+            <article class="fun-card" id="higher-lower-panel">
+              <div class="panel-head compact-head">
+                <h4>Higher or Lower</h4>
+                <button class="fun-info-btn" type="button" aria-label="About Higher or Lower" aria-expanded="false">i</button>
+              </div>
+              <div class="fun-guide hidden">
+                10 rounds. Has the bottom player scored more or fewer goals this season than the top one? Beat your best score.
+              </div>
+              <p class="fun-intro">More or fewer league points? 10 rounds, beat your best.</p>
+              <div id="higher-lower-body" class="higher-lower-body"></div>
+              <button id="higher-lower-start-btn" class="btn" type="button">Start 10-Question Game</button>
             </article>
             <article class="fun-card" id="club-quiz-panel">
               <div class="panel-head compact-head">
@@ -419,7 +441,7 @@
                 Choose your profile avatar for leaderboards and member profiles. Unlock more avatars with milestone credits.
               </div>
               <div id="avatar-builder-signedout" class="avatar-builder-signedout muted">
-                Sign in to choose and save your avatar.
+                Earn points from predictions and quests to unlock new avatars: a new one every 67 points. Sign in to choose and save yours.
               </div>
                 <div id="avatar-builder-signedin" class="avatar-editor hidden">
                   <div class="avatar-editor-head">
@@ -435,6 +457,7 @@
                   <div class="avatar-hero-glow" aria-hidden="true"></div>
                 </div>
                 <p id="avatar-unlock-meta" class="avatar-unlock-meta">Unlock more avatars every 67 points.</p>
+                <div class="today-bar avatar-unlock-bar" aria-hidden="true"><span id="avatar-unlock-bar-fill"></span></div>
                 <div id="avatar-presets-grid" class="avatar-presets-grid"></div>
                 <div id="avatar-save-toast" class="avatar-save-toast hidden" aria-live="polite">Avatar saved</div>
                 <p class="muted avatar-future-note">Pick one of the official football SVG avatars and confirm selection.</p>
@@ -483,6 +506,7 @@
                 <p id="family-code-label" class="muted">League code: --</p>
                 <p id="family-season-countdown" class="family-season-countdown">Season ends in --</p>
               </div>
+              <div id="league-champion-banner" class="league-champion-banner hidden" role="status"></div>
               <div id="family-members" class="list"></div>
               <div id="league-archive-section" class="league-archive-section hidden">
                 <button id="league-archive-toggle-btn" class="btn btn-inline league-archive-toggle-btn" type="button">Past Seasons ▾</button>
@@ -763,6 +787,17 @@
     </div>
   </div>
 
+  <div id="fulltime-reveal" class="fulltime-reveal hidden" role="dialog" aria-modal="true" aria-labelledby="fulltime-title">
+    <div class="fulltime-confetti" aria-hidden="true"></div>
+    <div class="fulltime-card">
+      <p class="fulltime-kicker">Full time</p>
+      <h2 id="fulltime-title" class="fulltime-score"></h2>
+      <p id="fulltime-verdict" class="fulltime-verdict"></p>
+      <p id="fulltime-pick" class="fulltime-pick"></p>
+      <button id="fulltime-close-btn" class="btn" type="button">Nice!</button>
+    </div>
+  </div>
+
   <div id="match-sheet" class="match-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="match-sheet-title">
     <div class="match-sheet-backdrop" data-close-sheet></div>
     <div class="match-sheet-panel">
@@ -797,6 +832,6 @@
     </button>
   </nav>
 
-  <script src="app.js?v=20261123e"></script>
+  <script src="app.js?v=20261123f"></script>
 </body>
 </html>
