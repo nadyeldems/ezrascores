@@ -1144,8 +1144,11 @@ function loadDreamTeamState() {
   }
 }
 
-const SAFE_MAIN_TABS = ["home", "play", "predict", "squad", "tables"];
-const SAFE_STORED_MAIN_TAB = SAFE_MAIN_TABS.includes(STORED_MAIN_TAB) ? STORED_MAIN_TAB : "home";
+// Legacy "squad" opens My Team; legacy "tables" opens Matches on its Table view.
+const SAFE_MAIN_TABS = ["home", "predict", "play", "leagues", "me"];
+const STORED_MATCHES_VIEW = STORED_MAIN_TAB === "tables" ? "table" : localStorage.getItem("ezra_matches_view") === "table" ? "table" : "fixtures";
+const SAFE_STORED_MAIN_TAB =
+  STORED_MAIN_TAB === "squad" ? "home" : STORED_MAIN_TAB === "tables" ? "predict" : SAFE_MAIN_TABS.includes(STORED_MAIN_TAB) ? STORED_MAIN_TAB : "home";
 const INITIAL_MAIN_TAB = SAFE_STORED_MAIN_TAB;
 
 const state = {
@@ -1153,6 +1156,7 @@ const state = {
   leagueVisibility: { ...DEFAULT_LEAGUE_VISIBILITY },
   lastLeagueVisibilityAt: 0,
   mainTab: INITIAL_MAIN_TAB,
+  matchesView: STORED_MATCHES_VIEW,
   serverTimeOffsetMs: 0,
   selectedDate: "",
   selectedDateFixtures: emptyLeagueBuckets(() => []),
@@ -6561,7 +6565,7 @@ function sortSquadByRole(list) {
 
 function renderSquadPanel() {
   if (!el.squadPanel || !el.squadList || !el.squadTitle || !el.squadBody) return;
-  const squadTabActive = state.mainTab === "squad";
+  const squadTabActive = state.mainTab === "home";
   const favorite = state.favoriteTeam;
   if (!favorite?.idTeam) {
     state.squadOpen = squadTabActive;
@@ -9323,11 +9327,129 @@ function findKnownTeamById(teamId) {
   return allTeams.find((team) => String(team?.idTeam || "") === String(teamId)) || null;
 }
 
+async function chooseFavoriteTeam(team) {
+  if (!team?.idTeam) return;
+  state.favoriteTeamId = team.idTeam;
+  state.favoriteTeam = team;
+  applyClubThemeFromFavoriteTeam();
+  localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
+  safeLoad(() => syncMatchAlertsTeam(), null);
+  if (!localStorage.getItem("ezra_player_pop_scope")) {
+    setPlayerPopScope("favorite");
+  }
+  setFavoritePickerDisplay(team);
+  await renderFavorite();
+  renderMobileSectionLayout();
+  scheduleCloudStateSync();
+}
+
+// ---- First run ----------------------------------------------------------------
+// New visitors (no saved team, not signed in, not arriving from an invite) pick
+// their team instead of silently getting Hull City.
+const NEEDS_ONBOARDING =
+  !STORED_FAVORITE_TEAM &&
+  !STORED_ACCOUNT_TOKEN &&
+  !localStorage.getItem("ezra_onboarded") &&
+  !new URLSearchParams(window.location.search).has("inv");
+let onboardingShown = false;
+
+function finishOnboarding() {
+  localStorage.setItem("ezra_onboarded", "1");
+  document.getElementById("onboarding")?.classList.add("hidden");
+  document.body.classList.remove("onboarding-open");
+}
+
+function renderOnboardingTeams(allTeams, query = "") {
+  const list = document.getElementById("onboarding-teams");
+  if (!list) return;
+  const q = query.trim().toLowerCase();
+  list.replaceChildren();
+  getVisibleLeagueCodes().forEach((code) => {
+    const teams = (state.teamsByLeague[code] || [])
+      .filter((team) => !q || String(team.strTeam || "").toLowerCase().includes(q))
+      .sort((a, b) => String(a.strTeam).localeCompare(String(b.strTeam)));
+    if (!teams.length) return;
+    const heading = document.createElement("p");
+    heading.className = "onboarding-league";
+    heading.textContent = LEAGUES[code].name.replace(/^English League /, "").replace(/^English /, "").replace(/^Spanish /, "");
+    list.appendChild(heading);
+    const grid = document.createElement("div");
+    grid.className = "onboarding-grid";
+    teams.forEach((team) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "onboarding-team";
+      const img = document.createElement("img");
+      img.alt = "";
+      setImgSrc(img, team.strBadge || "", "");
+      const name = document.createElement("span");
+      name.textContent = team.strTeam || "";
+      btn.append(img, name);
+      btn.addEventListener("click", async () => {
+        await chooseFavoriteTeam(team);
+        showOnboardingStepTwo(team);
+      });
+      grid.appendChild(btn);
+    });
+    list.appendChild(grid);
+  });
+  if (!list.children.length) {
+    const empty = document.createElement("p");
+    empty.className = "onboarding-empty";
+    empty.textContent = "No team matches that search.";
+    list.appendChild(empty);
+  }
+}
+
+async function showOnboardingStepTwo(team) {
+  document.getElementById("onboarding-step-1")?.classList.add("hidden");
+  const step = document.getElementById("onboarding-step-2");
+  step?.classList.remove("hidden");
+  const title = document.getElementById("onboarding-done-title");
+  if (title) title.textContent = `${team.strTeam} it is!`;
+  const alertsBtn = document.getElementById("onboarding-alerts-btn");
+  const cfg = await pushConfig().catch(() => ({ enabled: false }));
+  alertsBtn?.classList.toggle("hidden", !cfg.enabled || !pushSupportStatus().supported);
+}
+
+function showOnboarding(allTeams) {
+  const overlay = document.getElementById("onboarding");
+  if (!overlay || onboardingShown) return;
+  onboardingShown = true;
+  overlay.classList.remove("hidden");
+  document.body.classList.add("onboarding-open");
+  renderOnboardingTeams(allTeams);
+  const search = document.getElementById("onboarding-search");
+  search?.addEventListener("input", () => renderOnboardingTeams(allTeams, search.value));
+  document.getElementById("onboarding-skip-btn")?.addEventListener("click", () => {
+    finishOnboarding();
+    ensureDefaultFavoriteTeam();
+    safeLoad(() => renderFavorite(), null);
+    renderMobileSectionLayout();
+  });
+  document.getElementById("onboarding-predict-btn")?.addEventListener("click", () => {
+    finishOnboarding();
+    setMainTab("predict");
+  });
+  document.getElementById("onboarding-alerts-btn")?.addEventListener("click", async () => {
+    await toggleMatchAlerts();
+    finishOnboarding();
+  });
+  document.getElementById("onboarding-go-btn")?.addEventListener("click", () => {
+    finishOnboarding();
+    setMainTab("home");
+  });
+}
+
 function ensureDefaultFavoriteTeam() {
   const allTeams = concatLeagueBuckets(state.teamsByLeague, getVisibleLeagueCodes());
   if (!allTeams.length) return;
   const currentExists = allTeams.some((team) => team.idTeam === state.favoriteTeamId);
   if (currentExists) return;
+  if (NEEDS_ONBOARDING && !localStorage.getItem("ezra_onboarded")) {
+    showOnboarding(allTeams);
+    return;
+  }
   const hull = allTeams.find((team) => (team.strTeam || "").toLowerCase() === "hull city");
   if (!hull?.idTeam) return;
   state.favoriteTeamId = hull.idTeam;
@@ -10125,7 +10247,34 @@ function renderFixtureList(target, events, mode) {
     return;
   }
 
-  sortedEvents.forEach((event) => {
+  // Group like FotMob/BBC: your team's match first, then one block per competition.
+  const groups = groupFixturesForList(sortedEvents);
+  const showHeadings = groups.length > 1 || groups.some((group) => group.id === "favourite");
+  const orderedEvents = groups.flatMap((group) => group.events.map((event) => ({ event, group })));
+  let previousGroupId = "";
+
+  orderedEvents.forEach(({ event, group }) => {
+    if (showHeadings && group.id !== previousGroupId) {
+      previousGroupId = group.id;
+      const heading = document.createElement("div");
+      heading.className = `fixture-group-heading${group.id === "favourite" ? " is-favourite" : ""}`;
+      heading.setAttribute("role", "heading");
+      heading.setAttribute("aria-level", "4");
+      if (group.badge) {
+        const img = document.createElement("img");
+        img.className = "fixture-group-badge";
+        setImgSrc(img, group.badge, "");
+        heading.appendChild(img);
+      }
+      const label = document.createElement("span");
+      label.textContent = group.label;
+      heading.appendChild(label);
+      const count = document.createElement("span");
+      count.className = "fixture-group-count";
+      count.textContent = String(group.events.length);
+      heading.appendChild(count);
+      target.appendChild(heading);
+    }
     const node = el.fixtureTemplate.content.firstElementChild.cloneNode(true);
     const stateInfo = eventState(event);
     const key = fixtureKey(event);
@@ -10243,14 +10392,12 @@ function renderFixtureList(target, events, mode) {
           if (other === node) return;
           other.open = false;
         });
-        if (isMobileViewport()) {
-          setTimeout(() => {
-            summaryEl?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-          }, 40);
-        }
+        // Show the match in its own sheet instead of expanding inside the list.
+        openMatchSheet(node, detailsEl);
         await hydrateFixtureDetails(detailsEl, event, stateInfo);
-      } else if (state.openFixtureKey === key) {
-        state.openFixtureKey = "";
+      } else {
+        if (state.openFixtureKey === key) state.openFixtureKey = "";
+        if (matchSheetState.node === node) closeMatchSheet({ fromToggle: true });
       }
     });
 
@@ -10261,6 +10408,101 @@ function renderFixtureList(target, events, mode) {
 
     target.appendChild(node);
   });
+}
+
+// ---- Match sheet ------------------------------------------------------------
+// The match's detail panel is moved into a sheet (bottom sheet on phones, a
+// centred panel on desktop) while open, and moved back when closed, so the
+// existing live-refresh code keeps updating the same element.
+const matchSheetState = { node: null, detailsEl: null, lastFocus: null };
+
+function refreshMatchSheetTitle() {
+  const title = document.getElementById("match-sheet-title");
+  const summary = matchSheetState.node?.querySelector(".summary-main");
+  if (!title || !summary) return;
+  const copy = summary.cloneNode(true);
+  copy.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"));
+  title.replaceChildren(copy);
+}
+
+function openMatchSheet(node, detailsEl) {
+  const sheet = document.getElementById("match-sheet");
+  const body = document.getElementById("match-sheet-body");
+  if (!sheet || !body || !detailsEl) return;
+  if (matchSheetState.node && matchSheetState.node !== node) {
+    const previous = matchSheetState;
+    if (previous.detailsEl && previous.node?.isConnected) previous.node.appendChild(previous.detailsEl);
+  }
+  if (!matchSheetState.node) matchSheetState.lastFocus = document.activeElement;
+  matchSheetState.node = node;
+  matchSheetState.detailsEl = detailsEl;
+  refreshMatchSheetTitle();
+  body.replaceChildren(detailsEl);
+  body.scrollTop = 0;
+  sheet.classList.remove("hidden");
+  document.body.classList.add("match-sheet-open");
+  sheet.querySelector(".match-sheet-close")?.focus({ preventScroll: true });
+}
+
+function closeMatchSheet({ fromToggle = false } = {}) {
+  const sheet = document.getElementById("match-sheet");
+  const { node, detailsEl, lastFocus } = matchSheetState;
+  matchSheetState.node = null;
+  matchSheetState.detailsEl = null;
+  matchSheetState.lastFocus = null;
+  if (node && detailsEl) node.appendChild(detailsEl);
+  if (node && !fromToggle && node.open) node.open = false;
+  sheet?.classList.add("hidden");
+  document.body.classList.remove("match-sheet-open");
+  if (lastFocus && typeof lastFocus.focus === "function" && lastFocus.isConnected) lastFocus.focus({ preventScroll: true });
+}
+
+function initMatchSheet() {
+  const sheet = document.getElementById("match-sheet");
+  if (!sheet) return;
+  sheet.querySelectorAll("[data-close-sheet]").forEach((el) => {
+    el.addEventListener("click", () => closeMatchSheet());
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && matchSheetState.node) closeMatchSheet();
+  });
+}
+
+function fixtureLeagueCode(event) {
+  const byId = leagueCodeFromLeagueId(event?.idLeague);
+  if (byId) return byId;
+  const name = String(event?.strLeague || "").toLowerCase();
+  return LEAGUE_CODES.find((code) => String(LEAGUES[code]?.name || "").toLowerCase() === name) || "";
+}
+
+function groupFixturesForList(events) {
+  const favName = state.favoriteTeam?.strTeam || "";
+  const favourite = [];
+  const byLeague = new Map();
+  events.forEach((event) => {
+    if (favName && (event.strHomeTeam === favName || event.strAwayTeam === favName)) {
+      favourite.push(event);
+      return;
+    }
+    const code = fixtureLeagueCode(event) || "OTHER";
+    if (!byLeague.has(code)) byLeague.set(code, []);
+    byLeague.get(code).push(event);
+  });
+  const groups = [];
+  if (favourite.length) {
+    groups.push({ id: "favourite", label: favName, badge: state.favoriteTeam?.strBadge || "", events: favourite });
+  }
+  [...LEAGUE_CODES, "OTHER"].forEach((code) => {
+    const list = byLeague.get(code);
+    if (!list?.length) return;
+    groups.push({
+      id: code,
+      label: code === "OTHER" ? "Other matches" : LEAGUES[code].name.replace(/^English League /, "").replace(/^English /, "").replace(/^Spanish /, ""),
+      badge: state.leagueBadges?.[code] || "",
+      events: list,
+    });
+  });
+  return groups;
 }
 
 function tableBandClass(leagueCode, rank) {
@@ -10799,8 +11041,49 @@ function setMobileTab(tab) {
   renderMobileSectionLayout();
 }
 
+const MAIN_TABS = ["home", "predict", "play", "leagues", "me"];
+
+// Older builds had separate Squad and Tables tabs: Squad now lives on My Team,
+// Tables is the "Table" view of Matches.
+function normalizeMainTab(tab) {
+  const value = String(tab || "").toLowerCase();
+  if (value === "squad") return "home";
+  if (value === "tables") {
+    state.matchesView = "table";
+    return "predict";
+  }
+  return MAIN_TABS.includes(value) ? value : "home";
+}
+
+function setMatchesView(view) {
+  const next = view === "table" ? "table" : "fixtures";
+  state.matchesView = next;
+  localStorage.setItem("ezra_matches_view", next);
+  document.querySelectorAll(".matches-view-btn").forEach((btn) => {
+    const active = btn.dataset.matchesView === next;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  });
+  renderMobileSectionLayout();
+  if (next === "table") renderTables();
+  else renderFixtures();
+}
+
+function renderMePanel() {
+  const summary = document.getElementById("me-summary");
+  if (!summary) return;
+  const team = state.favoriteTeam?.strTeam;
+  if (accountSignedIn()) {
+    const name = state.account?.user?.name || "you";
+    const points = String(el.lifetimePointsPill?.textContent || "").replace(/^Total points:\s*/i, "");
+    summary.textContent = `Signed in as ${name}${team ? ` · supporting ${team}` : ""}${points && points !== "--" ? ` · ${points} points` : ""}. Your points, streak and badges are saved.`;
+  } else {
+    summary.textContent = `Playing on this device${team ? ` · supporting ${team}` : ""}. Sign in to save your points and join a family league.`;
+  }
+}
+
 function setMainTab(tab) {
-  const safe = ["home", "play", "predict", "squad", "tables"].includes(tab) ? tab : "home";
+  const safe = normalizeMainTab(tab);
   if (safe === state.mainTab) {
     return;
   }
@@ -10840,8 +11123,8 @@ function renderMainTabButtons() {
   });
   document.body.setAttribute("data-main-tab", state.mainTab);
   if (el.activeRouteIndicator) {
-    const label = state.mainTab.charAt(0).toUpperCase() + state.mainTab.slice(1);
-    el.activeRouteIndicator.textContent = label;
+    const labels = { home: "My Team", predict: "Matches", play: "Play", leagues: "Leagues", me: "Me" };
+    el.activeRouteIndicator.textContent = labels[state.mainTab] || "";
   }
 }
 
@@ -10871,18 +11154,29 @@ function renderMobileSectionLayout() {
   const home = state.mainTab === "home";
   const play = state.mainTab === "play";
   const predict = state.mainTab === "predict";
-  const tablesTab = state.mainTab === "tables";
+  const leagues = state.mainTab === "leagues";
+  const me = state.mainTab === "me";
+  const tableView = predict && state.matchesView === "table";
 
-  setPanelVisible(controls, predict || tablesTab);
+  setPanelVisible(controls, predict);
   if (el.dateFilterGroup) {
-    el.dateFilterGroup.classList.toggle("hidden", tablesTab);
+    el.dateFilterGroup.classList.toggle("hidden", tableView);
   }
   if (el.leagueFilterGroup) {
     el.leagueFilterGroup.classList.remove("hidden");
   }
-  setPanelVisible(fixtures, home || predict);
-  setPanelVisible(tables, tablesTab);
-  setPanelVisible(fun, home || play);
+  setPanelVisible(fixtures, predict && !tableView);
+  setPanelVisible(tables, tableView);
+  setPanelVisible(fun, home || play || leagues || me);
+  const mePanel = document.getElementById("me-panel");
+  if (mePanel) {
+    setPanelVisible(mePanel, me);
+    if (me) renderMePanel();
+  }
+  const funTitle = document.getElementById("fun-zone-title");
+  if (funTitle) {
+    funTitle.textContent = home ? "Team Talk" : leagues ? "Leagues" : me ? "Your Progress" : "Play";
+  }
   if (el.avatarBuilderCard) {
     el.avatarBuilderCard.classList.toggle("hidden", !play);
   }
@@ -10891,6 +11185,8 @@ function renderMobileSectionLayout() {
   }
   fun.classList.toggle("home-focus", home);
   fun.classList.toggle("play-focus", play);
+  fun.classList.toggle("leagues-focus", leagues);
+  fun.classList.toggle("me-focus", me);
 }
 
 function showRewardToast(message, tone = "success") {
@@ -11000,6 +11296,7 @@ function patchVisibleFixtureRows(events) {
       }
     }
   });
+  if (matchSheetState.node) refreshMatchSheetTitle();
   return true;
 }
 
@@ -11126,18 +11423,8 @@ function buildFavoriteOptions() {
       optionLogo.classList.remove("hidden");
     }
     btn.addEventListener("click", async () => {
-      state.favoriteTeamId = team.idTeam;
-      state.favoriteTeam = team;
-      applyClubThemeFromFavoriteTeam();
-      localStorage.setItem("esra_favorite_team", state.favoriteTeamId);
-      safeLoad(() => syncMatchAlertsTeam(), null);
-      if (!localStorage.getItem("ezra_player_pop_scope")) {
-        setPlayerPopScope("favorite");
-      }
-      setFavoritePickerDisplay(team);
       closeFavoritePickerMenu();
-      await renderFavorite();
-      scheduleCloudStateSync();
+      await chooseFavoriteTeam(team);
     });
     el.favoritePickerMenu.appendChild(btn);
   });
@@ -12747,15 +13034,29 @@ function attachEvents() {
     });
   });
 
-  if (el.bottomNavYouBtn) {
-    el.bottomNavYouBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      closeFavoritePickerMenu();
-      setSettingsMenuOpen(false);
-      setNotificationsOpen(false);
-      setAccountMenuOpen(!state.accountOpen);
+  // Matches tab: Fixtures / Table switch.
+  document.querySelectorAll(".matches-view-btn").forEach((btn) => {
+    const active = btn.dataset.matchesView === state.matchesView;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll(".matches-view-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setMatchesView(btn.dataset.matchesView === "table" ? "table" : "fixtures");
     });
-  }
+  });
+
+  // Me tab shortcuts to the existing drawers.
+  const openDrawer = (which) => (event) => {
+    event.stopPropagation();
+    closeFavoritePickerMenu();
+    setSettingsMenuOpen(which === "settings");
+    setAccountMenuOpen(which === "account");
+    setNotificationsOpen(which === "notifications");
+  };
+  document.getElementById("me-account-btn")?.addEventListener("click", openDrawer("account"));
+  document.getElementById("me-settings-btn")?.addEventListener("click", openDrawer("settings"));
+  document.getElementById("me-notifications-btn")?.addEventListener("click", openDrawer("notifications"));
 
   if (el.settingsToggleBtn) {
     el.settingsToggleBtn.addEventListener("click", (event) => {
@@ -13192,4 +13493,5 @@ safeLoad(() => handleInviteUrlOnLoad(), null).finally(() => {
   });
 });
 registerServiceWorker();
+initMatchSheet();
 safeLoad(() => initMatchAlerts(), null);

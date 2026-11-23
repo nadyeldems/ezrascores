@@ -52,7 +52,7 @@
       href="https://fonts.googleapis.com/css2?family=VT323&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20261123a" />
+    <link rel="stylesheet" href="styles.css?v=20261123c" />
   </head>
   <body>
     <div id="app-splash" class="app-splash" aria-live="polite" role="status">
@@ -306,11 +306,11 @@
       <main id="main-content">
         <section class="panel main-tabs-panel" id="main-tabs-panel" aria-label="Main sections">
           <div class="main-tabs" role="tablist" aria-label="Main sections">
-            <button class="btn main-tab-btn active" type="button" data-main-tab="home" role="tab" aria-selected="true">Home</button>
-            <button class="btn main-tab-btn" type="button" data-main-tab="predict" role="tab" aria-selected="false">Predict</button>
-            <button class="btn main-tab-btn" type="button" data-main-tab="squad" role="tab" aria-selected="false">Squad</button>
-            <button class="btn main-tab-btn" type="button" data-main-tab="tables" role="tab" aria-selected="false">Tables</button>
+            <button class="btn main-tab-btn active" type="button" data-main-tab="home" role="tab" aria-selected="true">My Team</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="predict" role="tab" aria-selected="false">Matches</button>
             <button class="btn main-tab-btn" type="button" data-main-tab="play" role="tab" aria-selected="false">Play</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="leagues" role="tab" aria-selected="false">Leagues</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="me" role="tab" aria-selected="false">Me</button>
           </div>
         </section>
 
@@ -319,15 +319,6 @@
             <button class="btn mobile-tab-btn active" type="button" data-mobile-tab="fixtures" role="tab" aria-selected="true">Fixtures</button>
             <button class="btn mobile-tab-btn" type="button" data-mobile-tab="table" role="tab" aria-selected="false">Table</button>
             <button class="btn mobile-tab-btn" type="button" data-mobile-tab="fun" role="tab" aria-selected="false">Fun Zone</button>
-          </div>
-        </section>
-
-        <section class="panel hidden" id="squad-panel">
-          <div class="panel-head squad-head">
-            <h3 id="squad-title">Squad</h3>
-          </div>
-          <div id="squad-body">
-            <div id="squad-list" class="squad-list"></div>
           </div>
         </section>
 
@@ -352,9 +343,21 @@
           <div id="league-member-body" class="league-member-body"></div>
         </section>
 
+        <section class="panel hidden" id="me-panel">
+          <div class="panel-head">
+            <h3>Me</h3>
+          </div>
+          <p id="me-summary" class="me-summary">Playing on this device. Sign in to save your points and join a family league.</p>
+          <div class="me-actions">
+            <button id="me-account-btn" class="btn" type="button">Account &amp; sign in</button>
+            <button id="me-settings-btn" class="btn" type="button">Settings &amp; alerts</button>
+            <button id="me-notifications-btn" class="btn" type="button">Notifications</button>
+          </div>
+        </section>
+
         <section class="panel" id="fun-zone-panel">
           <div class="panel-head">
-            <h3>Fun Zone</h3>
+            <h3 id="fun-zone-title">Fun Zone</h3>
           </div>
           <div id="fun-zone-body" class="fun-grid">
             <article class="fun-card" id="quests-panel">
@@ -555,7 +558,20 @@
           </div>
         </section>
 
+        <section class="panel hidden" id="squad-panel">
+          <div class="panel-head squad-head">
+            <h3 id="squad-title">Squad</h3>
+          </div>
+          <div id="squad-body">
+            <div id="squad-list" class="squad-list"></div>
+          </div>
+        </section>
+
         <section class="panel controls-panel" id="controls-panel">
+          <div class="matches-view-toggle" role="tablist" aria-label="Matches view">
+            <button class="btn matches-view-btn active" type="button" data-matches-view="fixtures" role="tab" aria-selected="true">Fixtures</button>
+            <button class="btn matches-view-btn" type="button" data-matches-view="table" role="tab" aria-selected="false">Table</button>
+          </div>
           <div class="filter-toolbar">
             <div id="league-filter-group" class="filter-group">
               <p class="filter-label">League Filter</p>
@@ -726,33 +742,61 @@
       </article>
     </template>
 
+  <div id="onboarding" class="onboarding hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+    <div class="onboarding-panel">
+      <div id="onboarding-step-1">
+        <h2 id="onboarding-title" class="onboarding-title">Who do you support?</h2>
+        <p class="onboarding-lead">Pick your team and EZRASCORES puts them first: their matches, their squad, their table.</p>
+        <input id="onboarding-search" class="onboarding-search" type="search" placeholder="Search teams" aria-label="Search teams" autocomplete="off" />
+        <div id="onboarding-teams" class="onboarding-teams"></div>
+        <button id="onboarding-skip-btn" class="btn onboarding-skip" type="button">Skip for now</button>
+      </div>
+      <div id="onboarding-step-2" class="hidden">
+        <h2 id="onboarding-done-title" class="onboarding-title">Great pick!</h2>
+        <p class="onboarding-lead">Here's how to play: predict scores before kick-off, finish today's quests, and climb your family league.</p>
+        <div class="onboarding-actions">
+          <button id="onboarding-predict-btn" class="btn onboarding-primary" type="button">Make my first prediction</button>
+          <button id="onboarding-alerts-btn" class="btn hidden" type="button">Turn on goal alerts</button>
+          <button id="onboarding-go-btn" class="btn" type="button">Show me my team</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="match-sheet" class="match-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="match-sheet-title">
+    <div class="match-sheet-backdrop" data-close-sheet></div>
+    <div class="match-sheet-panel">
+      <div class="match-sheet-head">
+        <div id="match-sheet-title" class="match-sheet-title"></div>
+        <button class="btn match-sheet-close" type="button" data-close-sheet aria-label="Close match">✕</button>
+      </div>
+      <div id="match-sheet-body" class="match-sheet-body"></div>
+    </div>
+  </div>
+
   <nav id="bottom-nav" class="bottom-nav" aria-label="Main navigation">
-    <button class="bottom-nav-btn active" type="button" data-main-tab="home" aria-label="Home">
-      <span class="bnav-icon" aria-hidden="true">⚽</span>
-      <span class="bnav-label">Home</span>
+    <button class="bottom-nav-btn active" type="button" data-main-tab="home" aria-label="My Team">
+      <svg class="bnav-icon bnav-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5l8-3z"/></svg>
+      <span class="bnav-label">My Team</span>
     </button>
-    <button class="bottom-nav-btn" type="button" data-main-tab="predict" aria-label="Predict">
-      <span class="bnav-icon" aria-hidden="true">🎯</span>
-      <span class="bnav-label">Predict</span>
-    </button>
-    <button class="bottom-nav-btn" type="button" data-main-tab="squad" aria-label="Squad">
-      <span class="bnav-icon" aria-hidden="true">👥</span>
-      <span class="bnav-label">Squad</span>
-    </button>
-    <button class="bottom-nav-btn" type="button" data-main-tab="tables" aria-label="Tables">
-      <span class="bnav-icon" aria-hidden="true">📊</span>
-      <span class="bnav-label">Tables</span>
+    <button class="bottom-nav-btn" type="button" data-main-tab="predict" aria-label="Matches">
+      <svg class="bnav-icon bnav-svg" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+      <span class="bnav-label">Matches</span>
     </button>
     <button class="bottom-nav-btn" type="button" data-main-tab="play" aria-label="Play">
-      <span class="bnav-icon" aria-hidden="true">🎮</span>
+      <svg class="bnav-icon bnav-svg" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7l4 3-1.5 4.5h-5L8 10z"/></svg>
       <span class="bnav-label">Play</span>
     </button>
-    <button class="bottom-nav-btn bottom-nav-you" type="button" id="bottom-nav-you-btn" aria-label="Your account">
-      <span class="bnav-icon" id="bottom-nav-you-icon" aria-hidden="true">👤</span>
-      <span class="bnav-label">You</span>
+    <button class="bottom-nav-btn" type="button" data-main-tab="leagues" aria-label="Leagues">
+      <svg class="bnav-icon bnav-svg" aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4h10v4a5 5 0 01-10 0V4zM5 5H3v2a3 3 0 003 3M19 5h2v2a3 3 0 01-3 3M12 13v4M8 21h8M9 17h6"/></svg>
+      <span class="bnav-label">Leagues</span>
+    </button>
+    <button class="bottom-nav-btn bottom-nav-you" type="button" id="bottom-nav-you-btn" data-main-tab="me" aria-label="Me">
+      <span class="bnav-icon" id="bottom-nav-you-icon" aria-hidden="true"><svg class="bnav-svg" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg></span>
+      <span class="bnav-label">Me</span>
     </button>
   </nav>
 
-  <script src="app.js?v=20261123c"></script>
+  <script src="app.js?v=20261123e"></script>
 </body>
 </html>

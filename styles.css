@@ -26,7 +26,7 @@
 
   /* === Font tokens === */
   --font-display: "VT323", monospace;
-  --font-body: -apple-system, "Segoe UI", sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
   /* === Motion tokens === */
   --dur-fast: 100ms;
@@ -247,8 +247,11 @@ body {
   margin: 0;
   color: var(--text);
   min-height: 100vh;
-  font-family: var(--font-display);
-  font-size: 1.08rem;
+  /* Readable sans for data and controls; the pixel font is kept for the logo,
+     headings, scores and celebrations (see the type rules below). */
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
   touch-action: manipulation;
   background:
     repeating-linear-gradient(
@@ -481,8 +484,11 @@ body[data-theme="club"] .footer {
 }
 
 .main-tabs-panel {
-  position: relative;
+  /* The one pinned strip on desktop; mobile uses the bottom nav instead. */
+  position: sticky;
+  top: 0.4rem;
   z-index: 40;          /* below hero-bar (50) but above plain panels (auto) */
+  background: var(--panel);
   padding: 0.45rem;
   margin-bottom: 0.7rem;
   overflow: visible;
@@ -2965,8 +2971,32 @@ body[data-motion="minimal"] .avatar-hero-img {
 }
 
 #fun-zone-panel.home-focus #story-panel,
-#fun-zone-panel.home-focus #family-league-panel {
+#fun-zone-panel.home-focus #rivalry-panel {
   display: block;
+}
+
+/* Leagues tab: family mini-league, social feed, rivalry. Me tab: progress. */
+#fun-zone-panel.leagues-focus .fun-card,
+#fun-zone-panel.me-focus .fun-card {
+  display: none;
+}
+
+#fun-zone-panel.leagues-focus #family-league-panel,
+#fun-zone-panel.leagues-focus #social-feed-panel,
+#fun-zone-panel.leagues-focus #rivalry-panel,
+#fun-zone-panel.me-focus #challenge-streak-panel,
+#fun-zone-panel.me-focus #challenge-achievements-panel {
+  display: block;
+}
+
+#fun-zone-panel.leagues-focus .fun-grid,
+#fun-zone-panel.me-focus .fun-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+#fun-zone-panel.leagues-focus #family-league-panel {
+  grid-column: 1 / -1;
 }
 
 #fun-zone-panel.home-focus .fun-grid {
@@ -2982,10 +3012,7 @@ body[data-motion="minimal"] .avatar-hero-img {
 #fun-zone-panel.play-focus #quests-panel,
 #fun-zone-panel.play-focus #pop-quiz-panel,
 #fun-zone-panel.play-focus #club-quiz-panel,
-#fun-zone-panel.play-focus #family-league-panel,
-#fun-zone-panel.play-focus #social-feed-panel,
-#fun-zone-panel.play-focus #challenge-streak-panel,
-#fun-zone-panel.play-focus #challenge-achievements-panel {
+#fun-zone-panel.play-focus #club-quiz-panel {
   display: block;
 }
 
@@ -4129,9 +4156,19 @@ h4 {
 .btn,
 .kickoff-time,
 .match-state,
-.status-pill,
-.score-sep {
-  font-family: "VT323", monospace;
+.status-pill {
+  font-family: var(--font-body);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.score-sep,
+.team-score,
+.team-score-inline,
+.brand,
+.goal-stage,
+.goal-word {
+  font-family: var(--font-display);
 }
 
 h1 {
@@ -4594,8 +4631,8 @@ body[data-theme="club"] .btn:hover {
 .favorite-banner {
   --fav-rgb: 255, 154, 31;
   --fav-border: var(--line);
-  position: sticky;
-  top: var(--island-clearance);
+  /* Scrolls away with the page; only the slim tab bar stays pinned. */
+  position: relative;
   z-index: 10;
   border-radius: 1.05rem;
   padding: 0.85rem;
@@ -6274,7 +6311,8 @@ body[data-motion="arcade"] .fixture-focus {
     background: none;
     border: none;
     cursor: pointer;
-    font-family: var(--font-display);
+    font-family: var(--font-body);
+    font-weight: 600;
     color: var(--text-soft);
     transition:
       color var(--dur-base) var(--ease-spring),
@@ -6877,5 +6915,351 @@ body[data-gameday="upcoming"] .favorite-banner {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+
+/* ── Matches view switch, Me panel, nav icons ─────────────────────── */
+.matches-view-toggle {
+  display: inline-flex;
+  gap: 0.3rem;
+  padding: 0.2rem;
+  margin-bottom: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.matches-view-btn {
+  border-radius: 999px;
+  min-width: 6.5rem;
+}
+
+.matches-view-btn.active {
+  background: var(--amber-glow);
+  border-color: var(--amber-soft);
+  color: var(--amber-warm);
+}
+
+.me-summary {
+  margin: 0.2rem 0 0.8rem;
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+
+.me-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.bnav-svg {
+  width: 1.45rem;
+  height: 1.45rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (max-width: 720px) {
+  #fun-zone-panel.leagues-focus .fun-grid,
+  #fun-zone-panel.me-focus .fun-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Fixture list grouped by competition */
+.fixture-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0.35rem;
+  padding: 0 0.2rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.fixture-group-heading:first-child {
+  margin-top: 0.2rem;
+}
+
+.fixture-group-heading.is-favourite {
+  color: var(--amber-warm);
+}
+
+.fixture-group-badge {
+  width: 1.2rem;
+  height: 1.2rem;
+  object-fit: contain;
+}
+
+.fixture-group-count {
+  margin-left: auto;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+/* Match sheet: bottom sheet on phones, centred panel on desktop */
+.match-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.match-sheet.hidden {
+  display: none;
+}
+
+.match-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.match-sheet-panel {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 1.1rem 1.1rem 0 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.match-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.9rem 0.9rem 0.6rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.match-sheet-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.match-sheet-close {
+  flex: none;
+  min-width: 2.6rem;
+  min-height: 2.6rem;
+}
+
+.match-sheet-body {
+  overflow-y: auto;
+  padding: 0.8rem 0.9rem calc(1rem + var(--safe-bottom));
+  overscroll-behavior: contain;
+}
+
+.match-sheet-body .fixture-details {
+  display: block;
+}
+
+body.match-sheet-open {
+  overflow: hidden;
+}
+
+@media (min-width: 721px) {
+  .match-sheet {
+    align-items: center;
+  }
+
+  .match-sheet-panel {
+    max-height: 86vh;
+    border-bottom: 1px solid var(--line);
+    border-radius: 1.1rem;
+  }
+}
+
+/* First-run team picker */
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(5, 3, 2, 0.92);
+}
+
+.onboarding.hidden {
+  display: none;
+}
+
+body.onboarding-open {
+  overflow: hidden;
+}
+
+.onboarding-panel {
+  width: 100%;
+  max-width: 720px;
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 1.4rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+}
+
+.onboarding-title {
+  font-size: clamp(1.8rem, 6vw, 2.6rem);
+  margin-bottom: 0.4rem;
+}
+
+.onboarding-lead {
+  color: var(--text-soft);
+  margin: 0 0 1rem;
+  line-height: 1.45;
+}
+
+.onboarding-search {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.8rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+}
+
+.onboarding-league {
+  margin: 0.9rem 0 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.onboarding-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.5rem;
+}
+
+.onboarding-team {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.onboarding-team:hover,
+.onboarding-team:focus-visible {
+  border-color: var(--amber-soft);
+  background: var(--amber-glow);
+}
+
+.onboarding-team img {
+  width: 1.8rem;
+  height: 1.8rem;
+  object-fit: contain;
+  flex: none;
+}
+
+.onboarding-skip {
+  margin-top: 1rem;
+}
+
+.onboarding-actions {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.onboarding-primary {
+  background: var(--amber-glow);
+  border-color: var(--amber-soft);
+  color: var(--amber-warm);
+}
+
+.onboarding-empty {
+  color: var(--text-soft);
+}
+
+/* Compact phone header: logo, team badge and icon buttons on one row, the
+   game-day line underneath. Points live on the Me tab; the bottom nav already
+   shows which tab is active. */
+@media (max-width: 720px) {
+  .hero-bar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 0.55rem 0.7rem;
+    gap: 0.4rem 0.5rem;
+  }
+
+  .hero-left {
+    width: auto;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .hero-left h1 {
+    font-size: 1.45rem;
+  }
+
+  .hero-actions {
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.3rem;
+  }
+
+  .active-route-indicator,
+  .lifetime-points-pill {
+    display: none;
+  }
+
+  .game-day-message {
+    order: 10;
+    flex: 1 0 100%;
+    font-size: 0.78rem;
+    padding: 0.25rem 0.5rem;
+  }
+
+  .header-picker {
+    width: auto;
+  }
+
+  .header-picker #favorite-picker-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .feature-btn,
+  .hero-actions .btn,
+  .header-picker .favorite-picker-btn {
+    min-height: 2.5rem;
+    min-width: 2.5rem;
   }
 }
