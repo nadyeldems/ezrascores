@@ -45,6 +45,7 @@ const state = {
     EPL: true,
     CHAMP: true,
     LALIGA: true,
+    WC: false,
   },
   kickoffOffsetMinutes: 0,
   grant: {
@@ -89,8 +90,9 @@ function normalizeLeagueVisibility(input) {
     EPL: Boolean(input?.EPL),
     CHAMP: Boolean(input?.CHAMP),
     LALIGA: Boolean(input?.LALIGA),
+    WC: Boolean(input?.WC),
   };
-  if (!next.EPL && !next.CHAMP && !next.LALIGA) {
+  if (!next.EPL && !next.CHAMP && !next.LALIGA && !next.WC) {
     next.EPL = true;
   }
   return next;
@@ -175,7 +177,7 @@ function setAuthedView(authed) {
 
 function setLeagueVisibility(nextVisibility) {
   state.leagueVisibility = normalizeLeagueVisibility(nextVisibility || {});
-  const allEnabled = state.leagueVisibility.EPL && state.leagueVisibility.CHAMP && state.leagueVisibility.LALIGA;
+  const allEnabled = state.leagueVisibility.EPL && state.leagueVisibility.CHAMP && state.leagueVisibility.LALIGA && state.leagueVisibility.WC;
   for (const btn of el.leagueFilterBtns) {
     const code = String(btn.dataset.league || "").toUpperCase();
     const isActive = code === "ALL" ? allEnabled : Boolean(state.leagueVisibility[code]);
@@ -311,10 +313,10 @@ for (const btn of el.leagueFilterBtns) {
     const current = normalizeLeagueVisibility(state.leagueVisibility);
     let next = { ...current };
     if (code === "ALL") {
-      next = { EPL: true, CHAMP: true, LALIGA: true };
-    } else if (["EPL", "CHAMP", "LALIGA"].includes(code)) {
+      next = { EPL: true, CHAMP: true, LALIGA: true, WC: true };
+    } else if (["EPL", "CHAMP", "LALIGA", "WC"].includes(code)) {
       next[code] = !next[code];
-      if (!next.EPL && !next.CHAMP && !next.LALIGA) {
+      if (!next.EPL && !next.CHAMP && !next.LALIGA && !next.WC) {
         next[code] = true;
       }
     } else {

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
     <meta name="theme-color" content="#120904" />
     <meta
@@ -52,7 +52,7 @@
       href="https://fonts.googleapis.com/css2?family=VT323&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20260407a" />
+    <link rel="stylesheet" href="styles.css?v=20261123a" />
   </head>
   <body>
     <div id="app-splash" class="app-splash" aria-live="polite" role="status">
@@ -141,7 +141,7 @@
                   <button class="btn player-source-btn" type="button" data-player-source="favorite">Favourite Only</button>
                 </div>
               </div>
-              <div class="settings-group">
+              <div class="settings-group hidden" id="debug-settings-group">
                 <p class="settings-label settings-section-label">Debug</p>
                 <button id="debug-goal-btn" class="btn debug-btn" type="button">Trigger Goal Animation</button>
               </div>
@@ -302,10 +302,10 @@
         <section class="panel main-tabs-panel" id="main-tabs-panel" aria-label="Main sections">
           <div class="main-tabs" role="tablist" aria-label="Main sections">
             <button class="btn main-tab-btn active" type="button" data-main-tab="home" role="tab" aria-selected="true">Home</button>
-            <button class="btn main-tab-btn" type="button" data-main-tab="play" role="tab" aria-selected="false">Play</button>
             <button class="btn main-tab-btn" type="button" data-main-tab="predict" role="tab" aria-selected="false">Predict</button>
             <button class="btn main-tab-btn" type="button" data-main-tab="squad" role="tab" aria-selected="false">Squad</button>
             <button class="btn main-tab-btn" type="button" data-main-tab="tables" role="tab" aria-selected="false">Tables</button>
+            <button class="btn main-tab-btn" type="button" data-main-tab="play" role="tab" aria-selected="false">Play</button>
           </div>
         </section>
 
@@ -558,7 +558,7 @@
                 <button class="btn league-btn active" type="button" data-league="EPL">Premier League</button>
                 <button class="btn league-btn" type="button" data-league="CHAMP">Championship</button>
                 <button class="btn league-btn" type="button" data-league="LALIGA">La Liga</button>
-                <button class="btn league-btn" type="button" data-league="WC">World Cup</button>
+                <button class="btn league-btn hidden" type="button" data-league="WC">World Cup</button>
                 <button class="btn league-btn" type="button" data-league="ALL">All</button>
               </div>
             </div>
@@ -748,6 +748,6 @@
     </button>
   </nav>
 
-  <script src="app.js?v=20260902b"></script>
+  <script src="app.js?v=20261123b"></script>
 </body>
 </html>

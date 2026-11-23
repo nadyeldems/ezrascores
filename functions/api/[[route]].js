@@ -929,6 +929,29 @@ function isLiveEvent(event) {
   return /\d{1,3}\s*'/.test(s);
 }
 
+// A match still flagged live this long after kickoff is almost certainly over;
+// the live feed dropped it before reporting full time.
+const STALE_LIVE_AFTER_MS = 150 * 60 * 1000;
+
+function isStaleLiveEvent(event, nowMs = Date.now()) {
+  if (!event || typeof event !== "object" || !isLiveEvent(event)) return false;
+  const kickoffMs = eventKickoffMs(event);
+  return Number.isFinite(kickoffMs) && nowMs - kickoffMs > STALE_LIVE_AFTER_MS;
+}
+
+// Merge two snapshots of one event without letting a late live snapshot
+// overwrite a status that has already reached full time.
+function mergeEventSnapshots(prev, next) {
+  if (!prev) return next;
+  const merged = { ...prev, ...next };
+  if (isFinalEvent(prev) && !isFinalEvent(next) && isLiveEvent(next)) {
+    for (const field of ["strStatus", "strProgress", "strMinute", "intHomeScore", "intAwayScore"]) {
+      if (prev[field] !== undefined && prev[field] !== null && prev[field] !== "") merged[field] = prev[field];
+    }
+  }
+  return merged;
+}
+
 function eventKickoffMs(event, fallbackKickoffIso = "") {
   // Prefer strTimestampUTC to avoid local-time/DST ambiguity (strTime is UK local time).
   const rawUtc = String(event?.strTimestampUTC || "").trim();
@@ -1449,6 +1472,7 @@ async function hydrateEventScoresForDay(events, key, db, dayIso) {
   const candidates = list.filter((event) => {
     if (!event || typeof event !== "object") return false;
     if (!String(event.idEvent || "").trim()) return false;
+    if (isStaleLiveEvent(event)) return true;
     return numericScore(event.intHomeScore) === null || numericScore(event.intAwayScore) === null;
   });
   if (!candidates.length) return list;
@@ -1466,9 +1490,11 @@ async function hydrateEventScoresForDay(events, key, db, dayIso) {
       }
       const fullEvent = result?.event && typeof result.event === "object" ? normalizeEventForCache(result.event) : null;
       if (fullEvent) {
+        const fullTime = isFinalEvent(fullEvent);
         event.strStatus = fullEvent.strStatus || event.strStatus || "";
-        event.strProgress = fullEvent.strProgress || event.strProgress || "";
-        event.strMinute = fullEvent.strMinute || event.strMinute || "";
+        // Drop a leftover live minute once the match is over.
+        event.strProgress = fullTime ? fullEvent.strProgress || "" : fullEvent.strProgress || event.strProgress || "";
+        event.strMinute = fullTime ? fullEvent.strMinute || "" : fullEvent.strMinute || event.strMinute || "";
         event.strTimestamp = fullEvent.strTimestamp || event.strTimestamp || "";
         if (fullEvent.strTime) event.strTime = fullEvent.strTime;
       }
@@ -2464,11 +2490,22 @@ async function accountAuth(db, request) {
 
 const ADMIN_SESSION_MS = 1000 * 60 * 60 * 12;
 const LEAGUE_VISIBILITY_KEY = "league_visibility_v1";
-const LEAGUE_VISIBILITY_CODES = ["EPL", "CHAMP", "LALIGA"];
+const LEAGUE_VISIBILITY_CODES = ["EPL", "CHAMP", "LALIGA", "WC"];
+const LEAGUE_CODE_TO_ID = { EPL: "4328", CHAMP: "4329", LALIGA: "4335", WC: "4429" };
 const KICKOFF_OFFSET_KEY = "api_kickoff_offset_minutes";
 
 function defaultLeagueVisibility() {
-  return { EPL: true, CHAMP: true, LALIGA: true };
+  // The World Cup stays off between tournaments; switch it on from the admin tool.
+  return { EPL: true, CHAMP: true, LALIGA: true, WC: false };
+}
+
+// League ids worth fetching: hidden leagues (e.g. the World Cup out of season)
+// are skipped so the cron and live snapshot don't spend API calls on them.
+async function activeLeagueIds(db) {
+  if (!db) return TABLE_LEAGUE_IDS.filter((id) => id !== LEAGUE_CODE_TO_ID.WC);
+  const visibility = await getLeagueVisibility(db).catch(() => defaultLeagueVisibility());
+  const ids = LEAGUE_VISIBILITY_CODES.filter((code) => visibility[code]).map((code) => LEAGUE_CODE_TO_ID[code]);
+  return ids.length ? ids : [LEAGUE_CODE_TO_ID.EPL];
 }
 
 function normalizeLeagueVisibilityMap(value) {
@@ -4384,7 +4421,7 @@ async function handleUsersSearch(db, request) {
 // Shared helper: pick a featured fixture from ezra_fixtures_cache (no TheSportsDB call).
 // datesToTry is an array of ISO date strings to attempt in order (e.g. [today, tomorrow]).
 async function selectFeaturedFixtureFromCache(db, datesToTry) {
-  const leagueIds = ["4328", "4329", "4335", "4429"];
+  const leagueIds = await activeLeagueIds(db);
   const shuffle = (arr) => {
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) {
@@ -4855,7 +4892,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       for (let i = 0; i < chunk; i += 1) {
         offsets.push(cursor + i);
       }
-      for (const leagueId of TABLE_LEAGUE_IDS) {
+      for (const leagueId of await activeLeagueIds(db)) {
         let upserts = 0;
         for (const offset of offsets) {
           const targetIso = addDaysIso(todayIso, offset);
@@ -4888,7 +4925,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       const todayIso = new Date().toISOString().slice(0, 10);
       const seasons = seasonCandidatesForSweep(todayIso);
       const results = [];
-      for (const leagueId of TABLE_LEAGUE_IDS) {
+      for (const leagueId of await activeLeagueIds(db)) {
         const seasonResults = [];
         let totalUpserts = 0;
         for (const season of seasons) {
@@ -5313,8 +5350,7 @@ function mergeEventsByKey(events) {
     if (!event || typeof event !== "object") continue;
     const key = fixtureCacheKey(event);
     if (!key) continue;
-    const prev = map.get(key);
-    map.set(key, prev ? { ...prev, ...event } : event);
+    map.set(key, mergeEventSnapshots(map.get(key), event));
   }
   return [...map.values()];
 }
@@ -5521,7 +5557,13 @@ async function handleEzraFixturesRoute(context, key) {
   }
 
   let eventsOut = sortByDateTime(fromCache);
+  const staleLiveIds = new Set(eventsOut.filter((event) => isStaleLiveEvent(event)).map((event) => fixtureCacheKey(event)));
   eventsOut = await hydrateEventScoresForDay(eventsOut, key, db, dateIso);
+  if (staleLiveIds.size) {
+    // Write repaired results back so the cache stops serving a stuck "live" state.
+    const repaired = eventsOut.filter((event) => staleLiveIds.has(fixtureCacheKey(event)) && !isLiveEvent(event));
+    if (repaired.length) context.waitUntil(upsertFixtures(db, leagueId, repaired).catch(() => null));
+  }
   if (dateIso === todayIso) {
     try {
       const origin = `${url.protocol}//${url.host}`;
@@ -5913,8 +5955,7 @@ function mergeEvents(baseEvents, liveEvents) {
     if (!event || typeof event !== "object") return;
     const key = eventKey(event);
     if (!key) return;
-    const existing = byKey.get(key);
-    byKey.set(key, existing ? { ...existing, ...event } : event);
+    byKey.set(key, mergeEventSnapshots(byKey.get(key), event));
   });
   return [...byKey.values()];
 }
@@ -5974,7 +6015,7 @@ async function buildLiveSnapshot(key, db) {
   const leaguePayload = {};
   const offsetMinutes = db ? await getKickoffOffset(db) : 0;
 
-  for (const leagueId of TABLE_LEAGUE_IDS) {
+  for (const leagueId of await activeLeagueIds(db)) {
     const [todayById, liveV2] = await Promise.all([
       fetchSportsDb("v1", key, `eventsday.php?d=${encodeURIComponent(todayIso)}&l=${encodeURIComponent(leagueId)}`).catch(() => null),
       fetchSportsDb("v2", key, `livescore/${leagueId}`).catch(() => null),

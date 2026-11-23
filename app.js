@@ -21,6 +21,8 @@ const LIVE_PROBE_IDLE_MS = THREE_HOURS_MS;
 const STATIC_REFRESH_MS = THREE_HOURS_MS;
 const API_FETCH_TIMEOUT_MS = 12000;
 const API_FETCH_RETRIES = 1;
+// A match still marked live this long after kickoff is treated as over.
+const STALE_LIVE_AFTER_MS = 4 * 60 * 60 * 1000;
 
 const LEAGUES = {
   EPL: { id: "4328", name: "English Premier League" },
@@ -29,14 +31,15 @@ const LEAGUES = {
   WC: { id: "4429", name: "FIFA World Cup", season: "2026-2027" },
 };
 const LEAGUE_CODES = Object.keys(LEAGUES);
-const DEFAULT_LEAGUE_VISIBILITY = { EPL: true, CHAMP: true, LALIGA: true, WC: true };
+// The World Cup is hidden between tournaments; the admin tool can switch it back on.
+const DEFAULT_LEAGUE_VISIBILITY = { EPL: true, CHAMP: true, LALIGA: true, WC: false };
 
 function normalizeLeagueVisibility(input) {
   const next = {
     EPL: Boolean(input?.EPL),
     CHAMP: Boolean(input?.CHAMP),
     LALIGA: Boolean(input?.LALIGA),
-    WC: Boolean(input?.WC ?? true),
+    WC: Boolean(input?.WC),
   };
   if (!next.EPL && !next.CHAMP && !next.LALIGA && !next.WC) {
     next.EPL = true;
@@ -2519,7 +2522,7 @@ function renderNotificationsPanel() {
         return `<div class="notification-row${unreadClass}">
           <span class="notif-icon" aria-hidden="true">${icon}</span>
           <p>${escapeHtml(item.message || "")}</p>
-          <p class="notification-time">${escapeHtml(item.timeLabel || "")}</p>
+          <p class="notification-time">${escapeHtml(notificationTimeLabel(item))}</p>
         </div>`;
       })
       .join("");
@@ -2547,6 +2550,19 @@ function setNotificationsOpen(open) {
     persistNotificationsState();
     renderNotificationsPanel();
   }
+}
+
+// "13:28" for today, "Yesterday 13:28", "Sat 13:28" within a week, else "22 Mar".
+function notificationTimeLabel(item) {
+  const at = new Date(String(item?.timeIso || ""));
+  if (Number.isNaN(at.getTime())) return String(item?.timeLabel || "");
+  const time = at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const daysAgo = Math.round((startOfDay(new Date()) - startOfDay(at)) / 86400000);
+  if (daysAgo <= 0) return time;
+  if (daysAgo === 1) return `Yesterday ${time}`;
+  if (daysAgo < 7) return `${at.toLocaleDateString("en-GB", { weekday: "short" })} ${time}`;
+  return at.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
 function getNotifPrefs() {
@@ -3510,8 +3526,15 @@ function completeQuest(questId) {
   if (daily.completed.includes(questId)) return false;
   daily.completed.push(questId);
   const pts = Number(QUEST_POINTS[questId] ?? 5);
-  awardQuestBonus(questId);
-  showRewardToast(`Quest complete • +${pts} pts`);
+  const awarded = awardQuestBonus(questId);
+  // Only promise points that were actually added; signed-out players don't bank them.
+  if (awarded) {
+    showRewardToast(`Quest complete • +${pts} pts`);
+  } else if (!accountSignedIn()) {
+    showRewardToast(`Quest complete • sign in to bank +${pts} pts`);
+  } else {
+    showRewardToast("Quest complete");
+  }
   persistLocalMetaState();
   scheduleCloudStateSync();
   safeLoad(() => flushAccountPointsSync(), null);
@@ -3552,7 +3575,11 @@ function shuffleList(list) {
 async function pickDailyRandomQuestPlayer(forceNew = false) {
   const daily = todayQuestState();
   if (daily.randomTarget && !forceNew) return daily.randomTarget;
-  const teams = shuffleList(allLeagueTeams());
+  // The Squad tab only shows the favourite team, so pick from that squad first;
+  // a player from another club can't be found there.
+  const favorite = state.favoriteTeam || null;
+  const others = shuffleList(allLeagueTeams()).filter((team) => !favorite || team?.idTeam !== favorite.idTeam);
+  const teams = favorite ? [favorite, ...others] : others;
   let chosen = null;
   for (const team of teams.slice(0, 12)) {
     const rawPlayers = await fetchPlayersForTeam(team);
@@ -3865,6 +3892,10 @@ function dailyQuestList() {
     ? "Quest complete. Bonus points awarded."
     : dailyFx
     ? `Predict today's featured match: ${fixtureLabel}`
+    : !accountSignedIn()
+    ? "Sign in to unlock today's featured match."
+    : state.dailyFixture.failed
+    ? "Couldn't load today's featured match. Tap to retry."
     : state.dailyFixture.checked
     ? "No featured fixture today — check back later."
     : "Loading today's featured fixture...";
@@ -3875,11 +3906,23 @@ function dailyQuestList() {
       title: "Predict Today's Feature Match",
       description: fixtureDesc,
       done: fixtureDone,
-      buttonLabel: !fixtureDone && dailyFx ? "Go to Fixture" : null,
+      buttonLabel: fixtureDone
+        ? null
+        : dailyFx
+        ? "Go to Fixture"
+        : !accountSignedIn()
+        ? "Sign In"
+        : state.dailyFixture.failed
+        ? "Retry"
+        : null,
       statusLabel: fixtureDone ? "✓" : null,
       onClick: async () => {
         if (!dailyFx?.eventId) {
-          if (!state.dailyFixture.loading) loadDailyFixture();
+          if (!accountSignedIn()) {
+            setAccountMenuOpen(true);
+            return;
+          }
+          if (!state.dailyFixture.loading) loadDailyFixture(true);
           return;
         }
         // Navigate to predict tab and auto-open the fixture.
@@ -3909,7 +3952,7 @@ function dailyQuestList() {
         ? "Quest complete. Bonus points awarded."
         : target
         ? `Find ${target.name} (${target.teamName}) in squad and tap for details`
-        : "Start quest to get a random player from any league.",
+        : "Start quest to get a random player from your team's squad.",
       done: randomDone,
       buttonLabel: !randomDone && !randomStarted ? "Start Quest" : null,
       statusLabel: randomDone ? "✓" : randomStarted ? "Active" : null,
@@ -3948,7 +3991,11 @@ async function loadDailyFixture(force = false) {
     state.dailyFixture.data = data?.fixture || null;
     state.dailyFixture.at = Date.now();
     state.dailyFixture.checked = true;
-  } catch { /* silently ignore */ }
+    state.dailyFixture.failed = false;
+  } catch {
+    // Show a retry message instead of leaving the quest stuck on "Loading...".
+    state.dailyFixture.failed = true;
+  }
   state.dailyFixture.loading = false;
   renderMissionsPanel();
 }
@@ -6219,7 +6266,7 @@ function applyClubThemeFromTeam(team) {
   const textBase = tintHex(primary, 0.22);
   const text = ensureTextContrast(textBase, panel, 4.8);
   const textSoftBase = blendHex(text, secondary, 0.24);
-  const textSoft = ensureTextContrast(textSoftBase, panel, 3.4);
+  const textSoft = ensureTextContrast(textSoftBase, panel, 4.6);
 
   document.body.style.setProperty("--club-primary", primary);
   document.body.style.setProperty("--club-secondary", secondary);
@@ -7243,7 +7290,7 @@ function renderSquadPanel() {
       fx.innerHTML = `
         <span class="goal-stage goal-word">GOAL!</span>
         <span class="goal-stage goal-team-name">QUEST COMPLETE</span>
-        <span class="goal-stage goal-scoreline">+5 PTS</span>
+        <span class="goal-stage goal-scoreline">+${Number(QUEST_POINTS["quest-random-player"] ?? 3)} PTS</span>
       `;
       row.appendChild(fx);
     }
@@ -8649,6 +8696,10 @@ function eventState(event) {
   if (hasDeferredStatus) {
     return { key: "upcoming", label: "upcoming" };
   }
+  if (hasLiveStatus && elapsedMs !== null && elapsedMs >= STALE_LIVE_AFTER_MS) {
+    // The feed never reported full time; don't keep showing a live badge hours later.
+    return { key: "final", label: "result pending", pending: true };
+  }
   if (hasLiveStatus) {
     const progress = liveProgressLabel(event);
     const label = progress === "LIVE" ? "live" : `live ${progress}`;
@@ -8685,6 +8736,7 @@ function eventState(event) {
 }
 
 function detailStatusText(event, stateInfo) {
+  if (stateInfo?.pending) return "Result pending";
   if (stateInfo?.key === "final") return "Full Time";
   if (stateInfo?.key === "live") {
     const progress = liveProgressLabel(event);
@@ -10398,11 +10450,25 @@ function renderDetailRows(rows) {
     .join("")}</div>`;
 }
 
+// Turn raw feed keys like "expected_goals" or "Shots insidebox" into readable labels.
+function prettyStatLabel(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  if (/^expected[_ ]goals$/i.test(text)) return "Expected goals (xG)";
+  const spaced = text
+    .replace(/_/g, " ")
+    .replace(/insidebox/gi, "inside box")
+    .replace(/outsidebox/gi, "outside box")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 function normalizedStats(stats) {
   if (!Array.isArray(stats)) return [];
   return stats
     .map((row) => ({
-      label: row.strStat || row.strType || "",
+      label: prettyStatLabel(row.strStat || row.strType || ""),
       home: row.strHome || row.intHome || row.strValue1 || "",
       away: row.strAway || row.intAway || row.strValue2 || "",
     }))
@@ -13552,6 +13618,10 @@ function attachEvents() {
     placePlayerPopElement();
   });
 
+  // Debug tools only appear when the page is opened with ?debug in the URL.
+  if (new URLSearchParams(window.location.search).has("debug")) {
+    document.getElementById("debug-settings-group")?.classList.remove("hidden");
+  }
   if (el.debugGoalBtn) {
     el.debugGoalBtn.addEventListener("click", () => {
       triggerDebugGoalAnimation();

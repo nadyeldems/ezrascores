@@ -7,7 +7,7 @@
   --amber: #ff9a1f;
   --amber-soft: #c87713;
   --text: #ffa52f;
-  --text-soft: #a76519;
+  --text-soft: #c98d4a;
   --danger: #ff4a4a;
   --success: #78d47f;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -296,7 +296,7 @@ body[data-theme="club"] {
   --amber: var(--club-primary, #ff9a1f);
   --amber-soft: var(--club-secondary, #c87713);
   --text: var(--club-text, #ffa52f);
-  --text-soft: var(--club-text-soft, #a76519);
+  --text-soft: var(--club-text-soft, #c98d4a);
   background:
     radial-gradient(circle at 10% 0%, var(--club-primary, #ff9a1f), transparent 38%),
     radial-gradient(circle at 88% 100%, var(--club-secondary, #c87713), transparent 40%),
@@ -6312,7 +6312,7 @@ body[data-motion="arcade"] .fixture-focus {
   .bottom-nav-btn.active::after {
     content: "";
     position: absolute;
-    bottom: calc(max(0.5rem, var(--safe-bottom)) + 0.18rem);
+    top: 0;
     width: 1.4rem;
     height: 2px;
     border-radius: 999px;
@@ -6855,5 +6855,27 @@ body[data-gameday="upcoming"] .favorite-banner {
   .kickoff-time,
   .predict-settle-badge {
     font-size: 0.8rem;
+  }
+}
+
+/* Accessibility: pinch-zoom is allowed again, so keep form fields at 16px on
+   phones to stop iOS zooming in when one is focused. */
+@media (max-width: 720px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Accessibility: honour the system "reduce motion" setting. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

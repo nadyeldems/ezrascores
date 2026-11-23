@@ -8,10 +8,15 @@ This follows a Keep-a-Changelog style with product-friendly language.
 - 
 
 ### Improved
-- 
+- You can pinch to zoom again, secondary text is easier to read, and animations calm down when your device asks for reduced motion.
+- Match stats use plain names ("Expected goals (xG)", "Shots inside box"), and older notifications show their day or date.
+- The World Cup is tucked away until the next tournament.
 
 ### Fixed
-- 
+- Matches no longer stay stuck on "live" long after the final whistle.
+- "Explore A Random Player" now picks someone from your own team's squad, so you can actually find them, and its celebration shows the right points.
+- Finishing a quest while signed out no longer promises points you don't get; it asks you to sign in to bank them.
+- The "Predict Today's Feature Match" quest no longer gets stuck on "Loading" when you're signed out — it now asks you to sign in, and offers a retry if loading fails.
 
 ## [2026-02-27]
 ### Added
