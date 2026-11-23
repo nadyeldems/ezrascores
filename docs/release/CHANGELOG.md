@@ -4,6 +4,18 @@ All notable user-facing changes are documented here.
 This follows a Keep-a-Changelog style with product-friendly language.
 
 ## [Unreleased]
+### Improved
+- Predictions now decide the weekly family league: exact score 5 pts, right result 2 pts (from Monday 30 Nov; 2 and 1 before).
+- Three daily quests instead of four: make a prediction, play today's quiz (it rotates), check the standings. Quest points add to your all-time total.
+- One simple rule for points: predictions win the week, and your all-time total unlocks a new avatar every 67 points, automatically.
+- Play without signing in: predictions and quest points are kept on your device and added to your account when you sign in.
+- Fair play: the family's picks for a match stay hidden until you've made yours.
+- A kinder streak: one missed day a week won't break it.
+
+### Fixed
+- Private by default: no searching for other users or following people outside your leagues.
+
+## [2026-11-23]
 ### Added
 - A new look: My Team, Matches, Play, Leagues and Me tabs, with clearer text and a much slimmer header on phones.
 - Pick your team when you first open the app, then a quick how-to-play.

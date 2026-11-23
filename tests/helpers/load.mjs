@@ -20,9 +20,15 @@ export async function loadRouteHelpers(names) {
   return import(pathToFileURL(file).href);
 }
 
-// Pull standalone top-level functions out of app.js by name (no DOM needed).
-export function loadAppFunctions(names) {
+// Pull standalone top-level functions (and one-line constants they use) out of
+// app.js by name (no DOM needed).
+export function loadAppFunctions(names, constNames = []) {
   const src = fs.readFileSync(repoPath("app.js"), "utf8");
+  const consts = constNames.map((name) => {
+    const match = src.match(new RegExp(`^const ${name} = .*;$`, "m"));
+    if (!match) throw new Error(`app.js has no one-line const ${name}`);
+    return match[0];
+  });
   const bodies = names.map((name) => {
     const start = src.search(new RegExp(`^(async )?function ${name}\\(`, "m"));
     if (start < 0) throw new Error(`app.js has no function ${name}`);
@@ -34,5 +40,5 @@ export function loadAppFunctions(names) {
     throw new Error(`Unbalanced braces in ${name}`);
   });
   // eslint-disable-next-line no-new-func
-  return new Function(`${bodies.join("\n")}\nreturn { ${names.join(", ")} };`)();
+  return new Function(`${consts.join("\n")}\n${bodies.join("\n")}\nreturn { ${names.join(", ")} };`)();
 }

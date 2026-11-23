@@ -1,14 +1,33 @@
 const API_PROXY_BASE = "/api";
 const ONE_MINUTE_MS = 60 * 1000;
 
-// Quest point values — must stay in sync with QUEST_POINTS in functions/api/[[route]].js
-const QUEST_POINTS = {
-  "quest-pop-5": 5,
-  "quest-random-player": 3,
-  "quest-club-quiz-3": 5,
-  "quest-predict-fixture": 8,
+// Quest sets — must stay in sync with QUEST_SETS in functions/api/[[route]].js.
+// v2 starts with the week of Monday 30 Nov 2026: three quests that add to
+// all-time points only (predictions alone decide the weekly league).
+const QUEST_SETS = {
+  v1: {
+    from: "",
+    points: { "quest-predict-fixture": 8, "quest-pop-5": 5, "quest-random-player": 3, "quest-club-quiz-3": 5 },
+    bonus: 10,
+  },
+  v2: {
+    from: "2026-11-30",
+    points: { "q2-predict": 4, "q2-quiz": 4, "q2-standings": 2 },
+    bonus: 2,
+  },
 };
-const QUEST_ALL_DONE_BONUS = 10;
+const QUEST_POINTS = { ...QUEST_SETS.v1.points, ...QUEST_SETS.v2.points };
+// Predictions: exact score 5, right result 2 from the same Monday (was 2 and 1).
+const SCORING_V2_FROM_MS = Date.parse("2026-11-30T00:01:00Z");
+
+function predictionPointsFor(pickHome, pickAway, finalHome, finalAway, kickoffIso = "") {
+  const kickoffMs = Date.parse(String(kickoffIso || ""));
+  const v2 = (Number.isFinite(kickoffMs) ? kickoffMs : Date.now()) >= SCORING_V2_FROM_MS;
+  if (pickHome === finalHome && pickAway === finalAway) return { points: v2 ? 5 : 2, exact: true, correct: true };
+  const sign = (h, a) => Math.sign(h - a);
+  if (sign(pickHome, pickAway) === sign(finalHome, finalAway)) return { points: v2 ? 2 : 1, exact: false, correct: true };
+  return { points: 0, exact: false, correct: false };
+}
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 const LEAGUE_VISIBILITY_REFRESH_MS = ONE_MINUTE_MS;
 const RESULTS_HISTORY_DAYS = 92;
@@ -737,8 +756,16 @@ function avatarUnlockStateFor(avatarInput = null) {
     if (unlocked.includes(variant)) return;
     unlocked.push(variant);
   });
+  // No credits to spend: each 67 all-time points opens the next avatar in order.
+  let spare = Math.max(0, earnedCredits - unlocked.filter((v) => !AVATAR_STARTER_VARIANTS.includes(v)).length);
+  for (const variant of AVATAR_PRESET_FILES) {
+    if (spare <= 0) break;
+    if (unlocked.includes(variant)) continue;
+    unlocked.push(variant);
+    spare -= 1;
+  }
   const spentCredits = Math.max(0, unlocked.filter((v) => !AVATAR_STARTER_VARIANTS.includes(v)).length);
-  const availableCredits = Math.max(0, earnedCredits - spentCredits);
+  const availableCredits = 0;
   const slotCount = Math.min(
     AVATAR_PRESET_FILES.length,
     Math.max(slotCountByPoints, unlocked.length + availableCredits, AVATAR_STARTER_VARIANTS.length)
@@ -857,8 +884,8 @@ function renderAvatarUnlockMeta() {
   const unlockedCount = unlockState.unlockedVariants.length;
   const totalCount = AVATAR_PRESET_FILES.length;
   const creditText = `Credits ${unlockState.availableCredits}/${unlockState.earnedCredits}`;
-  if (unlockState.slotCount >= AVATAR_PRESET_FILES.length) {
-    el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. ${creditText}.`;
+  if (unlockedCount >= AVATAR_PRESET_FILES.length) {
+    el.avatarUnlockMeta.textContent = `All ${totalCount} avatars unlocked!`;
     return;
   }
   if (unlockState.canUnlockMore) {
@@ -867,7 +894,8 @@ function renderAvatarUnlockMeta() {
   }
   const nextAt = Number(unlockState.nextMilestoneAt || 0);
   const remaining = Math.max(0, nextAt - unlockState.points);
-  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. Next new avatar in ${remaining} pts. ${creditText}.`;
+  void creditText;
+  el.avatarUnlockMeta.textContent = `Unlocked ${unlockedCount}/${totalCount}. Next new avatar at ${nextAt} all-time points (${remaining} to go).`;
   const fill = document.getElementById("avatar-unlock-bar-fill");
   if (fill) {
     const into = AVATAR_UNLOCK_EVERY_POINTS - remaining;
@@ -882,6 +910,7 @@ function renderAvatarPresetGrid() {
   const pendingVariant = String(state.avatarPendingConfirmVariant || "").trim();
   const showFx = Date.now() < Number(state.avatarConfirmFxUntil || 0);
   const ordered = [...unlockState.unlockedVariants, ...AVATAR_PRESET_FILES.filter((v) => !unlockState.unlockedVariants.includes(v))];
+  const nextLockedVariant = AVATAR_PRESET_FILES.find((v) => !unlockState.unlockedVariants.includes(v)) || "";
   const cards = ordered.map((variant) => {
     const unlocked = unlockState.unlockedVariants.includes(variant);
     const selected = selectedVariant === variant;
@@ -896,8 +925,8 @@ function renderAvatarPresetGrid() {
           ? "Tap again to confirm"
           : unlocked
             ? "Available now"
-            : unlockState.canUnlockMore
-              ? `Unlock at ${AVATAR_UNLOCK_EVERY_POINTS} pts`
+            : variant === nextLockedVariant && unlockState.nextMilestoneAt
+              ? `New at ${unlockState.nextMilestoneAt} pts`
               : "Locked";
     return `
       <button
@@ -1945,7 +1974,8 @@ function addNotification(message, meta = {}) {
 function renderLifetimePointsPill() {
   if (!el.lifetimePointsPill) return;
   if (!accountSignedIn()) {
-    el.lifetimePointsPill.textContent = "Total points: --";
+    const devicePoints = Math.max(0, Number(state.familyLeague?.personalPoints || 0));
+    el.lifetimePointsPill.textContent = devicePoints ? `Points: ${devicePoints} (this device)` : "Total points: 0";
     el.lifetimePointsPill.classList.remove("syncing");
     return;
   }
@@ -1993,7 +2023,6 @@ function maybeNotifyDailyQuestReset() {
   if (state.lastQuestNotificationDate === todayKey) return;
   state.lastQuestNotificationDate = todayKey;
   localStorage.setItem("ezra_last_quest_notification_date", todayKey);
-  addNotification("New daily quests are now available.", { category: "quest" });
 }
 
 function updateLeagueRankSignals(items = [], emitNotifications = true) {
@@ -2598,8 +2627,14 @@ function currentFamilyMemberId() {
   return id ? `acct:${id}` : "";
 }
 
+// Signed-out picks are saved under "device" and merged into the account at sign-in.
+function predictionMemberId() {
+  return currentFamilyMemberId() || "device";
+}
+
 function candidateFamilyMemberKeys() {
   const keys = new Set();
+  if (!accountSignedIn()) return ["device"];
   const id = String(state.account?.user?.id || "").trim();
   const name = String(state.account?.user?.name || "").trim();
   if (id) {
@@ -2615,6 +2650,7 @@ function candidateFamilyMemberKeys() {
       keys.add(lowerName);
     }
   }
+  keys.add("device");
   return [...keys].filter(Boolean);
 }
 
@@ -2743,6 +2779,22 @@ function missionDateKey() {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
 }
 
+function activeQuestSet(dateKey = missionDateKey()) {
+  // ezra_quests_v2=1 in localStorage previews the new quests before the switch-over.
+  if (localStorage.getItem("ezra_quests_v2") === "1") return QUEST_SETS.v2;
+  return dateKey >= QUEST_SETS.v2.from ? QUEST_SETS.v2 : QUEST_SETS.v1;
+}
+
+function questsV2Active() {
+  return activeQuestSet() === QUEST_SETS.v2;
+}
+
+// Today's quiz rotates: pop quiz, club quiz, Higher or Lower.
+function dailyQuizKind(dateKey = missionDateKey()) {
+  const day = Math.floor(Date.parse(`${dateKey}T00:00:00Z`) / 86400000);
+  return ["pop", "club", "hl"][((day % 3) + 3) % 3];
+}
+
 function todayQuestState() {
   ensureMissionState();
   const today = missionDateKey();
@@ -2816,20 +2868,21 @@ function ensureDailyQuestBonusesForSignedInUser() {
   (daily.completed || []).forEach((questId) => {
     const claimKey = questBonusClaimKeyForUserAndQuest(questId, memberId);
     if (state.familyLeague.questBonusByDate[today][claimKey]) return;
-    const pts = Number(QUEST_POINTS[questId] ?? 5);
+    const pts = Number(QUEST_POINTS[questId] ?? 0);
+    if (!pts) return;
     if (!addFamilyPoints(pts)) return;
     state.familyLeague.questBonusByDate[today][claimKey] = true;
     changed = true;
   });
   // Apply all-done bonus if all quests complete and bonus not yet applied.
   if (changed) {
-    const questCount = Object.keys(QUEST_POINTS).length;
+    const questCount = Object.keys(activeQuestSet(today).points).length;
     const doneKeys = Object.keys(state.familyLeague.questBonusByDate[today]).filter(
       (k) => k.startsWith(`${memberId}:`) && !k.endsWith(":__bonus__")
     );
     const bonusKey = `${memberId}:__bonus__`;
     if (doneKeys.length >= questCount && !state.familyLeague.questBonusByDate[today][bonusKey]) {
-      addFamilyPoints(QUEST_ALL_DONE_BONUS);
+      addFamilyPoints(activeQuestSet(today).bonus);
       state.familyLeague.questBonusByDate[today][bonusKey] = true;
     }
   }
@@ -2846,38 +2899,49 @@ function awardQuestBonus(questId) {
   const memberId = currentFamilyMemberId();
   const key = `${memberId}:${questId}`;
   if (state.familyLeague.questBonusByDate[today][key]) return false;
-  const pts = Number(QUEST_POINTS[questId] ?? 5);
+  const pts = Number(QUEST_POINTS[questId] ?? 0);
+  if (!pts) return false;
   if (!addFamilyPoints(pts)) return false;
   state.familyLeague.questBonusByDate[today][key] = true;
   // Check if all quests now complete → award all-done bonus.
-  const questCount = Object.keys(QUEST_POINTS).length;
+  const questSet = activeQuestSet(today);
+  const questCount = Object.keys(questSet.points).length;
   const doneKeys = Object.keys(state.familyLeague.questBonusByDate[today]).filter(
     (k) => k.startsWith(`${memberId}:`) && !k.endsWith(":__bonus__")
   );
   const bonusKey = `${memberId}:__bonus__`;
   if (doneKeys.length >= questCount && !state.familyLeague.questBonusByDate[today][bonusKey]) {
-    addFamilyPoints(QUEST_ALL_DONE_BONUS);
+    addFamilyPoints(questSet.bonus);
     state.familyLeague.questBonusByDate[today][bonusKey] = true;
-    showRewardToast(`All quests done! +${QUEST_ALL_DONE_BONUS} bonus pts 🎉`);
+    showRewardToast(`All quests done! +${questSet.bonus} bonus pts 🎉`);
   }
   scheduleLeagueStandingsRefresh();
   return true;
 }
 
 function completeQuest(questId) {
+  if (!questId) return false;
   const daily = todayQuestState();
   if (daily.completed.includes(questId)) return false;
   daily.completed.push(questId);
-  const pts = Number(QUEST_POINTS[questId] ?? 5);
+  const pts = Number(QUEST_POINTS[questId] ?? 0);
   const awarded = awardQuestBonus(questId);
-  // Only promise points that were actually added; signed-out players don't bank them.
   if (awarded) {
     showRewardToast(`Quest complete • +${pts} pts`);
   } else if (!accountSignedIn()) {
-    showRewardToast(`Quest complete • sign in to bank +${pts} pts`);
+    // Signed out: points are kept on this device and credited when you sign in today.
+    addFamilyPoints(pts);
+    const set = activeQuestSet();
+    const doneToday = daily.completed.filter((id) => id in set.points).length;
+    if (doneToday >= Object.keys(set.points).length && !daily.deviceBonus) {
+      daily.deviceBonus = true;
+      addFamilyPoints(set.bonus);
+    }
+    showRewardToast(`Quest complete • +${pts} pts on this device`);
   } else {
     showRewardToast("Quest complete");
   }
+  renderLifetimePointsPill();
   persistLocalMetaState();
   scheduleCloudStateSync();
   safeLoad(() => flushAccountPointsSync(), null);
@@ -2968,6 +3032,22 @@ async function startPopQuizQuest() {
 function registerPopQuizCorrectAnswer() {
   const daily = todayQuestState();
   daily.popCorrect = Number(daily.popCorrect || 0) + 1;
+  if (questsV2Active()) {
+    if (dailyQuizKind() === "pop" && daily.popCorrect >= 3) {
+      if (state.popQuizQuestActive) {
+        hidePlayerPopLayer();
+        setPlayerPopEnabled(false);
+        state.popQuizQuestActive = false;
+      }
+      completeQuest("q2-quiz");
+    } else {
+      persistLocalMetaState();
+      scheduleCloudStateSync();
+    }
+    renderMissionsPanel();
+    renderFamilyLeaguePanel();
+    return;
+  }
   if (daily.popCorrect >= 5) {
     if (state.popQuizQuestActive) {
       hidePlayerPopLayer();
@@ -3118,7 +3198,7 @@ function answerClubQuiz(optionIndex) {
   state.clubQuizUi.feedbackMode = "correct";
   if (quiz.correct >= 3) {
     quiz.completed = true;
-    completeQuest("quest-club-quiz-3");
+    completeQuest(questsV2Active() ? (dailyQuizKind() === "club" ? "q2-quiz" : "") : "quest-club-quiz-3");
   } else {
     quiz.current = Math.min(Number(quiz.current || 0) + 1, 2);
   }
@@ -3214,7 +3294,70 @@ function renderClubQuizPanel() {
   });
 }
 
+// v2 daily quests: make a prediction, today's quiz, check the standings.
+function dailyQuestListV2() {
+  const set = QUEST_SETS.v2;
+  const daily = todayQuestState();
+  const kind = dailyQuizKind();
+  const done = (id) => isQuestDone(id);
+  const quizCopy = {
+    pop: { title: "Today's quiz: Pop Quiz", todo: "Catch the bouncing player and name 3 correctly." },
+    club: { title: "Today's quiz: Club Quiz", todo: "Answer 3 questions about your club." },
+    hl: { title: "Today's quiz: Higher or Lower", todo: "Finish a 10-round game." },
+  }[kind];
+  const popProgress = kind === "pop" ? Math.min(3, Number(daily.popCorrect || 0)) : 0;
+  return [
+    {
+      id: "q2-predict",
+      points: set.points["q2-predict"],
+      title: "Make a prediction",
+      description: done("q2-predict") ? "Done. Good luck!" : "Predict the score of any match before kick-off.",
+      done: done("q2-predict"),
+      buttonLabel: done("q2-predict") ? null : "Predict",
+      statusLabel: done("q2-predict") ? "✓" : null,
+      onClick: async () => setMainTab("predict"),
+    },
+    {
+      id: "q2-quiz",
+      points: set.points["q2-quiz"],
+      title: quizCopy.title,
+      description: done("q2-quiz") ? "Quiz done for today." : popProgress ? `${popProgress}/3 correct so far` : quizCopy.todo,
+      done: done("q2-quiz"),
+      buttonLabel: done("q2-quiz") ? null : "Play",
+      statusLabel: done("q2-quiz") ? "✓" : null,
+      onClick: async () => {
+        setMainTab("play");
+        if (kind === "pop") await startPopQuizQuest();
+        else if (kind === "club") await startClubQuiz();
+        else await startHigherLowerGame(true);
+      },
+    },
+    {
+      id: "q2-standings",
+      points: set.points["q2-standings"],
+      title: "Check the standings",
+      description: done("q2-standings")
+        ? "Checked. See you tomorrow!"
+        : accountSignedIn()
+        ? "See where you are in your league this week."
+        : "Have a look at the league table.",
+      done: done("q2-standings"),
+      buttonLabel: done("q2-standings") ? null : "Look",
+      statusLabel: done("q2-standings") ? "✓" : null,
+      onClick: async () => {
+        if (accountSignedIn()) {
+          setMainTab("leagues");
+        } else {
+          setMainTab("predict");
+          setMatchesView("table");
+        }
+      },
+    },
+  ];
+}
+
 function dailyQuestList() {
+  if (questsV2Active()) return dailyQuestListV2();
   const daily = todayQuestState();
   const target = daily.randomTarget;
   const clubQuiz = daily.clubQuiz || {};
@@ -3362,23 +3505,13 @@ function renderLeagueMarketBar(eventId) {
   const id = String(eventId || "").trim();
   if (!id) return "";
   const picks = state.leagueMarket.data?.[id];
-  if (!picks || !Array.isArray(picks) || picks.length === 0) return "";
-  // Aggregate into home-win / draw / away-win buckets
-  const buckets = { home: 0, draw: 0, away: 0 };
-  for (const p of picks) {
-    const h = Number(p.home ?? p.h);
-    const a = Number(p.away ?? p.a);
-    if (!Number.isFinite(h) || !Number.isFinite(a)) continue;
-    if (h > a) buckets.home++;
-    else if (h === a) buckets.draw++;
-    else buckets.away++;
-  }
-  const total = buckets.home + buckets.draw + buckets.away;
-  if (total === 0) return "";
-  const pct = (n) => Math.round((n / total) * 100);
-  const homePct = pct(buckets.home);
-  const drawPct = pct(buckets.draw);
-  const awayPct = 100 - homePct - drawPct;
+  // The server sends { home, draw, away, total } percentages, and only once
+  // you've made your own pick (or the match has started), so nobody can copy.
+  if (!picks || typeof picks !== "object" || !Number(picks.total)) return "";
+  const total = Number(picks.total);
+  const homePct = Math.max(0, Math.round(Number(picks.home || 0)));
+  const drawPct = Math.max(0, Math.round(Number(picks.draw || 0)));
+  const awayPct = Math.max(0, 100 - homePct - drawPct);
   return `
     <div class="market-bar-wrap">
       <div class="market-bar-label">League picks (${total})</div>
@@ -3672,7 +3805,7 @@ function renderMissionsPanel() {
   const dash = state.challengeDashboard;
   const streak = Number(dash?.progress?.currentStreak || 0);
   const seasonPts = Number(dash?.currentSeason?.standings?.find((row) => String(row?.user_id || "") === String(state.account.user?.id || ""))?.points || 0);
-  const bonusBadge = allDone ? ` 🎉 All done! +${QUEST_ALL_DONE_BONUS} bonus` : ` • ${completedCount}/${quests.length} complete`;
+  const bonusBadge = allDone ? ` 🎉 All done! +${activeQuestSet().bonus} bonus` : ` • ${completedCount}/${quests.length} complete`;
   const suffix = accountSignedIn() ? ` • ${streak}d streak • ${seasonPts} season pts` : "";
   el.missionsMeta.textContent = `Daily Quests${bonusBadge}${suffix}`;
   el.missionsList.innerHTML = "";
@@ -3717,7 +3850,7 @@ function renderMissionsPanel() {
     progressRow.className = "quest-bonus-progress";
     const pct = Math.round((completedCount / quests.length) * 100);
     progressRow.innerHTML = `
-      <div class="quest-bonus-label">Complete all quests for +${QUEST_ALL_DONE_BONUS} bonus pts</div>
+      <div class="quest-bonus-label">Complete all quests for +${activeQuestSet().bonus} bonus pts</div>
       <div class="quest-bonus-bar"><div class="quest-bonus-fill" style="width:${pct}%"></div></div>
     `;
     el.missionsList.appendChild(progressRow);
@@ -4948,7 +5081,7 @@ function renderFamilyLeaguePanel() {
         ? state.account.user?.avatar || member.avatar
         : member.avatar;
     const avatarHtml = avatarBadgeMarkup(avatarSource, member.name || "User", "league-member-avatar");
-    const showFollow = accountSignedIn() && !isSignedInMember;
+    const showFollow = false; // following was retired: your league is your circle
     const memberUserId = String(member.user_id || "");
     const followingSet = new Set((state.socialFeed.followingIds || []).map((id) => String(id)));
     const pendingOutgoingSet = new Set((state.socialFeed.pendingOutgoingIds || []).map((id) => String(id)));
@@ -5301,13 +5434,18 @@ function seasonCountdownText(endsAt) {
   return `Season ends in ${days}d ${hours}h`;
 }
 
+// The 10 achievements (same codes and names as the server catalogue).
 const ACHIEVEMENT_GUIDE = [
-  { code: "streak_3", name: "On Fire", description: "Complete quests 3 days in a row.", icon: "🔥" },
-  { code: "streak_7", name: "Unstoppable", description: "Complete quests 7 days in a row.", icon: "🏆" },
-  { code: "combo_3", name: "Prediction Combo", description: "Hit 3 correct outcomes in a row.", icon: "⚡" },
+  { code: "exact_1", name: "Pinpoint", description: "Get your first exact score.", icon: "🎯" },
+  { code: "exact_5", name: "Sharp Eye", description: "Get 5 exact score predictions.", icon: "🎯" },
   { code: "exact_10", name: "Sniper", description: "Get 10 exact score predictions.", icon: "🎯" },
-  { code: "mastery_25", name: "Team Analyst", description: "Make 25 predictions for one club.", icon: "📈" },
-  { code: "titles_5", name: "Dynasty", description: "Win 5 mini-league weekly titles.", icon: "👑" },
+  { code: "combo_3", name: "Hot Streak", description: "Get 3 correct results in a row.", icon: "⚡" },
+  { code: "combo_5", name: "Prediction Combo", description: "Get 5 correct results in a row.", icon: "⚡" },
+  { code: "streak_3", name: "On Fire", description: "Do a quest 3 days in a row.", icon: "🔥" },
+  { code: "streak_7", name: "Unstoppable", description: "Do a quest 7 days in a row.", icon: "🏆" },
+  { code: "titles_1", name: "Winner", description: "Win your family league for a week.", icon: "🥇" },
+  { code: "titles_3", name: "Champion", description: "Win 3 weekly titles.", icon: "👑" },
+  { code: "referral_1", name: "Recruiter", description: "Invite someone who makes a prediction.", icon: "🤝" },
 ];
 
 function renderChallengeDashboardPanels() {
@@ -5588,8 +5726,8 @@ function renderTodayPanel() {
       done >= quests.length
         ? `All done for today. Nice! Come back tomorrow for new quests.`
         : accountSignedIn()
-        ? `Finish all ${quests.length} for a +${QUEST_ALL_DONE_BONUS} bonus.`
-        : `Finish all ${quests.length} for a +${QUEST_ALL_DONE_BONUS} bonus. Sign in to keep your points.`;
+        ? `Finish all ${quests.length} for a +${activeQuestSet().bonus} bonus.`
+        : `Finish all ${quests.length} for a +${activeQuestSet().bonus} bonus. Points are saved on this device; sign in today to add them to your account.`;
   }
 }
 
@@ -6007,6 +6145,7 @@ function handleHigherLowerAnswer(direction) {
   if (game.asked >= game.total) {
     game.active = false;
     game.completed = true;
+    if (questsV2Active() && dailyQuizKind() === "hl") completeQuest("q2-quiz");
     const previousBest = Number(localStorage.getItem("ezra_hl_best") || 0);
     game.newBest = game.correct > previousBest;
     if (game.newBest) localStorage.setItem("ezra_hl_best", String(game.correct));
@@ -7733,6 +7872,7 @@ function ensurePlayerPopContinuity() {
 
 async function showRandomPlayerPop(forceNew = false) {
   if (state.playerPop.loading || !state.playerPopEnabled) return;
+  if (state.mainTab !== "play") return;
   if (!el.playerDvdLayer || !el.playerDvdImage || !el.playerDvdAvatar || !el.playerDvdName) return;
   if (
     !forceNew &&
@@ -9658,9 +9798,8 @@ function canPredictFixture(event, stateInfo) {
 
 function settleFamilyPredictions() {
   ensureFamilyLeagueState();
-  if (!accountSignedIn()) return false;
-  migratePredictionEntryKeysForCurrentUser();
-  const currentId = currentFamilyMemberId();
+  if (accountSignedIn()) migratePredictionEntryKeysForCurrentUser();
+  const currentId = predictionMemberId();
   const eventsById = allKnownEventsById();
   let changed = false;
   let pointsDeltaTotal = 0;
@@ -9683,12 +9822,8 @@ function settleFamilyPredictions() {
       const predAway = Number(pick.away);
       if (!Number.isFinite(predHome) || !Number.isFinite(predAway)) return;
       const prevAwarded = Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0;
-      let points = 0;
-      if (predHome === home && predAway === away) {
-        points = 2;
-      } else if (predictionResultCode(predHome, predAway) === finalResult) {
-        points = 1;
-      }
+      void finalResult;
+      const points = predictionPointsFor(predHome, predAway, home, away, record.kickoff).points;
       const delta = pick.scored ? points - prevAwarded : points;
       if (delta !== 0) {
         addFamilyPoints(delta);
@@ -9782,8 +9917,8 @@ function refreshVisibleFixturePredictionBadges() {
 
 function buildPredictionModule(event, stateInfo) {
   ensureFamilyLeagueState();
-  const currentId = currentFamilyMemberId();
-  const activeMember = accountSignedIn() ? { id: currentId, name: state.account.user?.name || "You" } : null;
+  const currentId = predictionMemberId();
+  const activeMember = { id: currentId, name: accountSignedIn() ? state.account.user?.name || "You" : "You" };
   const record = ensurePredictionRecord(event);
   const memberPick = activeMember && record ? resolveMemberPickForRecord(record).pick : null;
   const canPredict = canPredictFixture(event, stateInfo) && Boolean(activeMember) && Boolean(record && !record.settled);
@@ -9817,13 +9952,7 @@ function buildPredictionModule(event, stateInfo) {
       const pickHome = Number(memberPick?.home);
       const pickAway = Number(memberPick?.away);
       if (Number.isFinite(finalHome) && Number.isFinite(finalAway) && Number.isFinite(pickHome) && Number.isFinite(pickAway)) {
-        if (pickHome === finalHome && pickAway === finalAway) {
-          awarded = 2;
-        } else if (predictionResultCode(pickHome, pickAway) === predictionResultCode(finalHome, finalAway)) {
-          awarded = 1;
-        } else {
-          awarded = 0;
-        }
+        awarded = predictionPointsFor(pickHome, pickAway, finalHome, finalAway, record?.kickoff).points;
         if (record) {
           record.settled = true;
           record.finalHome = finalHome;
@@ -9944,7 +10073,9 @@ function buildPredictionModule(event, stateInfo) {
   } else if (lockReason) {
     status.textContent = lockReason;
   } else if (activeMember) {
-    status.textContent = `Saving for ${activeMember.name}`;
+    status.textContent = accountSignedIn()
+      ? `Saving for ${activeMember.name}`
+      : "Saved on this device. Sign in to put it in your family league.";
   }
   if (!canPredict) {
     saveBtn.disabled = true;
@@ -9985,10 +10116,17 @@ function buildPredictionModule(event, stateInfo) {
     scheduleLeagueStandingsRefresh(400);
     renderFamilyLeaguePanel();
     showRewardToast(`Pick locked: ${home}-${away}`, "success");
-    // Check if this satisfies the daily fixture quest.
-    const dailyFx = state.dailyFixture?.data;
-    if (dailyFx?.eventId && String(event?.idEvent || "") === String(dailyFx.eventId || "")) {
-      completeQuest("quest-predict-fixture");
+    // Your pick unlocks the league's split for this match.
+    const marketLeague = normalizeLeagueCodeClient(currentSelectedLeagueRecord()?.code || state.familyLeague?.leagueCode || "");
+    if (marketLeague && accountSignedIn()) safeLoad(() => loadLeagueMarket(marketLeague, true), null);
+    // Daily quest: v2 = any prediction; v1 = the featured fixture.
+    if (questsV2Active()) {
+      completeQuest("q2-predict");
+    } else {
+      const dailyFx = state.dailyFixture?.data;
+      if (dailyFx?.eventId && String(event?.idEvent || "") === String(dailyFx.eventId || "")) {
+        completeQuest("quest-predict-fixture");
+      }
     }
     setTimeout(() => {
       saveBtn.disabled = false;
@@ -11150,6 +11288,7 @@ function normalizeMainTab(tab) {
 function setMatchesView(view) {
   const next = view === "table" ? "table" : "fixtures";
   state.matchesView = next;
+  if (next === "table" && questsV2Active()) completeQuest("q2-standings");
   localStorage.setItem("ezra_matches_view", next);
   document.querySelectorAll(".matches-view-btn").forEach((btn) => {
     const active = btn.dataset.matchesView === next;
@@ -11168,9 +11307,10 @@ function renderMePanel() {
   if (accountSignedIn()) {
     const name = state.account?.user?.name || "you";
     const points = String(el.lifetimePointsPill?.textContent || "").replace(/^Total points:\s*/i, "");
-    summary.textContent = `Signed in as ${name}${team ? ` · supporting ${team}` : ""}${points && points !== "--" ? ` · ${points} points` : ""}. Your points, streak and badges are saved.`;
+    summary.textContent = `Signed in as ${name}${team ? ` · supporting ${team}` : ""}${points && points !== "--" ? ` · ${points} all-time points` : ""}. Predictions win the week; everything you do adds to your all-time points, which unlock avatars.`;
   } else {
-    summary.textContent = `Playing on this device${team ? ` · supporting ${team}` : ""}. Sign in to save your points and join a family league.`;
+    const devicePoints = Math.max(0, Number(state.familyLeague?.personalPoints || 0));
+    summary.textContent = `Playing on this device${team ? ` · supporting ${team}` : ""}${devicePoints ? ` · ${devicePoints} points` : ""}. Sign in to keep your points and join a family league.`;
   }
 }
 
@@ -11178,6 +11318,13 @@ function setMainTab(tab) {
   const safe = normalizeMainTab(tab);
   if (safe === state.mainTab) {
     return;
+  }
+  if (safe === "leagues" && accountSignedIn() && questsV2Active()) completeQuest("q2-standings");
+  // The bouncing pop-quiz player lives on the Play tab only.
+  if (safe !== "play") {
+    hidePlayerPopLayer();
+  } else if (state.playerPopEnabled) {
+    setTimeout(() => showRandomPlayerPop(), 300);
   }
   state.mainTab = safe;
   localStorage.setItem("ezra_main_tab", safe);
@@ -11279,6 +11426,8 @@ function renderMobileSectionLayout() {
   fun.classList.toggle("play-focus", play);
   fun.classList.toggle("leagues-focus", leagues);
   fun.classList.toggle("me-focus", me);
+  // With the v2 quests the Play tab shows only today's quiz (it rotates daily).
+  fun.dataset.todayQuiz = questsV2Active() ? dailyQuizKind() : "";
 }
 
 function showRewardToast(message, tone = "success") {
@@ -11761,9 +11910,10 @@ function showFullTimeReveal(event, favName) {
   if (pick && Number.isFinite(Number(pick.home)) && Number.isFinite(Number(pick.away))) {
     const ph = Number(pick.home);
     const pa = Number(pick.away);
-    const exact = ph === home && pa === away;
-    const result = Math.sign(ph - pa) === Math.sign(home - away);
-    pickEl.textContent = `You predicted ${ph}-${pa}: ${exact ? "spot on! +2 pts" : result ? "right result, +1 pt" : "no points this time"}.`;
+    const scored = predictionPointsFor(ph, pa, home, away, record?.kickoff);
+    pickEl.textContent = `You predicted ${ph}-${pa}: ${
+      scored.exact ? `spot on! +${scored.points} pts` : scored.correct ? `right result, +${scored.points} pts` : "no points this time"
+    }.`;
   } else {
     pickEl.textContent = "Predict the next one before kick-off to score points.";
   }

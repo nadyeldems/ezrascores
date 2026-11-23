@@ -3017,6 +3017,7 @@ body[data-motion="minimal"] .avatar-hero-img {
 #fun-zone-panel.play-focus #quests-panel,
 #fun-zone-panel.play-focus #pop-quiz-panel,
 #fun-zone-panel.play-focus #club-quiz-panel,
+#fun-zone-panel.play-focus #today-panel,
 #fun-zone-panel.play-focus #higher-lower-panel {
   display: block;
 }
@@ -7452,4 +7453,29 @@ body.onboarding-open {
 @keyframes ezra-confetti {
   from { background-position: 0 -120px, 30px -90px, 60px -60px; }
   to { background-position: 0 100vh, 30px 100vh, 60px 100vh; }
+}
+
+
+/* v2 quests: Play shows the Today checklist instead of the old quest list, and
+   only today's quiz (pop / club / higher-lower rotate daily). */
+#fun-zone-panel.play-focus[data-today-quiz] #quests-panel,
+#fun-zone-panel.play-focus[data-today-quiz="pop"] #club-quiz-panel,
+#fun-zone-panel.play-focus[data-today-quiz="pop"] #higher-lower-panel,
+#fun-zone-panel.play-focus[data-today-quiz="club"] #pop-quiz-panel,
+#fun-zone-panel.play-focus[data-today-quiz="club"] #higher-lower-panel,
+#fun-zone-panel.play-focus[data-today-quiz="hl"] #pop-quiz-panel,
+#fun-zone-panel.play-focus[data-today-quiz="hl"] #club-quiz-panel {
+  display: none;
+}
+
+#fun-zone-panel.play-focus[data-today-quiz=""] #quests-panel {
+  display: block;
+}
+
+#fun-zone-panel.play-focus #today-panel {
+  grid-column: 1 / -1;
+}
+
+#fun-zone-panel.play-focus[data-today-quiz=""] #today-panel {
+  display: none;
 }

@@ -52,7 +52,7 @@
       href="https://fonts.googleapis.com/css2?family=VT323&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20261123d" />
+    <link rel="stylesheet" href="styles.css?v=20261123e" />
   </head>
   <body>
     <div id="app-splash" class="app-splash" aria-live="polite" role="status">
@@ -124,10 +124,6 @@
                 <label class="settings-toggle-row">
                   <span>Goal alerts</span>
                   <input type="checkbox" id="notif-pref-goals" class="notif-pref-toggle" data-pref="goals" checked />
-                </label>
-                <label class="settings-toggle-row">
-                  <span>Quest reminders</span>
-                  <input type="checkbox" id="notif-pref-quests" class="notif-pref-toggle" data-pref="quests" checked />
                 </label>
                 <label class="settings-toggle-row">
                   <span>League updates</span>
@@ -375,7 +371,7 @@
                 <button class="fun-info-btn" type="button" aria-label="About Daily Quests" aria-expanded="false">i</button>
               </div>
               <div class="fun-guide hidden">
-                Daily quests reset every day. Complete all quests to earn bonus points for your mini-league rank.
+                Three quick quests a day: make a prediction, play today's quiz, check the standings. Quest points add to your all-time total (which unlocks avatars); only predictions count in the weekly league.
               </div>
               <div id="missions-meta" class="muted"></div>
               <div id="missions-list" class="list"></div>
@@ -388,7 +384,7 @@
               <div class="fun-guide hidden">
                 Tap start to launch the bouncing player quiz. Build your daily 5/5 quest and streak bonuses.
               </div>
-              <p class="fun-intro">Catch the bouncing player, then name them. 5 right = +5 pts.</p>
+              <p class="fun-intro">Catch the bouncing player, then name them.</p>
               <button id="player-dvd-toggle-main" class="btn player-pop-main" type="button" aria-pressed="false" aria-label="Toggle Player Pop Quiz">
                 Start Pop Quiz
                 <span id="player-pop-score-badge" class="player-pop-score-badge">0</span>
@@ -412,7 +408,7 @@
                 <button class="fun-info-btn" type="button" aria-label="About Club Quiz" aria-expanded="false">i</button>
               </div>
               <div class="fun-guide hidden">
-                Daily 3-question club challenge powered by team badges, stadiums and league data from TheSportsDB. Finish all 3 for a +5 quest bonus.
+                3 questions about your club: badge, stadium and league. On Club Quiz days, finishing it completes today's quiz quest.
               </div>
               <div id="club-quiz-body" class="club-quiz-body"></div>
             </article>
@@ -479,7 +475,7 @@
                 <button class="fun-info-btn" type="button" aria-label="About Family Mini-League" aria-expanded="false">i</button>
               </div>
               <div class="fun-guide hidden">
-                Create or join private leagues using a code. Points are awarded from predictions and completed quests.
+                Private leagues you join with a code. Each week (Monday to Sunday) is won on predictions: exact score 5 pts, right result 2 pts (from 30 Nov; 2 and 1 before), plus +1/+2 for results in a row. Others' picks stay hidden until you've made yours.
               </div>
               <div class="family-controls">
                 <div class="account-actions">
@@ -526,17 +522,13 @@
                 <span id="follow-requests-count" class="follow-req-text">Follow requests</span>
                 <button id="follow-requests-expand-btn" class="btn btn-inline follow-req-expand-btn" type="button">View</button>
               </div>
-              <div id="social-feed-tabs" class="account-actions">
-                <button class="btn btn-inline social-feed-tab active" type="button" data-feed-scope="all">All</button>
-                <button class="btn btn-inline social-feed-tab" type="button" data-feed-scope="following">Following</button>
-                <button class="btn btn-inline social-feed-tab" type="button" data-feed-scope="league">League</button>
+              <!-- Private by default: the feed shows your leagues only; no search or following. -->
+              <div id="social-feed-tabs" class="account-actions hidden">
+                <button class="btn btn-inline social-feed-tab active" type="button" data-feed-scope="league">League</button>
               </div>
-              <div id="social-follow-requests" class="list"></div>
-              <div class="user-search-row">
-                <input id="user-search-input" class="account-input user-search-input" type="search" maxlength="60" placeholder="Search players to follow..." autocomplete="off" />
-              </div>
+              <div id="social-follow-requests" class="list hidden"></div>
               <div id="user-search-results" class="user-search-results hidden"></div>
-              <p class="muted">Activity stream</p>
+              <p class="muted">What's happening in your leagues</p>
               <div id="social-feed-list" class="list"></div>
             </article>
             <article class="fun-card" id="rivalry-panel">
@@ -575,7 +567,7 @@
                 <button class="fun-info-btn" type="button" aria-label="About Achievements" aria-expanded="false">i</button>
               </div>
               <div class="fun-guide hidden">
-                Achievements unlock through streaks, combos, exact picks and team prediction volume. Locked items show progress.
+                10 badges to collect: exact scores, results in a row, quest streaks, weekly titles and inviting someone. Locked ones show what to do.
               </div>
               <div id="challenge-achievements" class="challenge-block"></div>
             </article>
@@ -832,6 +824,6 @@
     </button>
   </nav>
 
-  <script src="app.js?v=20261123g"></script>
+  <script src="app.js?v=20261123h"></script>
 </body>
 </html>

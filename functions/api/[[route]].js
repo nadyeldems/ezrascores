@@ -902,6 +902,21 @@ function numericScore(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Scoring from the week starting Monday 30 Nov 2026 (00:01 UTC): exact score 5,
+// correct result 2 (was 2 and 1). Earlier matches keep the old values so past
+// weeks don't change. Combo bonuses (+1 at 2 in a row, +2 at 3+) are unchanged.
+const SCORING_V2_FROM_MS = Date.parse("2026-11-30T00:01:00Z");
+
+function predictionBasePoints(pickHome, pickAway, finalHome, finalAway, kickoffIso = "") {
+  const kickoffMs = Date.parse(String(kickoffIso || ""));
+  const v2 = (Number.isFinite(kickoffMs) ? kickoffMs : Date.now()) >= SCORING_V2_FROM_MS;
+  if (pickHome === finalHome && pickAway === finalAway) return { points: v2 ? 5 : 2, exact: true, correct: true };
+  if (predictionResultCode(pickHome, pickAway) === predictionResultCode(finalHome, finalAway)) {
+    return { points: v2 ? 2 : 1, exact: false, correct: true };
+  }
+  return { points: 0, exact: false, correct: false };
+}
+
 function predictionResultCode(home, away) {
   if (home > away) return "H";
   if (away > home) return "A";
@@ -990,16 +1005,27 @@ function eventLikelyFinal(event, fallbackKickoffIso = "") {
   return elapsedMs > 210 * 60 * 1000;
 }
 
-// Points awarded per quest type. Sync with QUEST_POINTS in app.js.
-const QUEST_POINTS = {
-  "quest-pop-5": 5,
-  "quest-random-player": 3,
-  "quest-club-quiz-3": 5,
-  "quest-predict-fixture": 8,
+// Points per quest. Sync with QUEST_SETS in app.js.
+// v1 (to 29 Nov 2026): four quests, counted in the weekly league.
+// v2 (from 30 Nov 2026): three quests that add to all-time points only, so the
+// weekly league is won on predictions alone.
+const QUEST_SETS = {
+  v1: {
+    points: { "quest-pop-5": 5, "quest-random-player": 3, "quest-club-quiz-3": 5, "quest-predict-fixture": 8 },
+    bonus: 10,
+    lifetimeOnly: false,
+  },
+  v2: {
+    points: { "q2-predict": 4, "q2-quiz": 4, "q2-standings": 2 },
+    bonus: 2,
+    lifetimeOnly: true,
+  },
 };
-const QUEST_ALL_DONE_BONUS = 10;
-// How many quests must be done for the all-done bonus.
-const QUEST_ALL_DONE_COUNT = Object.keys(QUEST_POINTS).length;
+const QUEST_POINTS = { ...QUEST_SETS.v1.points, ...QUEST_SETS.v2.points };
+const QUEST_ALL_DONE_BONUS = QUEST_SETS.v1.bonus;
+const QUEST_ALL_DONE_COUNT = Object.keys(QUEST_SETS.v1.points).length;
+// Ledger season id for points that count towards all-time totals but no week.
+const LIFETIME_ONLY_SEASON_ID = "lifetime";
 
 // Returns { "YYYY-MM-DD": points, ... } — one entry per date that has unrecorded quest
 // completions. Each date is treated independently so that:
@@ -1016,23 +1042,26 @@ function questBonusPointsByDate(state, userId) {
     // when calling new Date(questDate).toISOString() or currentSevenDaySeasonWindow(new Date(questDate)).
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
     if (!value || typeof value !== "object") continue;
+    // A day uses the v2 rules if any v2 quest was completed that day.
+    const dayQuestIds = Object.entries(value)
+      .filter(([key, done]) => done && key.startsWith(prefix))
+      .map(([key]) => key.slice(prefix.length))
+      .filter((questId) => questId !== "__bonus__");
+    const set = dayQuestIds.some((questId) => questId in QUEST_SETS.v2.points) ? QUEST_SETS.v2 : QUEST_SETS.v1;
     let totalPoints = 0;
     let doneCountForDay = 0;
-    for (const [key, done] of Object.entries(value)) {
-      if (!done || !key.startsWith(prefix)) continue;
-      // key format: acct:{userId}:{questId}
-      const questId = key.slice(prefix.length);
-      if (questId === "__bonus__") continue; // all-done bonus tracked separately below
-      const pts = Number(QUEST_POINTS[questId] ?? 5);
+    for (const questId of dayQuestIds) {
+      const pts = Number(set.points[questId] ?? 0);
+      if (!pts) continue;
       totalPoints += pts;
       doneCountForDay += 1;
     }
     // All-done bonus (tracked via special key to ensure idempotency)
     const bonusKey = `${prefix}__bonus__`;
-    if (doneCountForDay >= QUEST_ALL_DONE_COUNT && value[bonusKey]) {
-      totalPoints += QUEST_ALL_DONE_BONUS;
+    if (doneCountForDay >= Object.keys(set.points).length && value[bonusKey]) {
+      totalPoints += set.bonus;
     }
-    if (totalPoints > 0) result[date] = totalPoints;
+    if (totalPoints > 0) result[date] = { points: totalPoints, lifetimeOnly: set.lifetimeOnly };
   }
   return result;
 }
@@ -2077,14 +2106,10 @@ async function syncLeagueScoresFromStates(db, code, key) {
           "unknown";
         const teamName = String(event?.strHomeTeam || "") || String(event?.strAwayTeam || "") || "Unknown";
 
-        const base =
-          pick.home === result.home && pick.away === result.away
-            ? 2
-            : predictionResultCode(pick.home, pick.away) === predictionResultCode(result.home, result.away)
-              ? 1
-              : 0;
+        const scored = predictionBasePoints(pick.home, pick.away, result.home, result.away, pick.kickoffIso);
+        const base = scored.points;
 
-        if (base > 0) {
+        if (scored.correct) {
           comboCount += 1;
           bestCombo = Math.max(bestCombo, comboCount);
         } else {
@@ -2093,7 +2118,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
 
         const awarded = safePredictionAward(base, comboCount);
 
-        if (base === 2) {
+        if (scored.exact) {
           totalExact += 1;
           await emitSocialEvent(db, {
             leagueCode: code,
@@ -2120,8 +2145,8 @@ async function syncLeagueScoresFromStates(db, code, key) {
           pointsEarned: 0,
         };
         existing.predCount += 1;
-        if (base > 0) existing.resultCorrect += 1;
-        if (base === 2) existing.exactCorrect += 1;
+        if (scored.correct) existing.resultCorrect += 1;
+        if (scored.exact) existing.exactCorrect += 1;
         existing.pointsEarned += awarded;
         mastery.set(teamId, existing);
 
@@ -2146,7 +2171,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
             fixtureLeagueCode,
             seasonId: matchSeason.seasonId,
             createdAt: pick.kickoffIso || new Date().toISOString(),
-            payload: { base, comboCount, exact: base === 2 },
+            payload: { base, comboCount, exact: scored.exact },
           });
           newPointsThisRun += awarded;
         }
@@ -2157,15 +2182,19 @@ async function syncLeagueScoresFromStates(db, code, key) {
       // Each date's idempotency key ensures it can only be written once, even across
       // multiple cron runs or concurrent league settlements.
       const questPointsByDate = questBonusPointsByDate(state, userId);
-      for (const [questDate, questPoints] of Object.entries(questPointsByDate)) {
+      for (const [questDate, questDay] of Object.entries(questPointsByDate)) {
+        const questPoints = questDay.points;
         const questKey = `quest_bonus:${userId}:${questDate}`;
         // Use T12:00:00Z (noon UTC) so that YYYY-MM-DD strings parsed on a Monday
         // (midnight UTC falls in the prior week's 1-minute grace window) are firmly
         // attributed to the correct new week, not the previous one.
-        const questSeason = currentSevenDaySeasonWindow(new Date(questDate + "T12:00:00Z"));
+        // v2 quests add to all-time points only: they never touch a weekly season.
+        const questSeason = questDay.lifetimeOnly
+          ? { seasonId: LIFETIME_ONLY_SEASON_ID }
+          : currentSevenDaySeasonWindow(new Date(questDate + "T12:00:00Z"));
         if (!recordedKeys.has(questKey)) {
           // No entry yet — fresh insert.
-          if (!affectedSeasons.has(questSeason.seasonId)) {
+          if (!questDay.lifetimeOnly && !affectedSeasons.has(questSeason.seasonId)) {
             affectedSeasons.set(questSeason.seasonId, questSeason);
           }
           newLedgerEntries.push({
@@ -2195,7 +2224,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
                 questKey
               )
               .run();
-            if (!affectedSeasons.has(questSeason.seasonId)) {
+            if (!questDay.lifetimeOnly && !affectedSeasons.has(questSeason.seasonId)) {
               affectedSeasons.set(questSeason.seasonId, questSeason);
             }
             newPointsThisRun += delta;
@@ -2230,8 +2259,7 @@ async function syncLeagueScoresFromStates(db, code, key) {
         await upsertLeagueSeasonPoints(db, code, affSeason.seasonId, userId, affSeasonPoints);
       }
 
-      // Achievements and mastery (unchanged).
-      await replaceTeamMastery(db, userId, [...mastery.values()]);
+      // Team Mastery was retired with the gamification simplification (Nov 2026).
 
       const questByDate = state?.familyLeague?.questBonusByDate;
       const todayObj = questByDate && typeof questByDate === "object" ? questByDate[todayIso] : null;
@@ -2256,10 +2284,22 @@ async function syncLeagueScoresFromStates(db, code, key) {
       let currentStreak = Math.max(0, Number(progressRow?.current_streak || 0));
       let bestStreak = Math.max(0, Number(progressRow?.best_streak || 0));
       const lastQuestDate = String(progressRow?.last_quest_date || "");
+      // One free missed day per week: a single gap doesn't break the streak.
+      const twoDaysAgoIso = addDaysIso(todayIso, -2);
+      const freezeKey = `streak_freeze:${userId}`;
+      const freezeUsedSeason = String((await getAppSetting(db, freezeKey)) || "");
+      const freezeAvailable = freezeUsedSeason !== season.seasonId;
       if (hasTodayQuest && lastQuestDate !== todayIso) {
-        currentStreak = hadYesterdayQuest ? currentStreak + 1 : 1;
+        if (hadYesterdayQuest || lastQuestDate === yesterdayIso) {
+          currentStreak += 1;
+        } else if (lastQuestDate === twoDaysAgoIso && freezeAvailable && currentStreak > 0) {
+          currentStreak += 1;
+          await setAppSetting(db, freezeKey, season.seasonId);
+        } else {
+          currentStreak = 1;
+        }
         bestStreak = Math.max(bestStreak, currentStreak);
-      } else if (!hasTodayQuest && !hadYesterdayQuest && lastQuestDate && lastQuestDate !== todayIso) {
+      } else if (!hasTodayQuest && lastQuestDate && lastQuestDate < (freezeAvailable ? twoDaysAgoIso : yesterdayIso)) {
         currentStreak = 0;
       }
       const nextLastQuestDate = hasTodayQuest ? todayIso : lastQuestDate;
@@ -2275,18 +2315,11 @@ async function syncLeagueScoresFromStates(db, code, key) {
       // Achievement grants — tiered, with social event emission on first unlock.
       if (bestStreak >= 3)  await grantAchievementWithEvent(db, userId, "streak_3",  code);
       if (bestStreak >= 7)  await grantAchievementWithEvent(db, userId, "streak_7",  code);
-      if (bestStreak >= 14) await grantAchievementWithEvent(db, userId, "streak_14", code);
       if (bestCombo >= 3)   await grantAchievementWithEvent(db, userId, "combo_3",   code);
       if (bestCombo >= 5)   await grantAchievementWithEvent(db, userId, "combo_5",   code);
-      if (bestCombo >= 10)  await grantAchievementWithEvent(db, userId, "combo_10",  code);
       if (totalExact >= 1)  await grantAchievementWithEvent(db, userId, "exact_1",   code);
       if (totalExact >= 5)  await grantAchievementWithEvent(db, userId, "exact_5",   code);
       if (totalExact >= 10) await grantAchievementWithEvent(db, userId, "exact_10",  code);
-      if (totalExact >= 25) await grantAchievementWithEvent(db, userId, "exact_25",  code);
-      const masteryValues = [...mastery.values()];
-      if (masteryValues.some((m) => Number(m.predCount || 0) >= 5))  await grantAchievementWithEvent(db, userId, "mastery_5",  code);
-      if (masteryValues.some((m) => Number(m.predCount || 0) >= 25)) await grantAchievementWithEvent(db, userId, "mastery_25", code);
-      if (masteryValues.some((m) => Number(m.predCount || 0) >= 50)) await grantAchievementWithEvent(db, userId, "mastery_50", code);
 
       // Combo milestone social event (distinct from achievement — fires whenever streak is reached).
       if (bestCombo >= 3) {
@@ -2359,7 +2392,6 @@ async function syncLeagueScoresFromStates(db, code, key) {
               .first();
             const refTotal = Math.max(0, Number(refCount?.c || 0));
             if (refTotal >= 1) await grantAchievementWithEvent(db, referrerId, "referral_1", code);
-            if (refTotal >= 3) await grantAchievementWithEvent(db, referrerId, "referral_3", code);
           }
         }
       }
@@ -2422,7 +2454,6 @@ async function syncLeagueScoresFromStates(db, code, key) {
     // Tiered title achievements.
     if (titlesWon >= 1) await grantAchievementWithEvent(db, winnerUserId, "titles_1", code);
     if (titlesWon >= 3) await grantAchievementWithEvent(db, winnerUserId, "titles_3", code);
-    if (titlesWon >= 5) await grantAchievementWithEvent(db, winnerUserId, "titles_5", code);
   }
 }
 
@@ -3538,6 +3569,7 @@ async function buildChallengeDashboardForUser(db, session, key) {
         FROM ezra_user_achievements ua
         JOIN ezra_achievements a ON a.code = ua.achievement_code
         WHERE ua.user_id = ?1
+          AND ua.achievement_code IN ('streak_3','streak_7','combo_3','combo_5','exact_1','exact_5','exact_10','titles_1','titles_3','referral_1')
         ORDER BY ua.earned_at DESC
         `
       )
@@ -3910,12 +3942,34 @@ async function handleLeagueMemberView(db, request, key) {
   ].filter(Boolean);
   const allPredictions = state?.familyLeague?.predictions && typeof state.familyLeague.predictions === "object" ? state.familyLeague.predictions : {};
   const resultCache = new Map();
+  // Someone else's pick for a match that hasn't started stays hidden unless the
+  // viewer has already made their own pick for it.
+  const viewingSelf = String(userId || "") === String(session.user_id || "");
+  let viewerPickedIds = new Set();
+  if (!viewingSelf) {
+    const viewerStateRow = await db
+      .prepare("SELECT state_json FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+      .bind(session.user_id)
+      .first();
+    const viewerPreds = safeParseJsonText(viewerStateRow?.state_json || "{}")?.familyLeague?.predictions || {};
+    const vKeys = [`acct:${session.user_id}`, String(session.user_id)];
+    viewerPickedIds = new Set(
+      Object.values(viewerPreds)
+        .filter((r) => r && vKeys.some((k) => r.entries?.[k] && typeof r.entries[k] === "object"))
+        .map((r) => String(r.eventId || ""))
+    );
+  }
   const predictions = (
     await Promise.all(
       Object.values(allPredictions)
         .filter((record) => {
           if (!record || typeof record !== "object") return false;
           if (!record.entries || typeof record.entries !== "object") return false;
+          if (!viewingSelf) {
+            const kickoffMs = Date.parse(String(record.kickoff || ""));
+            const started = Number.isFinite(kickoffMs) && kickoffMs <= Date.now();
+            if (!started && !viewerPickedIds.has(String(record.eventId || ""))) return false;
+          }
           return memberKeys.some((key) => record.entries[key] && typeof record.entries[key] === "object");
         })
         .map(async (record) => {
@@ -3931,13 +3985,7 @@ async function handleLeagueMemberView(db, request, key) {
           const settled = Boolean(record.settled) || Boolean(result.final);
           let awarded = Number.isFinite(Number(pick.awarded)) ? Number(pick.awarded) : 0;
           if (settled && pickHome !== null && pickAway !== null && finalHome !== null && finalAway !== null) {
-            if (pickHome === finalHome && pickAway === finalAway) {
-              awarded = 2;
-            } else if (predictionResultCode(pickHome, pickAway) === predictionResultCode(finalHome, finalAway)) {
-              awarded = 1;
-            } else {
-              awarded = 0;
-            }
+            awarded = predictionBasePoints(pickHome, pickAway, finalHome, finalAway, String(record.kickoff || "")).points;
           }
           return {
             eventId,
@@ -4202,33 +4250,25 @@ async function handleSocialFeed(db, request) {
   if (!session) return json({ error: "Unauthorized" }, 401);
   const url = new URL(request.url);
   const limit = Math.max(5, Math.min(30, Number(url.searchParams.get("limit") || 12)));
-  const scopeRaw = String(url.searchParams.get("scope") || "all").trim().toLowerCase();
-  const scope = scopeRaw === "following" || scopeRaw === "league" ? scopeRaw : "all";
-  const code = normalizeLeagueCode(url.searchParams.get("code"));
+  const requestedCode = normalizeLeagueCode(url.searchParams.get("code"));
   const userId = String(session.user_id || "");
-
-  const follows = await db
-    .prepare("SELECT followed_user_id FROM ezra_user_follows WHERE follower_user_id = ?1")
-    .bind(userId)
+  // Private by default: the feed only ever shows activity from leagues you're in.
+  const myLeagues = await db.prepare("SELECT league_code FROM ezra_league_members WHERE user_id = ?1").bind(userId).all();
+  const myCodes = (myLeagues?.results || []).map((row) => String(row?.league_code || "")).filter(Boolean);
+  const codes = requestedCode ? myCodes.filter((c) => c === requestedCode) : myCodes;
+  const followedIds = [];
+  if (!codes.length) return json({ events: [], followingUserIds: followedIds }, 200);
+  const codePlaceholders = codes.map((_, i) => `?${i + 1}`).join(", ");
+  const members = await db
+    .prepare(`SELECT DISTINCT user_id FROM ezra_league_members WHERE league_code IN (${codePlaceholders})`)
+    .bind(...codes)
     .all();
-  const followedIds = (follows?.results || []).map((row) => String(row?.followed_user_id || "")).filter(Boolean);
-  let targetIds = Array.from(new Set([userId, ...followedIds]));
-  if (scope === "following") {
-    targetIds = followedIds;
-  } else if (scope === "league") {
-    const members = code
-      ? await db.prepare("SELECT user_id FROM ezra_league_members WHERE league_code = ?1").bind(code).all()
-      : { results: [] };
-    targetIds = (members?.results || []).map((row) => String(row?.user_id || "")).filter(Boolean);
-  }
+  const targetIds = (members?.results || []).map((row) => String(row?.user_id || "")).filter(Boolean);
   if (!targetIds.length) return json({ events: [], followingUserIds: followedIds }, 200);
   const placeholders = targetIds.map((_, i) => `?${i + 1}`).join(", ");
   const bindings = [...targetIds];
-  let whereCode = "";
-  if (code) {
-    whereCode = ` AND se.league_code = ?${bindings.length + 1}`;
-    bindings.push(code);
-  }
+  const whereCode = ` AND se.league_code IN (${codes.map((_, i) => `?${bindings.length + i + 1}`).join(", ")})`;
+  bindings.push(...codes);
   const rows = await db
     .prepare(
       `
@@ -4323,6 +4363,24 @@ async function handleLeaguePredictionMarket(db, request) {
     .all();
   const memberIds = (members?.results || []).map((r) => String(r?.user_id || "")).filter(Boolean);
 
+  // Fair play: the league's split for a match is only shown once you've made
+  // your own pick or the match has kicked off, so nobody can copy.
+  const viewerRow = await db
+    .prepare("SELECT state_json FROM ezra_profile_states WHERE user_id = ?1 LIMIT 1")
+    .bind(session.user_id)
+    .first();
+  const viewerPredictions = safeParseJsonText(viewerRow?.state_json || "{}")?.familyLeague?.predictions || {};
+  const viewerKeys = [`acct:${session.user_id}`, String(session.user_id)];
+  const viewerPicked = new Set(
+    Object.values(viewerPredictions)
+      .filter((record) => record && viewerKeys.some((k) => record.entries?.[k] && typeof record.entries[k] === "object"))
+      .map((record) => String(record.eventId || ""))
+  );
+  const kickedOff = (record) => {
+    const ms = Date.parse(String(record?.kickoff || ""));
+    return Number.isFinite(ms) && ms <= Date.now();
+  };
+
   // Accumulate pick counts per fixture per outcome.
   const marketMap = new Map(); // eventId → { H: n, D: n, A: n, total: n }
   await Promise.all(
@@ -4342,6 +4400,7 @@ async function handleLeaguePredictionMarket(db, request) {
         if (!record || typeof record !== "object") continue;
         const eventId = String(record.eventId || "").trim();
         if (!eventId) continue;
+        if (!viewerPicked.has(eventId) && !kickedOff(record)) continue;
         const pick = memberKeys.map((k) => record.entries?.[k]).find((v) => v && typeof v === "object");
         if (!pick) continue;
         const h = numericScore(pick.home);
@@ -5139,17 +5198,13 @@ async function handleEzraAccountRoute(context, accountPath, key) {
     if (route === "league/member" && request.method === "GET") {
       return handleLeagueMemberView(db, request, key);
     }
-    if (route === "follow" && request.method === "POST") {
-      return handleSocialFollow(db, request);
-    }
-    if (route === "unfollow" && request.method === "POST") {
-      return handleSocialUnfollow(db, request);
+    // Private by default (Nov 2026): no following people outside your leagues and
+    // no searching for users. Old clients get an empty answer, not an error.
+    if (route === "follow" || route === "unfollow" || route === "follow/respond") {
+      return json({ error: "Following has been turned off. Your league is your circle." }, 410);
     }
     if (route === "follow/requests" && request.method === "GET") {
-      return handleSocialFollowRequests(db, request);
-    }
-    if (route === "follow/respond" && request.method === "POST") {
-      return handleSocialFollowRespond(db, request);
+      return json({ incoming: [], outgoing: [], requests: [] }, 200, { "Cache-Control": "no-store" });
     }
     if (route === "feed" && request.method === "GET") {
       return handleSocialFeed(db, request);
@@ -5164,7 +5219,7 @@ async function handleEzraAccountRoute(context, accountPath, key) {
       return handleLeagueSeasonArchive(db, request);
     }
     if (route === "users/search" && request.method === "GET") {
-      return handleUsersSearch(db, request);
+      return json({ users: [] }, 200, { "Cache-Control": "no-store" });
     }
     if (route === "daily-fixture" && request.method === "GET") {
       return handleDailyFixture(db, request);
